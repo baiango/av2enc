@@ -76,13 +76,13 @@ struct HighBitDepthGpuStatus {
 HighBitDepthGpuStatus encode_high_bitdepth_gpu(Arena& arena, const av2enc::fmt::Picture& picture,
                             const av2enc::high_bitdepth::HighBitDepthOptions& options,
                             av2enc::high_bitdepth::HighBitDepthResult& result,
-                            std::string* error);
+                            std::string& error);
 
 // Convenience wrapper for callers that do not own an arena (e.g. the CLI
 // still-picture path).  It creates a short-lived arena sized by
 // required_device_bytes(); prefer the Arena overload in a pipelined caller.
 [[nodiscard]] bool encode_high_bitdepth_gpu(const av2enc::fmt::Picture& picture,
                     const av2enc::high_bitdepth::HighBitDepthOptions& options,
-                    av2enc::high_bitdepth::HighBitDepthResult& result, std::string* error);
+                    av2enc::high_bitdepth::HighBitDepthResult& result, std::string& error);
 
 }  // namespace av2enc::cuda::high_bitdepth

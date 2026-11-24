@@ -137,7 +137,7 @@ struct TileQpConfig {
 };
 
 [[nodiscard]] bool tile_qp_config_valid(const TileQpConfig& config,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 // ---------------------------------------------------------------------------
 // Device-sized arena budget (per GPU)
@@ -193,7 +193,7 @@ struct PipelineConfig {
 };
 
 [[nodiscard]] bool pipeline_config_valid(const PipelineConfig& config,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // Per-tile statistics for tile-QP redistribution. `tile_index` may be -1 for
 // every entry, in which case entries are in raster tile order; mixed or
@@ -212,7 +212,7 @@ struct FrameStats {
 };
 
 [[nodiscard]] bool frame_stats_valid(const FrameStats& stats, int tile_count,
-                       std::string* error = nullptr);
+                       std::string& error);
 
 // ---------------------------------------------------------------------------
 // Output: one frame plan
@@ -288,16 +288,16 @@ class PipelinePlanner {
   // Validates the config, computes the per-GPU arena, selects and validates
   // the tile layout, runs the multi-GPU planner once, and configures the rate
   // controller. Call before plan_frame().
-  bool configure(const PipelineConfig& config, std::string* error = nullptr);
+  bool configure(const PipelineConfig& config, std::string& error);
 
   // One rate-control decision + tile QP plan + GPU assignment. Opens a frame;
   // exactly one end_frame() must follow before the next plan_frame().
   bool plan_frame(const FrameStats& stats, FramePipelinePlan& plan,
-                  std::string* error = nullptr);
+                  std::string& error);
 
   // Report the actual encoded payload bits (not bytes, not OBU overhead) for
   // the frame opened by plan_frame(). This advances the VBR virtual buffer.
-  bool end_frame(std::int64_t actual_bits, std::string* error = nullptr);
+  bool end_frame(std::int64_t actual_bits, std::string& error);
 
   void reset() noexcept;
 
@@ -342,7 +342,7 @@ struct SequencePlan {
 [[nodiscard]] bool plan_sequence(const PipelineConfig& config,
                    std::span<const FrameStats> stats,
                    std::span<const std::int64_t> actual_bits,
-                   SequencePlan& plan, std::string* error = nullptr);
+                   SequencePlan& plan, std::string& error);
 
 // The batch deliverable name: one decision per frame plus the shared layout and
 // arena. `SequencePlan` is the same type and remains the primary name.

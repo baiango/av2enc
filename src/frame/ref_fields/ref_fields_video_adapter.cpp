@@ -13,8 +13,8 @@ namespace {
 using av2enc::basic::ObuHeader;
 using av2enc::basic::ObuType;
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -29,7 +29,7 @@ void put_uvlc(BitWriter& writer, std::uint32_t value) {
 }
 
 bool put_ns(BitWriter& writer, std::uint32_t n, std::uint32_t value,
-            std::string* error) {
+            std::string& error) {
   if (n < 2U || value >= n) {
     return fail(error, "ns(): value out of range");
   }
@@ -64,7 +64,7 @@ unsigned size_bits(std::uint32_t maximum) {
 }
 
 std::size_t write_sequence_header(BitWriter& writer, const VideoRefConfig& c,
-                                  std::string* error) {
+                                  std::string& error) {
   const std::size_t start = writer.bit_size();
   if (c.order_hint_bits < 1U || c.order_hint_bits > 16U) {
     fail(error, "order_hint_bits must be in [1, 16]");
@@ -197,7 +197,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoRefConfig& c,
 }
 
 bool write_tile_info(BitWriter& writer, const VideoRefConfig& config,
-                     const VideoTileInfo& tiles, std::string* error) {
+                     const VideoTileInfo& tiles, std::string& error) {
   // Mirror of av2enc::video::post::write_video_tile_info().
   const std::uint32_t sb_cols = (mi_cols(config) + 15U) >> 4U;
   const std::uint32_t sb_rows = (mi_rows(config) + 15U) >> 4U;
@@ -242,7 +242,7 @@ bool write_tile_info(BitWriter& writer, const VideoRefConfig& config,
 }
 
 bool read_tile_info(RefBitReader& reader, const VideoRefConfig& config,
-                    const VideoTileInfo& tiles, std::string* error) {
+                    const VideoTileInfo& tiles, std::string& error) {
   bool uniform = false;
   if (!reader.bit(&uniform) || !uniform) {
     return fail(error, "tile_info: uniform_tile_spacing_flag must be 1");
@@ -309,8 +309,8 @@ VideoTileInfo make_video_tile_info(const tiles::TileLayout& layout,
 }
 
 std::vector<std::uint8_t> make_video_ref_sequence_header_obu(
-    const VideoRefConfig& config, std::string* error) {
-  if (error != nullptr) error->clear();
+    const VideoRefConfig& config, std::string& error) {
+  error.clear();
   BitWriter writer;
   if (write_sequence_header(writer, config, error) == 0) return {};
   writer.put_bit(false);  // obu_extension_flag
@@ -326,8 +326,8 @@ std::size_t write_video_ref_frame_header(BitWriter& writer,
                                       const FrameRefState& state,
                                       const VideoTileInfo& tiles,
                                       std::size_t* header_bits,
-                                      std::string* error) {
-  if (error != nullptr) error->clear();
+                                      std::string& error) {
+  error.clear();
   if (header_bits != nullptr) *header_bits = 0;
   if (config.base_q_idx == 0) {
     fail(error, "M2 adapter does not support lossless q = 0");
@@ -538,7 +538,7 @@ bool write_tile_group_header_range(BitWriter& writer,
                                    const VideoTileInfo& tiles,
                                    int tg_start, int tg_end,
                                    FrameHeaderStore* store,
-                                   std::string* error) {
+                                   std::string& error) {
   const std::size_t start = writer.bit_size();
   const bool first = tg_start == 0 && !store->present();
   writer.put_bit(first);
@@ -574,8 +574,8 @@ std::vector<std::vector<std::uint8_t>> make_video_ref_frame_obus(
     const VideoRefConfig& config, const VideoRefFrameHeader& header,
     const RefList& refs, const FrameRefState& state, const VideoTileInfo& tiles,
     std::span<const std::vector<std::uint8_t>> tile_payloads,
-    bool split_tile_groups, std::string* error) {
-  if (error != nullptr) error->clear();
+    bool split_tile_groups, std::string& error) {
+  error.clear();
   if (tile_payloads.empty()) {
     fail(error, "frame OBU needs at least one tile payload");
     return {};
@@ -640,8 +640,8 @@ bool read_video_ref_frame_header(RefBitReader& reader, bool keyframe,
                               const VideoRefConfig& config, const RefList& refs,
                               const FrameRefState& state,
                               const VideoTileInfo& tiles,
-                              VideoRefParsedHeader* out, std::string* error) {
-  if (error != nullptr) error->clear();
+                              VideoRefParsedHeader* out, std::string& error) {
+  error.clear();
   if (out == nullptr) return fail(error, "null parsed-header output");
   *out = VideoRefParsedHeader{};
   if (config.num_ref_frames != state.num_ref_frames) {
@@ -902,7 +902,7 @@ bool read_video_ref_frame_header(RefBitReader& reader, bool keyframe,
 bool read_video_ref_nonfirst_tile_group_header(RefBitReader& reader,
                                             const FrameHeaderStore& store,
                                             bool* frame_header_present,
-                                            std::string* error) {
+                                            std::string& error) {
   return read_nonfirst_tile_group_header(reader, store, frame_header_present,
                                          error);
 }

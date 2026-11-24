@@ -83,7 +83,7 @@ class LrChromaWorkspace {
 
   // See allocate_checked() below.
   Status create(Arena& arena, const LrChromaConfig& config,
-                std::string* error = nullptr);
+                std::string& error);
 
   void reset() noexcept;
 
@@ -119,7 +119,7 @@ class LrChromaWorkspace {
  private:
   friend Status allocate_checked(Arena&, const LrChromaConfig&,
                                  LrChromaWorkspace*, std::size_t*,
-                                 std::string*);
+                                 std::string&);
   void clear() noexcept;
 
   LrChromaConfig config_{};
@@ -142,22 +142,22 @@ class LrChromaWorkspace {
 // arena to its entry mark.  Never partially initialises the workspace.
 Status allocate_checked(Arena& arena, const LrChromaConfig& config,
                         LrChromaWorkspace* ws,
-                        std::size_t* required_bytes = nullptr,
-                        std::string* error = nullptr);
+                        std::size_t* required_bytes,
+                        std::string& error);
 
 // Setup-time host-to-device copy of `count == ws.unit_count(chroma)`
 // descriptors.  `chroma` is 0 for U and 1 for V.  Zero count with a null host
 // pointer is a no-op.  Does not synchronise.
 Status upload_units(LrChromaWorkspace& ws, int chroma,
                     const LrChromaUnit* host_units, int count,
-                    cudaStream_t stream = nullptr,
-                    std::string* error = nullptr);
+                    cudaStream_t stream,
+                    std::string& error);
 
 // Expand both planes' unit streams (§5.20.10.6) into the workspace's resolved
 // coefficient and active arrays.  One tiny kernel; unit counts are a few
 // thousand at most.  No allocation or synchronisation.
-Status resolve_units(LrChromaWorkspace& ws, cudaStream_t stream = nullptr,
-                     std::string* error = nullptr);
+Status resolve_units(LrChromaWorkspace& ws, cudaStream_t stream,
+                     std::string& error);
 
 // Apply the resolved filters: copy CdefFrame -> LrFrame and filter units whose
 // active flag is set.  One thread per 4x4 luma MI block per chroma plane.  The
@@ -165,7 +165,7 @@ Status resolve_units(LrChromaWorkspace& ws, cudaStream_t stream = nullptr,
 // configuration.  The resolved arrays are read as-is; call resolve_units()
 // first (on the same stream).
 Status apply(const LrChromaWorkspace& ws, const LrChromaFrame& frame,
-             cudaStream_t stream = nullptr, std::string* error = nullptr);
+             cudaStream_t stream, std::string& error);
 
 // Plane extents derived from a configuration (chroma_plane = 0 for U/V).
 int plane_width(const LrChromaConfig& config) noexcept;

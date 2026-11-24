@@ -56,8 +56,8 @@ class Cursor {
   std::size_t pos_ = 0;
 };
 
-bool fail(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+bool fail(std::string& error, const char* message) {
+  error = message;
   return false;
 }
 
@@ -68,7 +68,7 @@ bool mv_in_range(Mv mv) {
 }  // namespace
 
 bool StackMirror::parse(std::span<const std::uint8_t> record,
-                        std::string* error) {
+                        std::string& error) {
   if (record.size() < 8 + 32) return fail(error, "record too short");
 
   // The checksum covers everything before the final 8 bytes.
@@ -162,7 +162,7 @@ bool StackMirror::parse(std::span<const std::uint8_t> record,
   return validate(error);
 }
 
-bool StackMirror::validate(std::string* error) const {
+bool StackMirror::validate(std::string& error) const {
   const MirrorStack& s = stack_;
   if (s.count < 0 || s.count > kMaxRefMvStackSize) {
     return fail(error, "count outside the stack size");
@@ -213,12 +213,12 @@ bool StackMirror::validate(std::string* error) const {
 }
 
 bool StackMirror::resolve_mv(int drl_index, int mode, Mv global, Mv mvd,
-                             Mv* out, std::string* error) const {
+                             Mv* out, std::string& error) const {
   return mirror_resolve_mv(stack_, drl_index, mode, global, mvd, out, error);
 }
 
 bool mirror_resolve_mv(const MirrorStack& stack, int drl_index, int mode,
-                       Mv global, Mv mvd, Mv* out, std::string* error) {
+                       Mv global, Mv mvd, Mv* out, std::string& error) {
   if (out == nullptr) return fail(error, "null output");
   if (mode == 1) {
     *out = clamp_mv_to_integer(global);
@@ -242,28 +242,28 @@ bool mirror_resolve_mv(const MirrorStack& stack, int drl_index, int mode,
   return true;
 }
 
-bool StackMirror::equals(const Stack& encoder, std::string* why) const {
+bool StackMirror::equals(const Stack& encoder, std::string& why) const {
   const MirrorStack& m = stack_;
   if (m.count != encoder.count) {
-    if (why != nullptr) *why = "candidate count differs";
+    why = "candidate count differs";
     return false;
   }
   if (m.num_nearest != encoder.num_nearest) {
-    if (why != nullptr) *why = "numNearest differs";
+    why = "numNearest differs";
     return false;
   }
   if (m.sorted != encoder.sorted) {
-    if (why != nullptr) *why = "sorted flag differs";
+    why = "sorted flag differs";
     return false;
   }
   if (m.num_warp_found != encoder.num_warp_found) {
-    if (why != nullptr) *why = "NumWarpFound differs";
+    why = "NumWarpFound differs";
     return false;
   }
   for (int i = 0; i < m.count; ++i) {
     for (int list = 0; list < m.num_lists; ++list) {
       if (!(m.cand[i].mv[list] == encoder.cand[i].mv[list])) {
-        if (why != nullptr) *why = "candidate MV differs";
+        why = "candidate MV differs";
         return false;
       }
     }
@@ -271,14 +271,14 @@ bool StackMirror::equals(const Stack& encoder, std::string* why) const {
         m.cand[i].row_offset != encoder.cand[i].row_offset ||
         m.cand[i].col_offset != encoder.cand[i].col_offset ||
         m.cand[i].cwp != encoder.cand[i].cwp) {
-      if (why != nullptr) *why = "candidate metadata differs";
+      why = "candidate metadata differs";
       return false;
     }
   }
   for (int i = 0; i < m.num_warp_found; ++i) {
     for (int j = 0; j < 6; ++j) {
       if (m.warp_params[i].p[j] != encoder.warp_params[i].p[j]) {
-        if (why != nullptr) *why = "warp parameter differs";
+        why = "warp parameter differs";
         return false;
       }
     }
@@ -286,7 +286,7 @@ bool StackMirror::equals(const Stack& encoder, std::string* why) const {
   for (int i = 0; i < m.count; ++i) {
     for (int list = m.num_lists; list < 2; ++list) {
       if (!(m.cand[i].mv[list] == encoder.cand[i].mv[list])) {
-        if (why != nullptr) *why = "unused list MV differs";
+        why = "unused list MV differs";
         return false;
       }
     }

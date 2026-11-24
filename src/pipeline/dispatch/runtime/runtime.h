@@ -106,7 +106,7 @@ struct Selection {
 // with the offending device ordinal; it never silently shrinks the run.
 Status select_devices_and_plan(DeviceBackend& backend,
                                const RuntimeConfig& config, Selection& out,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 struct GpuFrameContext {
   DeviceBackend* backend = nullptr;
@@ -150,7 +150,7 @@ class FrameWorker {
   // Enqueue compute work on ctx.compute_stream. Must not synchronize the
   // device or reorder the raster tile list. On failure return non-kOk and set
   // *error; the runtime aborts the whole frame.
-  virtual Status encode(const GpuFrameContext& ctx, std::string* error) = 0;
+  virtual Status encode(const GpuFrameContext& ctx, std::string& error) = 0;
 };
 
 struct FrameRequest {
@@ -213,7 +213,7 @@ class Runtime {
   // GPU, allocates the persistent device buffers and pinned host staging, and
   // builds the dispatch table. On failure nothing is left initialized.
   Status initialize(DeviceBackend& backend, RuntimeConfig config,
-                    std::string* error = nullptr);
+                    std::string& error);
   void shutdown() noexcept;
   bool initialized() const noexcept;
 
@@ -230,18 +230,18 @@ class Runtime {
   // waits on that event instead of re-uploading. Only one prefetch may be
   // outstanding. The source is copied into pinned staging immediately.
   Status prefetch_source(int frame_index, const void* host_source,
-                         std::size_t bytes, std::string* error = nullptr);
+                         std::size_t bytes, std::string& error);
 
   // Enqueue and complete the frame through reference fill. Payloads are
   // downloaded and merged in raster order; reconstruction is gathered and the
   // next reference slot is filled. The reference fill itself is left pending
   // and gated into the next frame's compute stream.
   Status dispatch_frame(const FrameRequest& request, FrameWorker& worker,
-                        FrameResult& result, std::string* error = nullptr);
+                        FrameResult& result, std::string& error);
 
   // Wait for pending reference-fill events. Not needed in the per-frame path;
   // use before shutdown or when a caller wants a fully drained timeline.
-  Status synchronize(std::string* error = nullptr);
+  Status synchronize(std::string& error);
 
  private:
   struct Impl;

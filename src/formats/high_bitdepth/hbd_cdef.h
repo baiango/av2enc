@@ -158,9 +158,9 @@ inline cdef::CdefBlockSse eval_block16(const HbdFilterFrame16& f,
 // requested CdefStrengths (1..8); 1 codes the header-only form.
 inline bool plan_cdef(const HbdFilterFrame16& frame, int damping,
                       int num_strengths, HbdCdefPlan* plan,
-                      std::string* error) {
-  auto fail = [error](const std::string& text) {
-    if (error != nullptr) *error = text;
+                      std::string& error) {
+  auto fail = [&error](const std::string& text) {
+    error = text;
     return false;
   };
   if (plan == nullptr) return fail("cdef plan: null output");
@@ -240,7 +240,7 @@ inline bool plan_cdef(const HbdFilterFrame16& frame, int damping,
   plan->sse_after = result.sse_total;
   plan->options = result.options;
   plan->options.bit_depth = frame.bit_depth;
-  if (error != nullptr) error->clear();
+  error.clear();
   return true;
 }
 
@@ -251,7 +251,7 @@ inline bool apply_cdef16(const HbdCdefPlan& plan, const fmt::Format& format,
                          const std::uint16_t* const src[3],
                          std::uint16_t* const dst[3], const int stride[3],
                          int mi_cols, int mi_rows,
-                         std::string* error) {
+                         std::string& error) {
   if (!plan.enabled) return true;
   const int num_planes = fmt::num_planes(format.chroma);
   cdef::CdefFrame16 frame{};
@@ -278,9 +278,7 @@ inline bool apply_cdef16(const HbdCdefPlan& plan, const fmt::Format& format,
   options.bit_depth = plan.options.bit_depth;
   const cdef::CdefStatus status = cdef::cdef_frame16(frame, options);
   if (status != cdef::CdefStatus::kOk) {
-    if (error != nullptr) {
-      *error = std::string("hbd cdef: ") + cdef::cdef_status_string(status);
-    }
+error = std::string("hbd cdef: ") + cdef::cdef_status_string(status);
     return false;
   }
   return true;

@@ -54,7 +54,7 @@ class BitReader {
   // uvlc() (§4.11.3): leadingZeros zero bits, a one bit, then leadingZeros
   // payload bits. Returns false for leadingZeros >= 32 and for a truncated
   // payload.
-  bool read_uvlc(std::uint32_t& value, std::string* error = nullptr) {
+  bool read_uvlc(std::uint32_t& value, std::string& error) {
     unsigned leading_zeros = 0;
     bool bit = false;
     while (true) {
@@ -87,7 +87,7 @@ class BitReader {
   // bits, value = (q << n) + remainder. q is limited to 31, so the maximum
   // return value is (32 << n) - 1. A 32nd consecutive one bit is invalid
   // (the syntax process returns -1).
-  bool read_rg(unsigned n, std::uint32_t& value, std::string* error = nullptr) {
+  bool read_rg(unsigned n, std::uint32_t& value, std::string& error) {
     if (n > 24U) {
       set_error(error, "rg(n) parameter out of range");
       return false;
@@ -123,8 +123,8 @@ class BitReader {
   std::span<const std::uint8_t> data() const { return data_; }
 
  private:
-  static void set_error(std::string* error, const char* message) {
-    if (error != nullptr) *error = message;
+  static void set_error(std::string& error, const char* message) {
+    error = message;
   }
 
   std::span<const std::uint8_t> data_{};

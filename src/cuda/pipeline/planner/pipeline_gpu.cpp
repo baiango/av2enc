@@ -10,10 +10,8 @@
 namespace av2enc::cuda::pipeline {
 namespace {
 
-void set_error(std::string* error, const std::string& message) {
-  if (error != nullptr) {
-    *error = message;
-  }
+void set_error(std::string& error, const std::string& message) {
+error = message;
 }
 
 }  // namespace
@@ -22,7 +20,7 @@ bool compute_arena_budget(std::uint64_t total_bytes,
                           std::uint64_t free_bytes,
                           std::uint64_t headroom_bytes,
                           std::uint64_t cap_bytes, ArenaBudget& budget,
-                          std::string* error) {
+                          std::string& error) {
   budget = ArenaBudget{};
   budget.device_total_bytes = total_bytes;
   budget.device_free_bytes = free_bytes;
@@ -70,11 +68,9 @@ bool compute_arena_budget(std::uint64_t total_bytes,
 bool build_gpu_dispatch(const av2enc::pipeline::FramePipelinePlan& plan,
                         std::uint64_t arena_capacity_bytes,
                         std::vector<GpuWorkerPlan>& workers,
-                        std::string* error) {
+                        std::string& error) {
   workers.clear();
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   if (!plan.valid) {
     set_error(error, "gpu dispatch: frame plan is not valid");
     return false;

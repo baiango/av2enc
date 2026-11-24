@@ -123,7 +123,7 @@ int matrix_value(const QmFrameState& state, int plane, int tx_size,
 // `segmentation_enabled` controls whether pic_qm_num_minus_1 is coded.
 [[nodiscard]] bool write_setup_qm_params(BitWriter& writer, const QmFrameState& state,
                            int num_planes, bool segmentation_enabled,
-                           std::string* error);
+                           std::string& error);
 
 // Fills a UserQmLevel with one constant coefficient (default 32 == identity
 // because Round2(q * 32, 5) == q).  Returns false for value 0.
@@ -143,11 +143,11 @@ struct QmObuConfig {
 };
 [[nodiscard]] bool write_quantizer_matrix_obu_payload(BitWriter& writer,
                                         const QmObuConfig& config,
-                                        std::string* error);
+                                        std::string& error);
 
 // Complete Annex B.2 OBU (leb128 length + header + payload).
 std::vector<std::uint8_t> make_quantizer_matrix_obu(
-    const QmObuConfig& config, std::string* error);
+    const QmObuConfig& config, std::string& error);
 
 // OBU type value for OBU_QUANTIZATION_MATRIX (§6.2.2 Table 6.1).
 inline constexpr std::uint8_t kObuTypeQuantizationMatrix = 22;

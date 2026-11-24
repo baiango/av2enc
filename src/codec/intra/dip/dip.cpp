@@ -480,36 +480,28 @@ bool dip_mode_info_present(const SyntaxContext& context) noexcept {
 
 bool validate_dip_mode_info(const SyntaxContext& context,
                             const DipModeInfo& info,
-                            std::string* error) noexcept {
+                            std::string& error) noexcept {
   const bool present = dip_mode_info_present(context);
   if (!present) {
     if (info.use_dip) {
-      if (error != nullptr) {
-        *error = "use_dip is not signallable for this block";
-      }
+error = "use_dip is not signallable for this block";
       return false;
     }
     if (info.dip_transpose || info.dip_mode != 0) {
-      if (error != nullptr) {
-        *error = "dip_transpose/dip_mode present without use_dip";
-      }
+error = "dip_transpose/dip_mode present without use_dip";
       return false;
     }
     return true;
   }
   if (!info.use_dip) {
     if (info.dip_transpose || info.dip_mode != 0) {
-      if (error != nullptr) {
-        *error = "dip_transpose/dip_mode present without use_dip";
-      }
+error = "dip_transpose/dip_mode present without use_dip";
       return false;
     }
     return true;
   }
   if (info.dip_mode < 0 || info.dip_mode >= kNumModes) {
-    if (error != nullptr) {
-      *error = "dip_mode outside 0..5";
-    }
+error = "dip_mode outside 0..5";
     return false;
   }
   return true;

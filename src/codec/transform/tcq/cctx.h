@@ -102,14 +102,14 @@ struct CctxResult {
                            std::span<const double> v_coeff, int w, int h,
                            const CctxConfig& config,
                            std::vector<CctxResult>* candidates,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // Convenience: minimum-distortion candidate (no rate).  Use
 // cctx_enumerate_scalar() for an RD decision.
 [[nodiscard]] bool cctx_quantize_scalar(std::span<const double> u_coeff,
                           std::span<const double> v_coeff, int w, int h,
                           const CctxConfig& config, CctxResult* result,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 // Forward rotation used by the encoder search (exact inverse of §7.14.6's
 // matrix, including its 256/(c^2+s^2) scale).  Exposed for tests.

@@ -120,7 +120,7 @@ void Model::build_scan(std::int32_t w, std::int32_t h,
 
 bool Model::init(const BlockInfo& info,
                  std::span<const std::int32_t> reference_base_levels_scan,
-                 std::string* error) {
+                 std::string& error) {
   info_ = info;
   qctx_ = info.qctx < 0
               ? 0
@@ -131,37 +131,35 @@ bool Model::init(const BlockInfo& info,
   reference_eob_ = 0;
 
   if (info.plane != 0) {
-    if (error != nullptr) *error = "TCQ is luma-only (plane 0)";
+    error = "TCQ is luma-only (plane 0)";
     return false;
   }
   if (!info.tx_class_2d) {
-    if (error != nullptr) *error = "TCQ requires TX_CLASS_2D";
+    error = "TCQ requires TX_CLASS_2D";
     return false;
   }
   const txv::TxParams& params = info.params;
   if (params.coded_w <= 0 || params.coded_h <= 0 || params.w <= 0 ||
       params.h <= 0) {
-    if (error != nullptr) *error = "invalid transform geometry";
+    error = "invalid transform geometry";
     return false;
   }
   if (params.tx_size < 0 || params.tx_size >= 25) {
-    if (error != nullptr) *error = "tx_size must be in [0, 24]";
+    error = "tx_size must be in [0, 24]";
     return false;
   }
   if (info.txb_skip_context < 0 || info.txb_skip_context >= 10) {
-    if (error != nullptr) *error = "luma txb_skip context must be in [0, 9]";
+    error = "luma txb_skip context must be in [0, 9]";
     return false;
   }
   if (info.dc_sign_context < 0 || info.dc_sign_context > 2) {
-    if (error != nullptr) *error = "dc_sign_context must be in [0, 2]";
+    error = "dc_sign_context must be in [0, 2]";
     return false;
   }
   const std::int32_t area = params.w * params.h;
   if (reference_base_levels_scan.size() !=
       static_cast<std::size_t>(area)) {
-    if (error != nullptr) {
-      *error = "reference base level span size does not match the block";
-    }
+error = "reference base level span size does not match the block";
     return false;
   }
   area_ = area;
@@ -277,11 +275,11 @@ bool Model::init(const BlockInfo& info,
 
   for (const Position& p : positions_) {
     if (p.is_lf != 0 ? p.base_ctx > 32 : p.base_ctx > 19) {
-      if (error != nullptr) *error = "coeff_base context out of range";
+      error = "coeff_base context out of range";
       return false;
     }
     if (p.is_lf != 0 ? p.br_ctx > 13 : p.br_ctx > 6) {
-      if (error != nullptr) *error = "coeff_br context out of range";
+      error = "coeff_br context out of range";
       return false;
     }
   }

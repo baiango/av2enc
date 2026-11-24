@@ -135,7 +135,7 @@ struct VideoRefParsedHeader {
 
 // sequence_header_obu() mirror with the three gate flags.
 std::vector<std::uint8_t> make_video_ref_sequence_header_obu(
-    const VideoRefConfig& config, std::string* error);
+    const VideoRefConfig& config, std::string& error);
 
 // frame_header_info() syntax without is_first_tile_group and without
 // byte_alignment().  `header_bits` receives the number of bits of
@@ -147,7 +147,7 @@ std::size_t write_video_ref_frame_header(BitWriter& writer,
                                       const FrameRefState& state,
                                       const VideoTileInfo& tiles,
                                       std::size_t* header_bits,
-                                      std::string* error);
+                                      std::string& error);
 
 // Complete Annex B OBUs for a frame split into `tile_payloads` (raster order).
 // One OBU is returned per tile group:
@@ -164,7 +164,7 @@ std::vector<std::vector<std::uint8_t>> make_video_ref_frame_obus(
     const VideoRefConfig& config, const VideoRefFrameHeader& header,
     const RefList& refs, const FrameRefState& state, const VideoTileInfo& tiles,
     std::span<const std::vector<std::uint8_t>> tile_payloads,
-    bool split_tile_groups, std::string* error);
+    bool split_tile_groups, std::string& error);
 
 // Independent reader for the same header subset.  Validates every value
 // against `refs`/`state` exactly like the writer.  `tiles` must describe the
@@ -173,7 +173,7 @@ std::vector<std::vector<std::uint8_t>> make_video_ref_frame_obus(
                               const VideoRefConfig& config, const RefList& refs,
                               const FrameRefState& state,
                               const VideoTileInfo& tiles,
-                              VideoRefParsedHeader* out, std::string* error);
+                              VideoRefParsedHeader* out, std::string& error);
 
 // §5.19 non-first tile group header reader:
 //   frame_header_present_flag f(1)
@@ -181,6 +181,6 @@ std::vector<std::vector<std::uint8_t>> make_video_ref_frame_obus(
 [[nodiscard]] bool read_video_ref_nonfirst_tile_group_header(RefBitReader& reader,
                                             const FrameHeaderStore& store,
                                             bool* frame_header_present,
-                                            std::string* error);
+                                            std::string& error);
 
 }  // namespace av2enc::frame::ref_fields

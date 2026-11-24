@@ -134,7 +134,7 @@ GrainModel NormalizeModel(const GrainModel& model, GrainChromaIdc idc);
 
 // §6.17.10.2 bitstream conformance checks that this writer enforces.  If
 // `why` is non-null it receives a short reason on failure.
-[[nodiscard]] bool ValidateModel(const GrainModel& model, GrainChromaIdc idc, std::string* why);
+[[nodiscard]] bool ValidateModel(const GrainModel& model, GrainChromaIdc idc, std::string& why);
 
 // §5.14 payload: fgm_update_flags, fgm_chroma_idc, and one
 // film_grain_model() + save_grain_model() per set flag bit.
@@ -144,26 +144,26 @@ struct FilmGrainObu {
   GrainModel models[kNumGrainSlots];  // slot i used iff bit i is set
 };
 
-[[nodiscard]] bool ValidateObu(const FilmGrainObu& obu, std::string* why);
+[[nodiscard]] bool ValidateObu(const FilmGrainObu& obu, std::string& why);
 
 // Payload writers/readers.  `WriteObuPayload` writes the §5.14 syntax followed
 // by §5.2.3 trailing_bits().  `ReadObuPayload` parses the syntax, verifies the
 // trailing bits, and reports how many payload bits were consumed (including
 // the trailing one bit, up to but not including zero padding).
 [[nodiscard]] bool WriteObuPayload(BitWriter& writer, const FilmGrainObu& obu,
-                     std::string* error);
+                     std::string& error);
 [[nodiscard]] bool ReadObuPayload(std::span<const std::uint8_t> payload, FilmGrainObu* obu,
-                    std::size_t* consumed_bits, std::string* error);
+                    std::size_t* consumed_bits, std::string& error);
 
 // Annex B.2 framing: leb128(size) obu_header() payload.  No extension flag:
 // OBU_FILM_GRAIN is not in is_extensible_obu() (§5.2.1 p.54).
 std::vector<std::uint8_t> MakeFilmGrainObu(const FilmGrainObu& obu,
-                                           std::string* error);
+                                           std::string& error);
 
 // Parses one complete Annex B OBU starting at `data[0]`.  `consumed` receives
 // the number of bytes (leb128 prefix + header + payload).
 [[nodiscard]] bool ReadFilmGrainObu(std::span<const std::uint8_t> data, FilmGrainObu* obu,
-                      std::size_t* consumed, std::string* error);
+                      std::size_t* consumed, std::string& error);
 
 // §5.18.10.1 film_grain_config().
 //
@@ -196,13 +196,13 @@ struct FilmGrainConfigContext {
 // apply_grain required by inference but false).
 [[nodiscard]] bool WriteFilmGrainConfig(BitWriter& writer, const FilmGrainConfig& config,
                           const FilmGrainConfigContext& ctx,
-                          std::string* error);
+                          std::string& error);
 
 // Reads the syntax.  `ctx` supplies the sequence/frame-header state.
 [[nodiscard]] bool ReadFilmGrainConfig(std::span<const std::uint8_t> payload,
                          std::size_t* bit_position,
                          const FilmGrainConfigContext& ctx,
-                         FilmGrainConfig* config, std::string* error);
+                         FilmGrainConfig* config, std::string& error);
 
 // Exact number of bits film_grain_config() occupies for `config`/`ctx`.
 // Returns 0 for an invalid config (see WriteFilmGrainConfig) as well as for
@@ -238,11 +238,11 @@ class GrainSlotState {
 
   // save_grain_model(i).
   bool SaveModel(int slot, const GrainModel& model, GrainChromaIdc idc,
-                 int tlayer_id, int mlayer_id, std::string* error);
+                 int tlayer_id, int mlayer_id, std::string& error);
 
   // load_grain_model(idx).
   bool LoadModel(int slot, GrainModel* model, GrainChromaIdc* idc,
-                 std::string* error) const;
+                 std::string& error) const;
 
   const GrainSlot& slot(int i) const { return slots_[i]; }
 
@@ -259,7 +259,7 @@ class GrainSlotState {
                                 const FilmGrainConfig& config,
                                 GrainChromaIdc frame_chroma_idc,
                                 int tlayer_id, int mlayer_id,
-                                std::string* why);
+                                std::string& why);
 
 // Converts to the decode-side synthesis struct (field-for-field; no
 // validation).  Callers pass the frame geometry to

@@ -14,10 +14,8 @@ av2enc::rdo::IntraModeChoice decide_luma_intra(
     std::span<av2enc::rdo::IntraCandidateCost> scratch,
     const LambdaConfig& config,
     av2enc::rdo::IntraRateEstimator estimator, void* estimator_context,
-    std::string* error, const IntraBlockGeometry& geometry) {
-  if (error != nullptr) {
-    error->clear();
-  }
+    std::string& error, const IntraBlockGeometry& geometry) {
+error.clear();
   const av2enc::rdo::IntraRdoConfig selector_config = make_intra_config(config);
   if (!av2enc::rdo::validate_intra_rdo_config(selector_config, error)) {
     return av2enc::rdo::IntraModeChoice{};
@@ -26,9 +24,7 @@ av2enc::rdo::IntraModeChoice decide_luma_intra(
     return av2enc::rdo::select_intra_mode(candidates, selector_config, error);
   }
   if (scratch.size() < candidates.size()) {
-    if (error != nullptr) {
-      *error = "intra rate-estimator scratch span is too small";
-    }
+error = "intra rate-estimator scratch span is too small";
     return av2enc::rdo::IntraModeChoice{};
   }
 
@@ -48,8 +44,8 @@ av2enc::rdo::IntraModeChoice decide_luma_intra(
     std::string local_error;
     if (!av2enc::rdo::estimate_intra_rates(
             estimator, estimator_context, request, estimate, &local_error)) {
-      if (error != nullptr && error->empty()) {
-        *error = local_error;
+      if (error.empty()) {
+        error = local_error;
       }
       // Leave the supplied rates in place; the selector validates them.
       continue;

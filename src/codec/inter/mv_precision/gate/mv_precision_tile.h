@@ -76,6 +76,6 @@ struct TileOutput {
 };
 
 [[nodiscard]] bool write_tile(int width, int height, const TileConfig& config,
-                TileOutput* output, std::string* error);
+                TileOutput* output, std::string& error);
 
 }  // namespace av2enc::inter::mvprec::gate

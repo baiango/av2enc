@@ -342,7 +342,7 @@ class Workspace {
   // Allocates the persistent planes and work arrays exactly once.  On failure
   // the bump pointer is restored; kArenaTooSmall reports the requirement.
   ChromaStatus init(Arena& arena, const Config& config,
-                    std::string* error = nullptr,
+                    std::string& error,
                     std::uint64_t* required_out = nullptr);
 
   bool initialized() const noexcept { return arena_ != nullptr; }
@@ -387,30 +387,30 @@ class Workspace {
   // launches, synchronises on `stream`, then rewinds the arena.  Synchronous
   // by design: the scratch is dead before it is reused.
   ChromaStatus predict(const PredictJob* host_jobs, int count,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
   ChromaStatus make_residuals(const ResidualJob* host_jobs, int count,
-                              cudaStream_t stream = nullptr,
-                              std::string* error = nullptr);
+                              cudaStream_t stream,
+                              std::string& error);
   ChromaStatus forward(const ForwardJob* host_jobs, int count,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
   ChromaStatus dequantize(const DequantJob* host_jobs, int count,
-                          cudaStream_t stream = nullptr,
-                          std::string* error = nullptr);
+                          cudaStream_t stream,
+                          std::string& error);
   ChromaStatus inverse(const InverseJob* host_jobs, int count,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
   ChromaStatus reconstruct(const ReconstructJob* host_jobs, int count,
-                           cudaStream_t stream = nullptr,
-                           std::string* error = nullptr);
+                           cudaStream_t stream,
+                           std::string& error);
   ChromaStatus copy_planes(const CopyJob* host_jobs, int count,
-                           cudaStream_t stream = nullptr,
-                           std::string* error = nullptr);
+                           cudaStream_t stream,
+                           std::string& error);
 
  private:
   ChromaStatus launch_error(const char* what, cudaError_t status,
-                            std::string* error) const;
+                            std::string& error) const;
 
   Arena* arena_ = nullptr;
   Config config_{};
@@ -512,7 +512,7 @@ inline std::uint64_t required_device_bytes(const Config& config) noexcept {
 }
 
 inline ChromaStatus Workspace::init(Arena& arena, const Config& config,
-                                    std::string* error,
+                                    std::string& error,
                                     std::uint64_t* required_out) {
   arena_ = nullptr;
   config_ = Config{};
@@ -529,25 +529,19 @@ inline ChromaStatus Workspace::init(Arena& arena, const Config& config,
 
   if (!config_valid(config)) {
     if (required_out != nullptr) *required_out = 0;
-    if (error != nullptr) {
-      *error = "chroma_formats: invalid workspace configuration";
-    }
+error = "chroma_formats: invalid workspace configuration";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument, 0};
   }
 
   const std::uint64_t need = required_device_bytes(config);
   if (required_out != nullptr) *required_out = need;
   if (!arena.initialized()) {
-    if (error != nullptr) {
-      *error = "chroma_formats: arena is not initialized";
-    }
+error = "chroma_formats: arena is not initialized";
     return ChromaStatus{ChromaStatus::Code::kNotInitialized, need};
   }
   if (arena.remaining() < need) {
-    if (error != nullptr) {
-      *error = "chroma_formats: arena needs " + std::to_string(need) +
-               " bytes, " + std::to_string(arena.remaining()) + " available";
-    }
+error = "chroma_formats: arena needs " + std::to_string(need) +
+         " bytes, " + std::to_string(arena.remaining()) + " available";
     return ChromaStatus{ChromaStatus::Code::kArenaTooSmall, need};
   }
 
@@ -627,10 +621,8 @@ inline ChromaStatus Workspace::init(Arena& arena, const Config& config,
     d_coeff_ = nullptr;
     d_levels_ = nullptr;
     d_dequant_ = nullptr;
-    if (error != nullptr) {
-      *error = "chroma_formats: arena exhausted after " +
-               std::to_string(need) + " bytes";
-    }
+error = "chroma_formats: arena exhausted after " +
+         std::to_string(need) + " bytes";
     return ChromaStatus{ChromaStatus::Code::kArenaTooSmall, need};
   }
 

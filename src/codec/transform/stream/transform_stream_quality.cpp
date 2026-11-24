@@ -233,7 +233,7 @@ struct Stats {
 bool build_stream(const av2enc::still::plan::FramePlan& plan,
                   const std::vector<LeafData>& leaves, const Options& options,
                   int which, std::vector<std::uint8_t>* frame,
-                  std::uint32_t* tile_bytes, std::string* error) {
+                  std::uint32_t* tile_bytes, std::string& error) {
   std::vector<av2enc::still::syntax::BlockSyntax> blocks;
   blocks.reserve(plan.tree.size());
   std::vector<std::int32_t> levels;
@@ -252,7 +252,7 @@ bool build_stream(const av2enc::still::plan::FramePlan& plan,
     if (node.child_count == 0) {
       if (node.leaf_index >= leaves.size() ||
           node.leaf_index >= plan.blocks.size()) {
-        *error = "plan leaf index outside the replay data";
+        error = "plan leaf index outside the replay data";
         return false;
       }
       const LeafData& leaf = leaves[node.leaf_index];
@@ -479,7 +479,7 @@ void print_stats(const char* label, const Stats& stats) {
 }
 
 bool write_ivf(const std::string& path, std::span<const std::uint8_t> frame,
-               std::uint32_t width, std::uint32_t height, std::string* error) {
+               std::uint32_t width, std::uint32_t height, std::string& error) {
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
   header.height = static_cast<std::uint16_t>(height);

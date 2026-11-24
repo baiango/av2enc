@@ -32,26 +32,26 @@ namespace av2enc::cuda::txpart {
 Status forward_batch(Arena& arena, Workspace& workspace,
                      const PlanBatch& batch,
                      const std::int16_t* d_residual_adj, double* d_coeff,
-                     std::int32_t* d_levels, cudaStream_t stream = nullptr,
-                     std::uint64_t* required_bytes = nullptr,
-                     std::string* error = nullptr);
+                     std::int32_t* d_levels, cudaStream_t stream,
+                     std::uint64_t* required_bytes,
+                     std::string& error);
 
 // levels (int32) -> coded residual (int16), one job per TX part.  The fused
 // tx_variants inverse dequantizes inside the kernel.
 Status inverse_batch(Arena& arena, Workspace& workspace,
                      const PlanBatch& batch, const std::int32_t* d_levels,
                      std::int16_t* d_residual_coded,
-                     cudaStream_t stream = nullptr,
-                     std::uint64_t* required_bytes = nullptr,
-                     std::string* error = nullptr);
+                     cudaStream_t stream,
+                     std::uint64_t* required_bytes,
+                     std::string& error);
 
 // levels (int32) -> dequant (int32).  `d_dequant == d_levels` is the supported
 // in-place form (each thread reads then writes its own element).
 Status dequantize_batch(Arena& arena, Workspace& workspace,
                         const PlanBatch& batch, const std::int32_t* d_levels,
-                        std::int32_t* d_dequant, cudaStream_t stream = nullptr,
-                        std::uint64_t* required_bytes = nullptr,
-                        std::string* error = nullptr);
+                        std::int32_t* d_dequant, cudaStream_t stream,
+                        std::uint64_t* required_bytes,
+                        std::string& error);
 
 // levels -> dequant (optionally in place) -> coded residual (int16).  Both the
 // dequant and the inverse run over the same device-resolved job array.
@@ -60,9 +60,9 @@ Status inverse_dequant_batch(Arena& arena, Workspace& workspace,
                              const std::int32_t* d_levels,
                              std::int32_t* d_dequant,
                              std::int16_t* d_residual_coded,
-                             cudaStream_t stream = nullptr,
-                             std::uint64_t* required_bytes = nullptr,
-                             std::string* error = nullptr);
+                             cudaStream_t stream,
+                             std::uint64_t* required_bytes,
+                             std::string& error);
 
 // Boots the §5.20.7.30 scan table on the device into a caller-provided view
 // (typically arena scratch).  This is the device twin of the host generation
@@ -74,9 +74,9 @@ Status build_scan_tables_device(const ScanTableView& view,
 // grid.mi_rows * grid.mi_cols bytes each; nothing is allocated here.
 Status build_grid_device(Arena& arena, Workspace& workspace,
                          const PlanBatch& batch, const TxGridView& grid,
-                         cudaStream_t stream = nullptr,
-                         std::uint64_t* required_bytes = nullptr,
-                         std::string* error = nullptr);
+                         cudaStream_t stream,
+                         std::uint64_t* required_bytes,
+                         std::string& error);
 
 }  // namespace av2enc::cuda::txpart
 

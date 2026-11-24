@@ -13,32 +13,26 @@ void copy_array(std::uint16_t* dst, const std::uint16_t* src, int n) {
   std::memcpy(dst, src, static_cast<std::size_t>(n) * sizeof(std::uint16_t));
 }
 
-bool fail(std::string* error, const char* what) {
-  if (error != nullptr) {
-    *error = what;
-  }
+bool fail(std::string& error, const char* what) {
+error = what;
   return false;
 }
 
 bool sym_encode(av2::Encoder& encoder, std::uint16_t* cdf, int n, int symbol,
-                std::string* error) {
+                std::string& error) {
   const av2::Status status = encoder.encode_symbol(cdf, n, symbol);
   if (status != av2::Status::kOk) {
-    if (error != nullptr) {
-      *error = av2::status_name(status);
-    }
+error = av2::status_name(status);
     return false;
   }
   return true;
 }
 
 bool sym_decode(av2::Decoder& decoder, std::uint16_t* cdf, int n, int* symbol,
-                std::string* error) {
+                std::string& error) {
   const av2::Status status = decoder.decode_symbol(cdf, n, symbol);
   if (status != av2::Status::kOk) {
-    if (error != nullptr) {
-      *error = av2::status_name(status);
-    }
+error = av2::status_name(status);
     return false;
   }
   return true;
@@ -131,10 +125,8 @@ bool valid_syntax(const CflSyntax& syntax, bool enable_cfl_intra,
 bool write_cfl_alphas(av2::Encoder& encoder, CflCdfs& cdfs,
                       const CflSyntax& syntax, bool enable_cfl_intra,
                       bool mhccp_allowed, int size_group,
-                      std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
+                      std::string& error) {
+error.clear();
   if (size_group < 0 || size_group >= 4) {
     return fail(error, "cfl_mh_dir size_group out of range");
   }
@@ -189,13 +181,11 @@ bool write_cfl_alphas(av2::Encoder& encoder, CflCdfs& cdfs,
 
 bool read_cfl_alphas(av2::Decoder& decoder, CflCdfs& cdfs,
                      bool enable_cfl_intra, bool mhccp_allowed,
-                     int size_group, CflSyntax* syntax, std::string* error) {
+                     int size_group, CflSyntax* syntax, std::string& error) {
   if (syntax == nullptr) {
     return fail(error, "null syntax output");
   }
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   if (size_group < 0 || size_group >= 4) {
     return fail(error, "cfl_mh_dir size_group out of range");
   }

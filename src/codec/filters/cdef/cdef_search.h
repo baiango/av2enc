@@ -447,11 +447,9 @@ inline int grid_rows(const CdefSearchFrame& f) {
   return (f.mi_rows + kCdefSize4 - 1) / kCdefSize4;
 }
 
-inline bool valid_frame(const CdefSearchFrame& f, std::string* error) {
-  auto fail = [error](const char* text) {
-    if (error != nullptr) {
-      *error = text;
-    }
+inline bool valid_frame(const CdefSearchFrame& f, std::string& error) {
+  auto fail = [&error](const char* text) {
+error = text;
     return false;
   };
   if (f.width <= 0 || f.height <= 0 || f.mi_cols <= 0 || f.mi_rows <= 0) {
@@ -486,11 +484,9 @@ inline bool valid_frame(const CdefSearchFrame& f, std::string* error) {
 // Normalises the candidate ladder: appends the default ladder when none was
 // supplied, inserts the identity set when requested, and removes it when not.
 inline bool build_pool(const CdefSearchOptions& options,
-                       std::vector<CdefStrength>* pool, std::string* error) {
-  auto fail = [error](const char* text) {
-    if (error != nullptr) {
-      *error = text;
-    }
+                       std::vector<CdefStrength>* pool, std::string& error) {
+  auto fail = [&error](const char* text) {
+error = text;
     return false;
   };
   pool->clear();
@@ -560,13 +556,11 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
                    int n64_rows, const std::vector<std::int64_t>& sse,
                    const std::vector<std::int64_t>& off_sse,
                    const CdefSearchOptions& options,
-                   CdefSearchResult* result, std::string* error,
+                   CdefSearchResult* result, std::string& error,
                    const std::vector<std::int64_t>* rank = nullptr,
                    const std::vector<std::int64_t>* off_rank = nullptr) {
-  auto fail = [error](const char* text) {
-    if (error != nullptr) {
-      *error = text;
-    }
+  auto fail = [&error](const char* text) {
+error = text;
     return false;
   };
   const int nblocks = n64_cols * n64_rows;
@@ -808,11 +802,9 @@ inline bool select(const std::vector<CdefStrength>& pool, int n64_cols,
 // candidate/header index.  Returns false with a reason on invalid input.
 inline bool cdef_search_plan(const CdefSearchFrame& frame,
                              const CdefSearchOptions& options,
-                             CdefSearchResult* result, std::string* error) {
-  auto fail = [error](const std::string& text) {
-    if (error != nullptr) {
-      *error = text;
-    }
+                             CdefSearchResult* result, std::string& error) {
+  auto fail = [&error](const std::string& text) {
+error = text;
     return false;
   };
   if (result == nullptr) {
@@ -975,9 +967,7 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
                              perceptual ? &off_cost : nullptr)) {
     return false;
   }
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return true;
 }
 

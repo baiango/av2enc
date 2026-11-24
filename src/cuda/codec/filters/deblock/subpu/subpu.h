@@ -164,8 +164,8 @@ const char* subpu_status_name(SubPuStatus status) noexcept;
 // exact required_device_bytes(config); no allocation fallback exists.
 SubPuStatus allocate_checked(Arena& arena, const SubPuConfig& config,
                              SubPuBuffers* out,
-                             std::uint64_t* required_bytes = nullptr,
-                             std::string* error = nullptr);
+                             std::uint64_t* required_bytes,
+                             std::string& error);
 
 // Rewinds the arena to the allocation mark and clears the pointers.  Safe to
 // call on a default-constructed/unallocated buffer set.
@@ -174,40 +174,40 @@ void deallocate(Arena& arena, SubPuBuffers& buffers) noexcept;
 // Zeroes both storage planes (SubPuSize/ColBase/RowBase), matching
 // SubPuGrid::reset().
 SubPuStatus reset_grid(const SubPuBuffers& buffers,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
 
 // Applies `count` §7.13.3.15 invocations in descriptor order and fills
 // `host_results[i]` with the SubPuCode of job i.  `host_results` may be null.
 // The entry point synchronises on `stream`; jobs that target overlapping cells
 // within one batch must not be used unless their write values agree.
 SubPuStatus save_batch(const SubPuBuffers& buffers, const SubPuJob* host_jobs,
-                       int count, SubPuResult* host_results = nullptr,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       int count, SubPuResult* host_results,
+                       cudaStream_t stream,
+                       std::string& error);
 
 // Convenience form of save_batch() for one job.
 SubPuStatus save_one(const SubPuBuffers& buffers, const SubPuJob& job,
-                     SubPuResult* result = nullptr,
-                     cudaStream_t stream = nullptr,
-                     std::string* error = nullptr);
+                     SubPuResult* result,
+                     cudaStream_t stream,
+                     std::string& error);
 
 // Fills the device Tx table with (size, Tx_Width, Tx_Height, find_tx_size
 // round-trip) for all 25 TX sizes.
 SubPuStatus build_tx_table(const SubPuBuffers& buffers,
-                           cudaStream_t stream = nullptr,
-                           std::string* error = nullptr);
+                           cudaStream_t stream,
+                           std::string& error);
 
 // Copies the 25-row device Tx table into `out` (`capacity >= 25`).
 SubPuStatus download_tx_table(const SubPuBuffers& buffers, SubPuTxEntry* out,
-                              int capacity, cudaStream_t stream = nullptr,
-                              std::string* error = nullptr);
+                              int capacity, cudaStream_t stream,
+                              std::string& error);
 
 // Copies the full grid (both storage planes) into `out`, resizing its vectors
 // to mi_rows*mi_cols.  Synchronises on `stream`.
 SubPuStatus download_grid(const SubPuBuffers& buffers, SubPuHostGrid* out,
-                          cudaStream_t stream = nullptr,
-                          std::string* error = nullptr);
+                          cudaStream_t stream,
+                          std::string& error);
 
 }  // namespace av2enc::cuda::subpu
 

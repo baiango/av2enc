@@ -18,11 +18,9 @@ namespace {
 constexpr int kGmeExtractThreads = 256;
 constexpr int kGmeImageThreads = 256;
 
-void set_error(std::string* error, const char* context,
+void set_error(std::string& error, const char* context,
                const std::string& detail) {
-  if (error != nullptr) {
-    *error = std::string(context) + ": " + detail;
-  }
+error = std::string(context) + ": " + detail;
 }
 
 bool buffers_ready(const GmeBuffers& buffers) noexcept {
@@ -245,7 +243,7 @@ __global__ void gme_warp_sse_kernel(GmeParams params, const GmeU8* ref,
 
 GmeStatus estimate_points(const GmeBuffers& buffers, int job, int count,
                           const GmeOptions& options, cudaStream_t stream,
-                          std::string* error) {
+                          std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "estimate_points", "buffers are not initialized");
     return GmeStatus::kNotInitialized;
@@ -273,7 +271,7 @@ GmeStatus estimate_points(const GmeBuffers& buffers, int job, int count,
 
 GmeStatus estimate_blocks(const GmeBuffers& buffers, int job, int count,
                           const GmeOptions& options, cudaStream_t stream,
-                          std::string* error) {
+                          std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "estimate_blocks", "buffers are not initialized");
     return GmeStatus::kNotInitialized;
@@ -310,7 +308,7 @@ GmeStatus estimate_blocks(const GmeBuffers& buffers, int job, int count,
 
 GmeStatus estimate_warps(const GmeBuffers& buffers, int job, int count,
                          const GmeOptions& options, cudaStream_t stream,
-                         std::string* error) {
+                         std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "estimate_warps", "buffers are not initialized");
     return GmeStatus::kNotInitialized;
@@ -350,7 +348,7 @@ GmeStatus warp_plane_bilinear(const GmeBuffers& buffers,
                               int src_w, int src_h, int src_stride,
                               GmeU8* d_dst, int dst_w, int dst_h,
                               int dst_stride, int bit_depth,
-                              cudaStream_t stream, std::string* error) {
+                              cudaStream_t stream, std::string& error) {
   (void)buffers;
   if (d_src == nullptr || d_dst == nullptr || src_w <= 0 || src_h <= 0 ||
       dst_w <= 0 || dst_h <= 0 || src_stride < src_w ||
@@ -375,7 +373,7 @@ GmeStatus warp_plane_sse(const GmeBuffers& buffers, const GmeParams& params,
                          int ref_stride, const GmeU8* d_cur, int cur_w,
                          int cur_h, int cur_stride, int bit_depth,
                          GmeI64* d_sse, cudaStream_t stream,
-                         std::string* error) {
+                         std::string& error) {
   (void)buffers;
   if (d_ref == nullptr || d_cur == nullptr || d_sse == nullptr ||
       ref_w <= 0 || ref_h <= 0 || cur_w <= 0 || cur_h <= 0 ||

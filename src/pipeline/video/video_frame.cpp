@@ -758,7 +758,7 @@ bool InterFrameEncoder::prepare_qp_plan(std::string& error) {
   header.using_qmatrix = options_.enable_qm;
   if (!deltaq::derive_frame_segmentation(seg_params_, dq_params_,
                                          base_q_index(), header, enc_seg_,
-                                         &error)) {
+                                         error)) {
     error = "segmentation: " + error;
     return false;
   }
@@ -769,7 +769,7 @@ bool InterFrameEncoder::prepare_qp_plan(std::string& error) {
           /*tile_mi_row_end=*/mi_rows_,
           /*enable_ext_seg=*/options_.enable_ext_seg,
           deltaq::max_segments(options_.enable_ext_seg),
-          prev_segment_ids_, &error)) {
+          prev_segment_ids_, error)) {
     error = "segmentation grid: " + error;
     return false;
   }
@@ -784,7 +784,7 @@ bool InterFrameEncoder::prepare_qp_plan(std::string& error) {
               enc_seg_, base_q_index(), base_q_index(),
               /*delta_q_present=*/false,
               static_cast<int>(sb_segment_[static_cast<std::size_t>(i)]),
-              /*ignore_delta_q=*/false, q, &error)) {
+              /*ignore_delta_q=*/false, q, error)) {
         return false;
       }
       if (q < 1 || q > 255) {
@@ -822,7 +822,7 @@ bool InterFrameEncoder::plan_delta_q_steps(std::vector<int>& actual, std::string
     config.cols = cols;
     config.rows = qp_sb_rows();
     rc::DeltaQPlan plan;
-    if (!rc::plan_delta_q(config, targets, plan, &error)) {
+    if (!rc::plan_delta_q(config, targets, plan, error)) {
       error = "delta-Q plan: " + error;
       return false;
     }
@@ -2014,18 +2014,18 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
             ? static_cast<int>(options.base_q_idx)
             : static_cast<int>(options.frame_base_q_idx.front());
     if (!syntax::cdf_image_defaults_for_base_q_idx(cdf_base_q_idx,
-                                                   cdf_defaults, &error)) {
+                                                   cdf_defaults, error)) {
       return false;
     }
     if (!syntax::cdf_image_tables(cdf_frame, cdf_tile, cdf_saved, cdf_defaults,
-                                  cdf_bank_tables, &error)) {
+                                  cdf_bank_tables, error)) {
       return false;
     }
     entropy::avg_cdf::CdfBankConfig bank_config;
     bank_config.enable_avg_cdf = options.avg_cdf;
     bank_config.avg_cdf_type = true;
     bank_config.context_update_tile_id = 0;  // §5.18.7.2 fallback when !avg
-    if (!cdf_bank.init(cdf_bank_tables, bank_config, &error)) {
+    if (!cdf_bank.init(cdf_bank_tables, bank_config, error)) {
       error = "average-CDF bank: " + error;
       return false;
     }
@@ -2035,7 +2035,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
     // their size, so every CdfTable pointer stays valid and begin_frame()
     // copies the new defaults into frame/tile/saved in place.
     if (!syntax::cdf_image_defaults_for_base_q_idx(
-            static_cast<int>(frame_qp(0)), cdf_defaults, &error)) {
+            static_cast<int>(frame_qp(0)), cdf_defaults, error)) {
       return false;
     }
     // CLK resets to the §9.3 defaults (§5.18.2: FrameIsIntra,
@@ -2050,7 +2050,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
   // on the first reset frame of a deep-anchor stream.
   const auto seed_frame_cdfs = [&](int coded_base_q_idx) -> bool {
     if (!syntax::cdf_image_defaults_for_base_q_idx(coded_base_q_idx,
-                                                   cdf_defaults, &error)) {
+                                                   cdf_defaults, error)) {
       return false;
     }
     cdf_bank.begin_frame(/*reset_to_defaults=*/true);
@@ -2234,7 +2234,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
     // value 32 is the identity matrix; false is only returned for 0.
     (void)qm::fill_user_qm_constant(&qm_config.levels[0].user, 32);
     std::string qm_error;
-    qm_obu = qm::make_quantizer_matrix_obu(qm_config, &qm_error);
+    qm_obu = qm::make_quantizer_matrix_obu(qm_config, qm_error);
     if (qm_obu.empty()) {
       error = "quantizer_matrix_obu failed: " + qm_error;
       return false;
@@ -2417,7 +2417,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
     }
     lf.blocks = key_blocks;
     if (!post::run_video_loop_filters(lf, options.loop_filters, &key_filters,
-                                      nullptr, &error)) {
+                                      nullptr, error)) {
       return false;
     }
   }
@@ -2503,7 +2503,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
       header.deblocking_filter_update = false;
       header.seg_info_present = false;
       std::string mfh_error;
-      mfh_obu = frame::mfh::make_multi_frame_header_obu(header, &mfh_error);
+      mfh_obu = frame::mfh::make_multi_frame_header_obu(header, mfh_error);
       if (mfh_obu.empty()) {
         error = "MFH OBU: " + mfh_error;
         return false;
@@ -2514,7 +2514,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
     std::vector<std::uint8_t> seq;
     std::vector<std::uint8_t> obu;
     if (tiled) {
-      seq = post::make_video_sequence_header_obu(config, tile_sequence, &error);
+      seq = post::make_video_sequence_header_obu(config, tile_sequence, error);
       if (seq.empty()) {
         error = "keyframe: tiled sequence header: " + error;
         return false;
@@ -2543,7 +2543,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
       post::VideoTiledFrame frame;
       if (!post::assemble_video_tile_group_from_payloads(
               config, tile_sequence, header, tile_layout, payloads, &frame,
-              &error)) {
+              error)) {
         error = "keyframe: " + error;
         return false;
       }
@@ -2625,7 +2625,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
                           static_cast<int>(key_header.order_hint),
                           static_cast<int>(width),
                           static_cast<int>(height), frame_qp(0),
-                          /*key_frame=*/true, 0, 0, true, true, -1, &error)) {
+                          /*key_frame=*/true, 0, 0, true, true, -1, error)) {
       error = "keyframe reference bank: " + error;
       return false;
     }
@@ -2708,7 +2708,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
       if (!derive_implicit_fields(ref_bank, static_cast<int>(i),
                                   order_hint_bits, static_cast<int>(width),
                                   static_cast<int>(height), 0, ref_deps,
-                                  &implicit, &error)) {
+                                  &implicit, error)) {
         error = "P-frame " + std::to_string(i) + " implicit ref map: " + error;
         return false;
       }
@@ -3105,7 +3105,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
         lf.source_stride[plane] = frame_source.stride[plane];
       }
       if (!post::run_video_loop_filters(lf, options.loop_filters,
-                                        &frame_filters, nullptr, &error)) {
+                                        &frame_filters, nullptr, error)) {
         error = "P-frame " + std::to_string(i) + ": " + error;
         return false;
       }
@@ -3249,7 +3249,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
       post::VideoTiledFrame frame;
       if (!post::assemble_video_tile_group_from_payloads(
               config, tile_sequence, tiled_header, tile_layout, payloads,
-              &frame, &error)) {
+              &frame, error)) {
         error = "P-frame " + std::to_string(i) + ": " + error;
         return false;
       }
@@ -3320,7 +3320,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
                           static_cast<std::uint8_t>(effective_frame_qp),
                           /*key_frame=*/false, 0, 0,
                           header.implicit_output_frame,
-                          header.immediate_output_frame, -1, &error)) {
+                          header.immediate_output_frame, -1, error)) {
       error = "P-frame " + std::to_string(i) + " reference bank: " + error;
       return false;
     }

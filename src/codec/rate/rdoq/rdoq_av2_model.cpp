@@ -191,7 +191,7 @@ double Model::cost_literal(double bits) const {
 
 bool Model::init(const BlockInfo& info,
                  std::span<const std::int32_t> scalar_levels_scan,
-                 std::string* error) {
+                 std::string& error) {
   info_ = info;
   qctx_ = info.qctx < 0
               ? 0
@@ -205,34 +205,34 @@ bool Model::init(const BlockInfo& info,
   const std::int32_t w = params.w;
   const std::int32_t h = params.h;
   if (params.coded_w <= 0 || params.coded_h <= 0 || w <= 0 || h <= 0) {
-    if (error != nullptr) *error = "invalid transform geometry";
+    error = "invalid transform geometry";
     return false;
   }
   const std::int32_t area = w * h;
   if (scalar_levels_scan.size() != static_cast<std::size_t>(area)) {
-    if (error != nullptr) *error = "scalar level span size does not match the block";
+    error = "scalar level span size does not match the block";
     return false;
   }
   if (info.plane < 0 || info.plane > 2) {
-    if (error != nullptr) *error = "plane must be 0, 1 or 2";
+    error = "plane must be 0, 1 or 2";
     return false;
   }
   if (info.params.tx_size < 0 || info.params.tx_size >= 25) {
-    if (error != nullptr) *error = "tx_size must be in [0, 24]";
+    error = "tx_size must be in [0, 24]";
     return false;
   }
   if (info.dc_sign_context < 0 || info.dc_sign_context > 2) {
-    if (error != nullptr) *error = "dc_sign_context must be in [0, 2]";
+    error = "dc_sign_context must be in [0, 2]";
     return false;
   }
   if (info.plane == 2) {
     if (info.txb_skip_context < 0 || info.txb_skip_context >= 12) {
-      if (error != nullptr) *error = "v_txb_skip context must be in [0, 11]";
+      error = "v_txb_skip context must be in [0, 11]";
       return false;
     }
   } else {
     if (info.txb_skip_context < 0 || info.txb_skip_context >= 10) {
-      if (error != nullptr) *error = "txb_skip context must be in [0, 9]";
+      error = "txb_skip context must be in [0, 9]";
       return false;
     }
   }
@@ -247,7 +247,7 @@ bool Model::init(const BlockInfo& info,
 
   const std::span<const std::int32_t> scan = cached_scan(w, h);
   if (scan.size() != static_cast<std::size_t>(area)) {
-    if (error != nullptr) *error = "scan geometry does not match the block";
+    error = "scan geometry does not match the block";
     return false;
   }
 
@@ -388,15 +388,15 @@ bool Model::init(const BlockInfo& info,
   for (const Position& p : positions_) {
     if (info.plane == 0) {
       if (p.is_lf != 0 ? p.base_ctx > 32 : p.base_ctx > 19) {
-        if (error != nullptr) *error = "coeff_base context out of range";
+        error = "coeff_base context out of range";
         return false;
       }
       if (p.is_lf != 0 ? p.br_ctx > 13 : p.br_ctx > 6) {
-        if (error != nullptr) *error = "coeff_br context out of range";
+        error = "coeff_br context out of range";
         return false;
       }
     } else if (p.base_ctx > 11) {
-      if (error != nullptr) *error = "chroma coeff_base context out of range";
+      error = "chroma coeff_base context out of range";
       return false;
     }
   }

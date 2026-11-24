@@ -461,13 +461,13 @@ bool assemble_video_frame(const FramePlan& plan,
 std::size_t cdf_image_words();
 [[nodiscard]] bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
                                        std::vector<std::uint16_t>& out,
-                                       std::string* error = nullptr);
+                                       std::string& error);
 [[nodiscard]] bool cdf_image_tables(std::vector<std::uint16_t>& frame,
                       std::vector<std::uint16_t>& tile,
                       std::vector<std::uint16_t>& saved,
                       std::vector<std::uint16_t>& defaults,
                       std::vector<entropy::avg_cdf::CdfTable>& tables,
-                      std::string* error = nullptr);
+                      std::string& error);
 
 int y_mode_joint(int av2_mode, int angle_delta);
 void build_scan(int w, int h, std::span<std::uint16_t> scan);

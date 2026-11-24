@@ -72,12 +72,12 @@ struct TimingInfo {
   }
 };
 
-[[nodiscard]] bool timing_info_valid(const TimingInfo& timing, std::string* error = nullptr);
+[[nodiscard]] bool timing_info_valid(const TimingInfo& timing, std::string& error);
 
 // §6.4.12 DispCT in seconds. Returns 0 (and sets *error) for an invalid
 // timing structure.
 double display_tick_seconds(const TimingInfo& timing,
-                            std::string* error = nullptr) noexcept;
+                            std::string& error) noexcept;
 
 // ---------------------------------------------------------------------------
 // §5.4.13 seq_decoder_model_info()
@@ -93,7 +93,7 @@ struct SeqDecoderModelInfo {
 };
 
 [[nodiscard]] bool seq_decoder_model_info_valid(const SeqDecoderModelInfo& info,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.4.1 sequence-header timing block
@@ -114,7 +114,7 @@ struct SequenceTimingConfig {
 };
 
 [[nodiscard]] bool sequence_timing_valid(const SequenceTimingConfig& config,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.15 content_interpretation_obu() and §5.4.12 timing_info()
@@ -147,7 +147,7 @@ struct ContentInterpretation {
 };
 
 [[nodiscard]] bool content_interpretation_valid(const ContentInterpretation& ci,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.12 buffer_removal_timing_obu()
@@ -170,7 +170,7 @@ struct BufferRemovalTiming {
 };
 
 [[nodiscard]] bool buffer_removal_timing_valid(const BufferRemovalTiming& brt,
-                                 std::string* error = nullptr);
+                                 std::string& error);
 
 // A parsed OPS OBU summary, used for the §6.11 correspondence requirement:
 //   br_ops_id == an ops_id present in the bitstream
@@ -184,46 +184,46 @@ struct OperatingPointSetSummary {
 [[nodiscard]] bool validate_brt_against_ops(
     const BufferRemovalTiming& brt, std::uint8_t brt_xlayer_id,
     std::span<const OperatingPointSetSummary> ops,
-    std::string* error = nullptr);
+    std::string& error);
 
 // Tick-range validation: br_time and every present br_time_op must be <= 511,
 // br_ops_id <= 15 and br_ops_cnt <= 7.
 [[nodiscard]] bool validate_brt_tick_ranges(const BufferRemovalTiming& brt,
-                              std::string* error = nullptr);
+                              std::string& error);
 
 // ---------------------------------------------------------------------------
 // Syntax writers (payload bits only; no OBU header/trailing bits)
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] bool write_timing_info(BitWriter& writer, const TimingInfo& timing,
-                       std::string* error = nullptr);
+                       std::string& error);
 [[nodiscard]] bool write_seq_decoder_model_info(BitWriter& writer,
                                   const SeqDecoderModelInfo& info,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 [[nodiscard]] bool write_sequence_timing(BitWriter& writer,
                            const SequenceTimingConfig& config,
-                           std::string* error = nullptr);
+                           std::string& error);
 [[nodiscard]] bool write_buffer_removal_timing(BitWriter& writer,
                                  const BufferRemovalTiming& brt,
-                                 std::string* error = nullptr);
+                                 std::string& error);
 [[nodiscard]] bool write_content_interpretation(BitWriter& writer,
                                   const ContentInterpretation& ci,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 
 // ---------------------------------------------------------------------------
 // Syntax readers (payload bits only)
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] bool read_timing_info(BitReader& reader, TimingInfo& timing,
-                      std::string* error = nullptr);
+                      std::string& error);
 [[nodiscard]] bool read_seq_decoder_model_info(BitReader& reader, SeqDecoderModelInfo& info,
-                                 std::string* error = nullptr);
+                                 std::string& error);
 [[nodiscard]] bool read_sequence_timing(BitReader& reader, SequenceTimingConfig& config,
-                          std::string* error = nullptr);
+                          std::string& error);
 [[nodiscard]] bool read_buffer_removal_timing(BitReader& reader, BufferRemovalTiming& brt,
-                                std::string* error = nullptr);
+                                std::string& error);
 [[nodiscard]] bool read_content_interpretation(BitReader& reader, ContentInterpretation& ci,
-                                 std::string* error = nullptr);
+                                 std::string& error);
 
 // ---------------------------------------------------------------------------
 // OBU assembly and parsing
@@ -259,14 +259,14 @@ struct ParsedObu {
 // Annex B.2 leb128 prefix, §5.2.2 obu_header() and OBU payload boundaries.
 // The returned spans alias `bytes`; keep `bytes` alive while using them.
 [[nodiscard]] bool parse_obus(std::span<const std::uint8_t> bytes,
-                std::vector<ParsedObu>& obus, std::string* error = nullptr);
+                std::vector<ParsedObu>& obus, std::string& error);
 
 // Checks the §7.3.3/§7.3.6/§7.3.7 ordering rules this component can affect:
 // at most one BRT per coded frame unit, BRT before the frame OBUs, at most one
 // CI, CI before the frame OBUs and after any sequence header, and a
 // temporal-delimiter/frame structure the M2 stream uses.
 [[nodiscard]] bool validate_temporal_unit_order(std::span<const ParsedObu> obus,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 
 // Builds a complete Annex B.2 length-delimited OBU with obu_extension_flag = 0.
 // BRT is not an extensible OBU (§5.2.2 is_extensible_obu), so its payload is
@@ -274,18 +274,18 @@ struct ParsedObu {
 // obu_extension_flag = 0 before its trailing bits.
 [[nodiscard]] bool build_buffer_removal_timing_obu(const BufferRemovalTiming& brt,
                                      std::vector<std::uint8_t>& out,
-                                     std::string* error = nullptr);
+                                     std::string& error);
 [[nodiscard]] bool build_content_interpretation_obu(const ContentInterpretation& ci,
                                       std::vector<std::uint8_t>& out,
-                                      std::string* error = nullptr);
+                                      std::string& error);
 
 // Parses a complete OBU (leb128 + header + payload) of the expected type.
 [[nodiscard]] bool read_buffer_removal_timing_obu(std::span<const std::uint8_t> obu,
                                     BufferRemovalTiming& brt,
-                                    std::string* error = nullptr);
+                                    std::string& error);
 [[nodiscard]] bool read_content_interpretation_obu(std::span<const std::uint8_t> obu,
                                      ContentInterpretation& ci,
-                                     std::string* error = nullptr);
+                                     std::string& error);
 
 // ---------------------------------------------------------------------------
 // Sequence-header timing splice
@@ -307,12 +307,12 @@ struct ParsedObu {
 [[nodiscard]] bool splice_sequence_timing(std::span<const std::uint8_t> sequence_header_obu,
                             const SequenceTimingConfig& config,
                             std::vector<std::uint8_t>& out,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 // Reads the timing block from a complete sequence_header_obu(). The returned
 // config has decoder_model_info_present_flag = false when the block is absent.
 [[nodiscard]] bool read_sequence_header_timing(std::span<const std::uint8_t> sequence_header_obu,
                                  SequenceTimingConfig& config,
-                                 std::string* error = nullptr);
+                                 std::string& error);
 
 }  // namespace av2enc::hrd

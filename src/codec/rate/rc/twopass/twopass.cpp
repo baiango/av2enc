@@ -17,10 +17,8 @@ constexpr double kBitEpsilon = 1.0e-6;
 constexpr double kMaxActualBits = 1.0e15;
 constexpr int kMaxSpatialAttempts = 12;
 
-void set_error(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
+void set_error(std::string& error, const char* message) {
+error = message;
 }
 
 bool finite_nonnegative(double value) noexcept {
@@ -54,11 +52,11 @@ bool estimate_bits(const BitrateEstimator& estimator,
                    const FrameComplexity& complexity,
                    int qindex,
                    double& bits,
-                   std::string* error) {
+                   std::string& error) {
   return estimate_frame_bits(estimator, complexity, qindex, bits, error);
 }
 
-bool validate_vbv_config(const VbvConfig& config, std::string* error) {
+bool validate_vbv_config(const VbvConfig& config, std::string& error) {
   if (!finite_nonnegative(config.buffer_size_bits)) {
     set_error(error, "twopass: vbv buffer_size_bits must be finite and >= 0");
     return false;
@@ -103,7 +101,7 @@ int max_segment_classes(bool enable_ext_seg) noexcept {
 
 bool normalize_frame_stats_impl(const FrameStats& input,
                                 FrameStats& normalized,
-                                std::string* error) {
+                                std::string& error) {
   normalized = input;
   if (!frame_complexity_valid(normalized.complexity, error)) {
     return false;
@@ -305,7 +303,7 @@ void waterfill(std::span<const double> weights,
 
 bool normalize_frame_stats(const FrameStats& input,
                            FrameStats& normalized,
-                           std::string* error) {
+                           std::string& error) {
   return normalize_frame_stats_impl(input, normalized, error);
 }
 
@@ -317,7 +315,7 @@ bool make_vbv_state(const VbvConfig& config,
                     double average_frame_bits,
                     double frame_duration,
                     VbvState& state,
-                    std::string* error) {
+                    std::string& error) {
   state = VbvState{};
   state.enabled = config.enabled;
   if (!validate_vbv_config(config, error)) {
@@ -423,7 +421,7 @@ double nominal_frame_bits(const VbrParams& params) noexcept {
 // ---------------------------------------------------------------------------
 
 bool two_pass_config_valid(const TwoPassConfig& config,
-                           std::string* error) {
+                           std::string& error) {
   if (!rate_control_config_valid(config.rc, error)) {
     return false;
   }
@@ -506,7 +504,7 @@ bool allocate_frames(std::span<const FrameStats> stats,
                      double total_bits,
                      const VbvState& initial_buffer,
                      AllocationResult& result,
-                     std::string* error) {
+                     std::string& error) {
   result = AllocationResult{};
   if (stats.empty()) {
     set_error(error, "twopass: allocation needs at least one frame");
@@ -675,7 +673,7 @@ TwoPassController::TwoPassController() = default;
 TwoPassController::~TwoPassController() = default;
 
 bool TwoPassController::configure(const TwoPassConfig& config,
-                                  std::string* error) {
+                                  std::string& error) {
   if (!two_pass_config_valid(config, error)) {
     return false;
   }
@@ -693,7 +691,7 @@ bool TwoPassController::configure(const TwoPassConfig& config,
   return reset(error);
 }
 
-bool TwoPassController::reset(std::string* error) {
+bool TwoPassController::reset(std::string& error) {
   if (!configured_) {
     set_error(error, "twopass: controller is not configured");
     return false;
@@ -728,7 +726,7 @@ bool TwoPassController::reset(std::string* error) {
 bool TwoPassController::validate_and_plan(std::span<const FrameStats> stats,
                                           std::size_t horizon,
                                           double total_bits,
-                                          std::string* error) {
+                                          std::string& error) {
   std::vector<FrameStats> normalized;
   normalized.reserve(stats.size());
   for (const FrameStats& input : stats) {
@@ -756,7 +754,7 @@ bool TwoPassController::validate_and_plan(std::span<const FrameStats> stats,
 }
 
 bool TwoPassController::analyze(std::span<const FrameStats> stats,
-                                std::string* error) {
+                                std::string& error) {
   if (!configured_) {
     set_error(error, "twopass: controller is not configured");
     return false;
@@ -779,7 +777,7 @@ bool TwoPassController::analyze(std::span<const FrameStats> stats,
 }
 
 bool TwoPassController::set_lookahead(std::span<const FrameStats> window,
-                                      std::string* error) {
+                                      std::string& error) {
   if (!configured_) {
     set_error(error, "twopass: controller is not configured");
     return false;
@@ -864,7 +862,7 @@ bool build_spatial_plan(const FrameStats& stats,
                         double& spatial_estimate,
                         bool& over_budget,
                         bool& spatial_clamped,
-                        std::string* error) {
+                        std::string& error) {
   over_budget = false;
   spatial_estimate = frame_estimate;
   const std::size_t tile_count = stats.tiles.size();
@@ -1181,7 +1179,7 @@ bool spatial_cost_at_q(const FrameStats& stats,
                        const TwoPassConfig& config,
                        int qindex,
                        double& bits,
-                       std::string* error) {
+                       std::string& error) {
   bits = 0.0;
   for (const TileStats& tile : stats.tiles) {
     double tile_bits = 0.0;
@@ -1203,7 +1201,7 @@ bool select_qindex_for_budget(const FrameStats& stats,
                               double rate_feedback,
                               int& qindex,
                               bool& reachable,
-                              std::string* error) {
+                              std::string& error) {
   double at_lo = 0.0;
   if (!spatial_cost_at_q(stats, config, lo, at_lo, error)) {
     return false;
@@ -1243,7 +1241,7 @@ bool select_qindex_for_budget(const FrameStats& stats,
 
 }  // namespace
 
-bool TwoPassController::begin_frame(FramePlan& plan, std::string* error) {
+bool TwoPassController::begin_frame(FramePlan& plan, std::string& error) {
   if (!configured_) {
     set_error(error, "twopass: controller is not configured");
     return false;
@@ -1467,7 +1465,7 @@ bool TwoPassController::begin_frame(FramePlan& plan, std::string* error) {
 }
 
 bool TwoPassController::reallocate_remaining(double error_bits,
-                                             std::string* error) {
+                                             std::string& error) {
   if (!offline_ || pending_.empty() || allocation_.frames.empty()) {
     return true;
   }
@@ -1500,7 +1498,7 @@ bool TwoPassController::reallocate_remaining(double error_bits,
 }
 
 bool TwoPassController::end_frame(std::int64_t actual_bits,
-                                  std::string* error) {
+                                  std::string& error) {
   if (!configured_) {
     set_error(error, "twopass: controller is not configured");
     return false;
@@ -1576,7 +1574,7 @@ bool first_pass_luma(std::span<const std::uint8_t> luma,
                      int tile_rows,
                      bool keyframe,
                      FrameStats& stats,
-                     std::string* error) {
+                     std::string& error) {
   stats = FrameStats{};
   if (width <= 0 || height <= 0 || stride < width) {
     set_error(error, "twopass: invalid luma geometry");

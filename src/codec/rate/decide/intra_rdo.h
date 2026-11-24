@@ -44,8 +44,8 @@ av2enc::rdo::IntraModeChoice decide_luma_intra(
     std::span<const av2enc::rdo::IntraCandidateCost> candidates,
     std::span<av2enc::rdo::IntraCandidateCost> scratch,
     const LambdaConfig& config,
-    av2enc::rdo::IntraRateEstimator estimator = nullptr,
-    void* estimator_context = nullptr, std::string* error = nullptr,
+    av2enc::rdo::IntraRateEstimator estimator,
+    void* estimator_context, std::string& error,
     const IntraBlockGeometry& geometry = {});
 
 // Default syntax cost for a mode/angle pair, in bits.  Placeholder in the RDO

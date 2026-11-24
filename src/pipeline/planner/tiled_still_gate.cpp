@@ -289,13 +289,13 @@ struct Planes {
 };
 
 bool load_first_frame(const std::string& path, Planes* out,
-                      std::string* error) {
+                      std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
   const av2enc::Y4mReadResult result = reader.read_frame(frame, *error);
   if (result != av2enc::Y4mReadResult::kFrame) {
-    if (error->empty()) *error = "no frame in " + path;
+    if (error.empty()) error = "no frame in " + path;
     return false;
   }
   out->width = static_cast<int>(frame.width());
@@ -307,7 +307,7 @@ bool load_first_frame(const std::string& path, Planes* out,
 }
 
 bool write_ivf(const std::string& path, int width, int height,
-               std::span<const std::uint8_t> frame, std::string* error) {
+               std::span<const std::uint8_t> frame, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
@@ -320,12 +320,12 @@ bool write_ivf(const std::string& path, int width, int height,
 }
 
 bool run_decoder(const std::string& dav2d, const std::string& ivf,
-                 const std::string& y4m, std::string* error) {
+                 const std::string& y4m, std::string& error) {
   const std::string command =
       "'" + dav2d + "' -i '" + ivf + "' -o '" + y4m + "' >/dev/null 2>&1";
   const int rc = std::system(command.c_str());
   if (rc != 0) {
-    *error = "dav2d failed on " + ivf;
+    error = "dav2d failed on " + ivf;
     return false;
   }
   return true;
@@ -337,14 +337,14 @@ struct Obus {
 };
 
 bool parse_obus(std::span<const std::uint8_t> data, Obus* out,
-                std::string* error) {
+                std::string& error) {
   std::size_t off = 0;
   while (off < data.size()) {
     std::uint32_t size = 0;
     unsigned shift = 0;
     while (true) {
       if (off >= data.size() || shift > 28) {
-        *error = "truncated OBU size";
+        error = "truncated OBU size";
         return false;
       }
       const std::uint8_t byte = data[off++];
@@ -353,7 +353,7 @@ bool parse_obus(std::span<const std::uint8_t> data, Obus* out,
       if ((byte & 0x80U) == 0) break;
     }
     if (off + size > data.size() || size < 1) {
-      *error = "truncated OBU payload";
+      error = "truncated OBU payload";
       return false;
     }
     const std::uint8_t header = data[off];
@@ -397,11 +397,11 @@ struct EncodedTile {
 
 bool encode_tile(const Planes& source, const TileRect& rect,
                  std::uint8_t base_q_idx, bool deblock, EncodedTile* out,
-                 std::string* error) {
+                 std::string& error) {
   const int tile_w = rect.pixel_width();
   const int tile_h = rect.pixel_height();
   if ((tile_w & 1) != 0 || (tile_h & 1) != 0) {
-    *error = "tile dimensions must be even for 4:2:0";
+    error = "tile dimensions must be even for 4:2:0";
     return false;
   }
   const int chroma_w = tile_w / 2;
@@ -443,7 +443,7 @@ bool encode_tile(const Planes& source, const TileRect& rect,
     return false;
   }
   if (obus.clk.size() < result.tile_bytes) {
-    *error = "tile payload is larger than the CLK OBU";
+    error = "tile payload is larger than the CLK OBU";
     return false;
   }
   const std::size_t offset = obus.clk.size() - result.tile_bytes;
@@ -476,7 +476,7 @@ bool assemble_tiled_stream(const TileLayout& layout,
                            const std::vector<EncodedTile>& tiles,
                            std::uint8_t base_q_idx, bool deblock,
                            std::vector<std::uint8_t>* frame,
-                           std::string* error) {
+                           std::string& error) {
   std::vector<std::uint32_t> sizes;
   sizes.reserve(tiles.size());
   std::uint32_t largest = 0;
@@ -486,7 +486,7 @@ bool assemble_tiled_stream(const TileLayout& layout,
   }
   const int tile_size_bytes = av2enc::tiles::tile_size_bytes_for(largest);
   if (tile_size_bytes == 0) {
-    *error = "tile size does not fit a 1..4 byte field (or is < 2 bytes)";
+    error = "tile size does not fit a 1..4 byte field (or is < 2 bytes)";
     return false;
   }
 
@@ -540,7 +540,7 @@ bool assemble_tiled_stream(const TileLayout& layout,
 }
 
 bool header_self_check(const Planes& source, const TileLayout& one_by_one,
-                       std::uint8_t base_q_idx, std::string* error) {
+                       std::uint8_t base_q_idx, std::string& error) {
   // Frame header parity: av2enc::still::write_frame_header() vs this writer for 1x1.
   av2enc::still::StillConfig config;
   config.max_frame_width = static_cast<std::uint16_t>(source.width);
@@ -564,7 +564,7 @@ bool header_self_check(const Planes& source, const TileLayout& one_by_one,
 
   if (reference.bit_size() != writer.bit_size() ||
       reference.take_bytes() != writer.take_bytes()) {
-    *error = "1x1 frame header does not match av2enc::still::write_frame_header()";
+    error = "1x1 frame header does not match av2enc::still::write_frame_header()";
     return false;
   }
 
@@ -579,7 +579,7 @@ bool header_self_check(const Planes& source, const TileLayout& one_by_one,
   const std::vector<std::uint8_t> writer_seq =
       make_sequence_header_obu(sequence);
   if (reference_seq != writer_seq) {
-    *error = "sequence header does not match av2enc::still::make_sequence_header_obu()";
+    error = "sequence header does not match av2enc::still::make_sequence_header_obu()";
     return false;
   }
   return true;

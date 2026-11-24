@@ -17,10 +17,8 @@ constexpr std::uint64_t kMib = 1024ull * 1024ull;
 constexpr std::uint64_t kMinArenaBytes = kMib;
 constexpr std::size_t kArenaAlignment = 256;
 
-void set_error(std::string* error, const std::string& text) {
-  if (error != nullptr) {
-    *error = text;
-  }
+void set_error(std::string& error, const std::string& text) {
+error = text;
 }
 
 std::uint64_t floor_mib(std::uint64_t bytes) {
@@ -225,7 +223,7 @@ ArenaCapacity compute_arena_capacity(const DeviceProperties& device,
 
 Status select_devices_and_plan(DeviceBackend& backend,
                                const RuntimeConfig& config, Selection& out,
-                               std::string* error) {
+                               std::string& error) {
   out = Selection{};
 
   std::vector<int> requested;
@@ -421,9 +419,7 @@ Status select_devices_and_plan(DeviceBackend& backend,
       out.plan = std::move(plan);
       out.fallback_used = !out.dropped_ordinals.empty();
       out.valid = true;
-      if (error != nullptr) {
-        error->clear();
-      }
+error.clear();
       return Status::kOk;
     }
 
@@ -537,7 +533,7 @@ bool Runtime::reference_fill_pending() const noexcept {
 }
 
 Status Runtime::initialize(DeviceBackend& backend, RuntimeConfig config,
-                           std::string* error) {
+                           std::string& error) {
   if (impl_->initialized) {
     set_error(error, "runtime is already initialized");
     return Status::kAlreadyInitialized;
@@ -712,7 +708,7 @@ Status Runtime::initialize(DeviceBackend& backend, RuntimeConfig config,
   // deterministically instead of leaving a half-initialized runtime.
   auto allocation_failure = [&](int ordinal, Status status) -> Status {
     const std::string text =
-        (error != nullptr && !error->empty()) ? *error
+        (!error.empty()) ? *error
                                               : std::string(status_name(status));
     impl_->reset();
     if (config.allow_drop_failed &&
@@ -897,7 +893,7 @@ void Runtime::shutdown() noexcept {
 }
 
 Status Runtime::prefetch_source(int frame_index, const void* host_source,
-                                std::size_t bytes, std::string* error) {
+                                std::size_t bytes, std::string& error) {
   if (!impl_->initialized) {
     set_error(error, "runtime is not initialized");
     return Status::kNotInitialized;
@@ -953,14 +949,12 @@ Status Runtime::prefetch_source(int frame_index, const void* host_source,
       static_cast<std::uint64_t>(impl_->gpus.size()) * impl_->frame_bytes;
   impl_->stats.source_upload_bytes += upload_bytes;
   impl_->stats.host_tx_bytes += upload_bytes;
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return Status::kOk;
 }
 
 Status Runtime::dispatch_frame(const FrameRequest& request, FrameWorker& worker,
-                               FrameResult& result, std::string* error) {
+                               FrameResult& result, std::string& error) {
   result = FrameResult{};
   result.frame_index = request.frame_index;
   if (!impl_->initialized) {
@@ -1261,13 +1255,11 @@ Status Runtime::dispatch_frame(const FrameRequest& request, FrameWorker& worker,
   impl_->stats.host_tx_bytes += payload_bytes + recon_gather_bytes +
                                 reference_fill_bytes;
   impl_->refresh_info();
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return Status::kOk;
 }
 
-Status Runtime::synchronize(std::string* error) {
+Status Runtime::synchronize(std::string& error) {
   if (!impl_->initialized) {
     set_error(error, "runtime is not initialized");
     return Status::kNotInitialized;
@@ -1284,9 +1276,7 @@ Status Runtime::synchronize(std::string* error) {
     gpu.fill_pending = false;
   }
   impl_->refresh_info();
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return Status::kOk;
 }
 

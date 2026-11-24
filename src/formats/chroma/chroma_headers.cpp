@@ -269,7 +269,7 @@ std::vector<std::uint8_t> make_chroma_filtered_key_obu(
     params.pic_qc_idx = f.gdf_pic_qc_idx;
     params.pic_scale_idx = f.gdf_pic_scale_idx;
     std::string gdf_error;
-    gdf::WriteFrameGdfParams(writer, context, &params, &gdf_error);
+    gdf::WriteFrameGdfParams(writer, context, &params, gdf_error);
     assert(gdf_error.empty());
     (void)gdf_error;
   }
@@ -313,7 +313,7 @@ std::vector<std::uint8_t> make_chroma_filtered_key_obu(
         fmt::subsampling_y(c.chroma), static_cast<int>(c.base_q_idx),
         &context);
     std::string lr_error;
-    lr_syntax::WriteLrParams(writer, &params, context, &lr_error);
+    lr_syntax::WriteLrParams(writer, &params, context, lr_error);
     assert(lr_error.empty());
     (void)lr_error;
   }

@@ -283,7 +283,7 @@ constexpr std::int32_t kInterInvLong[2][2][4] = {
 
 bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
                       const Options& options, std::vector<TypeEntry>* out,
-                      std::string* error) {
+                      std::string& error) {
   using residual::InterTxCandidate;
   using residual::InterTxSet;
   const auto ts = static_cast<txv::TxSize>(
@@ -296,7 +296,7 @@ bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
     if (!residual::inter_tx_symbol(ts, options.reduced_tx_set,
                                    options.enable_inter_ddt,
                                    txv::TxType::kDctDct, &c)) {
-      if (error != nullptr) *error = "DCT_DCT missing from a DCTONLY set";
+      error = "DCT_DCT missing from a DCTONLY set";
       return false;
     }
     TypeEntry e;
@@ -354,7 +354,7 @@ bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
     out->push_back(e);
   }
   if (out->empty()) {
-    if (error != nullptr) *error = "empty inter TX-type set";
+    error = "empty inter TX-type set";
     return false;
   }
   return true;
@@ -362,7 +362,7 @@ bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
 
 bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
                       const Options& options, std::vector<TypeEntry>* out,
-                      std::string* error) {
+                      std::string& error) {
   txtype::TxTypeQuery q;
   q.coded_w = coded_w;
   q.coded_h = coded_h;
@@ -371,7 +371,7 @@ bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
   q.dct_only = options.dct_only;
   txtype::TxTypeSet set;
   if (!txtype::intra_tx_candidates(q, &set)) {
-    if (error != nullptr) *error = "intra TX-type candidate enumeration failed";
+    error = "intra TX-type candidate enumeration failed";
     return false;
   }
   out->clear();
@@ -391,7 +391,7 @@ bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
     out->push_back(e);
   }
   if (out->empty()) {
-    if (error != nullptr) *error = "empty intra TX-type set";
+    error = "empty intra TX-type set";
     return false;
   }
   return true;
@@ -399,7 +399,7 @@ bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
 
 bool build_leaf_types(std::int32_t coded_w, std::int32_t coded_h, Mode mode,
                       const Options& options, std::vector<TypeEntry>* out,
-                      std::string* error) {
+                      std::string& error) {
   if (mode == Mode::kIntra) {
     return intra_leaf_types(coded_w, coded_h, options, out, error);
   }
@@ -515,7 +515,7 @@ bool block_syntax_bits(const txv::TxParams& params,
     info.is_inter = is_inter;
     info.tx_class_2d = true;
     av2enc::tcq::av2::Model& model = scratch.tcq_model;
-    if (!model.init(info, scan_levels, &error)) return false;
+    if (!model.init(info, scan_levels, error)) return false;
     *out_bits = model.reference_bits();
     return true;
   }
@@ -528,7 +528,7 @@ bool block_syntax_bits(const txv::TxParams& params,
   info.is_inter = is_inter;
   info.cdf_override = cdf_slice;
   av2enc::rdoq::av2::Model& model = scratch.rdoq_model;
-  if (!model.init(info, scan_levels, &error)) return false;
+  if (!model.init(info, scan_levels, error)) return false;
   *out_bits = model.scalar_bits();
   return true;
 }
@@ -542,16 +542,16 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
                         int leaf_h, std::int32_t tx_size, std::int32_t tx_type,
                         const TypeEntry& type, bool is_inter, int qindex,
                         int delta_dc, int delta_ac, const Options& options,
-                        bool rdoq, CandidateSlot* out, std::string* error) {
+                        bool rdoq, CandidateSlot* out, std::string& error) {
   const auto params_opt = txv::make_tx_params(
       static_cast<txv::TxSize>(tx_size), static_cast<txv::TxType>(tx_type));
   if (!params_opt.has_value()) {
-    if (error != nullptr) *error = "unsupported transform size/type";
+    error = "unsupported transform size/type";
     return false;
   }
   const txv::TxParams& params = *params_opt;
   if (params.coded_w != leaf_w || params.coded_h != leaf_h) {
-    if (error != nullptr) *error = "candidate size does not match leaf";
+    error = "candidate size does not match leaf";
     return false;
   }
   const int area = params.w * params.h;
@@ -632,7 +632,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   const std::span<const std::uint16_t> scan =
       scratch.scan_table(tx_size, cls, &scan_ok);
   if (!scan_ok || scan.size() < static_cast<std::size_t>(area)) {
-    if (error != nullptr) *error = "scan table generation failed";
+    error = "scan table generation failed";
     return false;
   }
 
@@ -670,8 +670,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     info.tx_class_2d = true;
     av2enc::tcq::av2::Model& model = scratch.tcq_model;
     std::string tcq_error;
-    if (!model.init(info, reference, &tcq_error)) {
-      if (error != nullptr) *error = "tcq model init failed: " + tcq_error;
+    if (!model.init(info, reference, tcq_error)) {
+      error = "tcq model init failed: " + tcq_error;
       return false;
     }
     av2enc::tcq::Config config;
@@ -681,8 +681,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     config.max_coefficients = area;
     av2enc::tcq::Result& result = scratch.tcq_result;
     if (!av2enc::tcq::quantize(input, config, model.rate_model(), result,
-                               &tcq_error)) {
-      if (error != nullptr) *error = "tcq quantize failed: " + tcq_error;
+                               tcq_error)) {
+      error = "tcq quantize failed: " + tcq_error;
       return false;
     }
     std::fill(levels, levels + area, 0);
@@ -728,8 +728,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     info.is_inter = is_inter;
     av2enc::rdoq::av2::Model& model = scratch.rdoq_model;
     std::string rdoq_error;
-    if (!model.init(info, scalar_scan, &rdoq_error)) {
-      if (error != nullptr) *error = "rdoq model init failed: " + rdoq_error;
+    if (!model.init(info, scalar_scan, rdoq_error)) {
+      error = "rdoq model init failed: " + rdoq_error;
       return false;
     }
     av2enc::rdoq::Config config;
@@ -740,7 +740,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     av2enc::rdoq::RdoqResult& result = scratch.rdoq_result;
     if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), result,
                                      rdoq_error)) {
-      if (error != nullptr) *error = "rdoq quantize failed: " + rdoq_error;
+      error = "rdoq quantize failed: " + rdoq_error;
       return false;
     }
     std::fill(levels, levels + area, 0);
@@ -985,18 +985,16 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
             std::int32_t coded_h, Mode mode, std::int32_t qindex,
             std::int32_t delta_dc, std::int32_t delta_ac,
             const std::uint8_t* prediction, const Options& options,
-            Result* out, std::string* error) {
+            Result* out, std::string& error) {
   if (out == nullptr) return false;
   *out = Result{};
   if (residual_coded == nullptr || coded_w < 4 || coded_w > 64 ||
       coded_h < 4 || coded_h > 64) {
-    if (error != nullptr) *error = "bad TX-search block";
+    error = "bad TX-search block";
     return false;
   }
   if (txv::tx_size_index(coded_w, coded_h) < 0) {
-    if (error != nullptr) {
-      *error = "block size is not one of the 25 AV2 transform sizes";
-    }
+error = "block size is not one of the 25 AV2 transform sizes";
     return false;
   }
   const bool is_inter = mode == Mode::kInter;
@@ -1026,7 +1024,7 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
       const int leaf_h = txpart::tx_height(tx_size);
       if (tx_size < 0 || tx_size >= 25 || leaf_w > options.max_tx_size ||
           leaf_h > options.max_tx_size) {
-        if (error != nullptr) *error = "partition leaf exceeds max_tx_size";
+        error = "partition leaf exceeds max_tx_size";
         return false;
       }
       std::vector<TypeEntry> types;
@@ -1097,11 +1095,11 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
                                  geometry.parts[k].mi_row * 4, leaf_w, leaf_h,
                                  tx_size, entry.type, entry, is_inter, qindex,
                                  delta_dc, delta_ac, options, /*rdoq=*/false,
-                                 &slots[i], &cand_errors[i]);
+                                 &slots[i], cand_errors[i]);
             });
         for (std::size_t i = 0; i < n_candidates; ++i) {
           if (!slots[i].valid) {
-            if (error != nullptr) *error = cand_errors[i];
+            error = cand_errors[i];
             return false;
           }
           consider(slots[i]);
@@ -1167,7 +1165,7 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
   }
 
   if (plans.empty()) {
-    if (error != nullptr) *error = "no candidate plan selected";
+    error = "no candidate plan selected";
     return false;
   }
 
@@ -1180,7 +1178,7 @@ bool search(const std::int16_t* residual_coded, std::int32_t coded_w,
     }
   }
   if (best == nullptr) {
-    if (error != nullptr) *error = "no codable TX plan";
+    error = "no codable TX plan";
     return false;
   }
 

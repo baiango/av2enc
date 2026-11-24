@@ -57,6 +57,6 @@ struct HeaderFlags {
 // requested non-zero frame allow flag when that flag is not codable is not an
 // error; it is normalised below).  The function is total and deterministic.
 [[nodiscard]] bool derive_header_flags(const HeaderInput& input, HeaderFlags* flags,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 }  // namespace av2enc::tcq

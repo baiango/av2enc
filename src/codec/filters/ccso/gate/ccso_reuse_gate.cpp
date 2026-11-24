@@ -94,7 +94,7 @@ std::string find_decoder() {
 
 bool write_ivf(const std::string& path,
                const std::vector<std::vector<std::uint8_t>>& units, int width,
-               int height, std::string* error) {
+               int height, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
@@ -110,19 +110,19 @@ bool write_ivf(const std::string& path,
 }
 
 bool decode(const std::string& decoder, const std::string& ivf,
-            const std::string& y4m, std::string* error) {
+            const std::string& y4m, std::string& error) {
   const std::string command = "\"" + decoder + "\" -q -i \"" + ivf + "\" -o \"" +
                               y4m + "\" --threads 1 --strict 1";
   const int status = std::system(command.c_str());
   if (status != 0) {
-    *error = "dav2d failed: " + command;
+    error = "dav2d failed: " + command;
     return false;
   }
   return true;
 }
 
 bool read_all_frames(const std::string& path, std::vector<Frame>* frames,
-                     std::string* error) {
+                     std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
@@ -262,7 +262,7 @@ bool write_frame_header_ccso(BitWriter& writer, const StreamOptions& options,
                              const av2enc::tiles::TileLayout& layout,
                              cr::FrameParams params,
                              const cr::SlotStore& store, int tile_size_bytes,
-                             std::size_t* ccso_bits, std::string* error) {
+                             std::size_t* ccso_bits, std::string& error) {
   writer.put_bit(true);  // is_first_tile_group
   // frame_header_present_flag is inferred 1 for the first tile group.
 
@@ -314,7 +314,7 @@ bool write_frame_header_ccso(BitWriter& writer, const StreamOptions& options,
   bool delta[4] = {false, false, false, false};
   int dq[4] = {0, 0, 0, 0};
   post::write_video_deblock_params(writer, deblock, delta, dq, 0, error);
-  if (error != nullptr && !error->empty()) return false;
+  if (!error.empty()) return false;
   // cdef_params() is absent (sequence enable_cdef = 0); lr_params() is absent
   // (enable_restoration = 0).  ccso_params() is next in §5.18.7.2 order.
 
@@ -342,7 +342,7 @@ bool write_frame_header_ccso(BitWriter& writer, const StreamOptions& options,
   ctx.slots = &store;
   const std::size_t start = writer.bit_size();
   cr::write_ccso_params(writer, params, ctx, error);
-  if (error != nullptr && !error->empty()) return false;
+  if (!error.empty()) return false;
   if (ccso_bits != nullptr) *ccso_bits = writer.bit_size() - start;
 
   writer.put_bit(false);  // tx_mode_select = 0
@@ -384,7 +384,7 @@ bool write_reference_header(BitWriter& writer, const StreamOptions& options,
                             const FrameSpec& spec,
                             const av2enc::tiles::TileLayout& layout,
                             int tile_size_bytes, std::size_t* bits,
-                            std::string* error) {
+                            std::string& error) {
   post::VideoTiledFrameHeader header;
   header.keyframe = spec.keyframe;
   header.order_hint = spec.order_hint;
@@ -402,11 +402,11 @@ bool encode_stream(const StreamOptions& options, const TileData& key_tile,
                    const TileData& inter_tile,
                    std::array<FrameSpec, 3>& frames, cr::SlotStore* store,
                    const std::string& path, std::size_t* reuse_ccso_bits,
-                   std::string* error) {
+                   std::string& error) {
   const auto tile_plan = post::plan_video_tiles(key_tile.plan.width,
                                              key_tile.plan.height, 1, 1);
   if (!tile_plan.ok) {
-    *error = tile_plan.error;
+    error = tile_plan.error;
     return false;
   }
   const auto& layout = tile_plan.layout;
@@ -430,13 +430,13 @@ bool encode_stream(const StreamOptions& options, const TileData& key_tile,
       return false;
     }
     if (payload.size() < 2) {
-      *error = "tile payload shorter than 2 bytes";
+      error = "tile payload shorter than 2 bytes";
       return false;
     }
     const int tile_size_bytes = av2enc::tiles::tile_size_bytes_for(
         static_cast<std::uint32_t>(payload.size()));
     if (tile_size_bytes == 0) {
-      *error = "tile size not representable";
+      error = "tile size not representable";
       return false;
     }
     post::VideoTiledFrameHeader header;
@@ -464,7 +464,7 @@ bool encode_stream(const StreamOptions& options, const TileData& key_tile,
         return false;
       }
       if (reference.bit_size() != writer.bit_size()) {
-        *error = "fresh CCSO header differs from m2/post reference writer";
+        error = "fresh CCSO header differs from m2/post reference writer";
         return false;
       }
       const std::span<const std::uint8_t> a = writer.bytes();
@@ -473,7 +473,7 @@ bool encode_stream(const StreamOptions& options, const TileData& key_tile,
         const bool ba = ((a[i / 8U] >> (7U - (i & 7U))) & 1U) != 0U;
         const bool bb = ((b[i / 8U] >> (7U - (i & 7U))) & 1U) != 0U;
         if (ba != bb) {
-          *error = "fresh CCSO header differs from m2/post reference writer";
+          error = "fresh CCSO header differs from m2/post reference writer";
           return false;
         }
       }
@@ -493,7 +493,7 @@ bool encode_stream(const StreamOptions& options, const TileData& key_tile,
 
 // Applies §7.19 using the effective parameters and CcsoBlks in `state`.
 bool filter_frame(const Frame& raw, const cr::TileState& state, Frame* out,
-                  std::string* error) {
+                  std::string& error) {
   *out = raw;
   std::vector<std::uint8_t> curr[3];
   std::vector<std::uint8_t> cdef[3];
@@ -520,7 +520,7 @@ bool filter_frame(const Frame& raw, const cr::TileState& state, Frame* out,
   if (!cr::make_restoration_params(state, &params, error)) return false;
   const rest::RestorationStatus status = rest::ccso_frame(rf, params);
   if (status != rest::RestorationStatus::kOk) {
-    *error = std::string("ccso_frame failed: ") +
+    error = std::string("ccso_frame failed: ") +
              rest::restoration_status_string(status);
     return false;
   }
@@ -529,7 +529,7 @@ bool filter_frame(const Frame& raw, const cr::TileState& state, Frame* out,
 }
 
 bool setup_fresh_state(FrameSpec* spec, int mi_cols, int mi_rows,
-                       std::string* error) {
+                       std::string& error) {
   cr::EffectiveFrame effective;
   effective.frame_flag = true;
   effective.ccso_luma_size_log2 =

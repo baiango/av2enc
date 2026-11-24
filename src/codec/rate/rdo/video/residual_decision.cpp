@@ -25,12 +25,10 @@ residual::DecisionOptions make_residual_options(const RdoConfig& config) {
 bool decide_residual(const residual::BlockInput& input,
                      const RdoConfig& config, bool allow_residual,
                      bool force_residual, residual::BlockDecision& decision,
-                     std::string* error) {
+                     std::string& error) {
   residual::DecisionOptions options = make_residual_options(config);
   options.allow_residual = allow_residual || force_residual;
-  std::string local_error;
-  std::string& error_ref = error != nullptr ? *error : local_error;
-  if (!residual::decide_inter_block(input, options, decision, error_ref)) {
+  if (!residual::decide_inter_block(input, options, decision, error)) {
     return false;
   }
   if (!force_residual || !decision.skip) return true;

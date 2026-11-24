@@ -12,8 +12,8 @@
 namespace av2enc::syntax::small_header {
 namespace {
 
-void set_error(std::string* error, std::string message) {
-  if (error != nullptr) *error = std::move(message);
+void set_error(std::string& error, std::string message) {
+  error = std::move(message);
 }
 
 void put_uvlc(BitWriter& writer, std::uint32_t value) {
@@ -107,7 +107,7 @@ inline constexpr int kMaxTileCols = 64;                 // MAX_TILE_COLS
 inline constexpr int kMaxTileRows = 64;                 // MAX_TILE_ROWS
 
 bool derive_tile_limits(const SbGeometry& g, int seq_level_idx, int seq_tier,
-                        TileParams* params, std::string* error) {
+                        TileParams* params, std::string& error) {
   const LevelFactors factors = level_factors(seq_level_idx, seq_tier);
   if (factors.reserved) {
     set_error(error, "reserved seq_level_idx/seq_tier combination");
@@ -168,7 +168,7 @@ std::vector<int> uniform_starts(int mis, SbSize sb_size, int tile_log2_value,
 }
 
 bool validate_tile_starts(const std::vector<int>& starts, int sb_count,
-                          int tile_rows_or_cols, std::string* error) {
+                          int tile_rows_or_cols, std::string& error) {
   if (tile_rows_or_cols <= 0 ||
       static_cast<int>(starts.size()) != tile_rows_or_cols) {
     set_error(error, "tile start count disagrees with the tile count");
@@ -194,7 +194,7 @@ bool validate_tile_starts(const std::vector<int>& starts, int sb_count,
 // §5.18.7.4 reuse_tile_params().
 bool reuse_tile_params(const TileParams& sequence, const SbGeometry& g,
                        SbSize sb_size, TileParams* params,
-                       std::string* error) {
+                       std::string& error) {
   const int mi_cols = g.mi_cols;
   const int mi_rows = g.mi_rows;
   if (sequence.uniform_spacing) {
@@ -372,7 +372,7 @@ bool BitReader::align_to_byte() {
 bool validate_cropping_window(const CroppingWindow& window,
                               std::uint32_t max_frame_width,
                               std::uint32_t max_frame_height,
-                              std::string* error) {
+                              std::string& error) {
   if (max_frame_width == 0 || max_frame_height == 0) {
     set_error(error, "max frame dimensions must be non-zero");
     return false;
@@ -400,7 +400,7 @@ bool validate_cropping_window(const CroppingWindow& window,
 }
 
 bool write_cropping_window(BitWriter& writer, const CroppingWindow& window,
-                           std::string* error) {
+                           std::string& error) {
   // The writer validates the uvlc() field values but cannot know the maximum
   // frame size; callers with limits should call validate_cropping_window().
   if (window.present) {
@@ -420,7 +420,7 @@ bool write_cropping_window(BitWriter& writer, const CroppingWindow& window,
   return true;}
 
 bool read_cropping_window(BitReader& reader, CroppingWindow* window,
-                          std::string* error) {
+                          std::string& error) {
   if (window == nullptr) {
     set_error(error, "null CroppingWindow");
     return false;
@@ -446,7 +446,7 @@ bool derive_display_size(const CroppingWindow& window,
                          std::uint32_t max_frame_height,
                          std::uint32_t frame_width,
                          std::uint32_t frame_height, DisplaySize* size,
-                         std::string* error) {
+                         std::string& error) {
   if (size == nullptr) {
     set_error(error, "null DisplaySize");
     return false;
@@ -494,7 +494,7 @@ int max_pb_aspect_ratio(const PbAspectRatio& config) {
 }
 
 bool validate_pb_aspect_ratio(const PbAspectRatio& config,
-                              std::string* error) {
+                              std::string& error) {
   if (!config.reduce) {
     if (config.max_pb_aspect_ratio_log2_minus_1 != 0U) {
       set_error(error,
@@ -512,7 +512,7 @@ bool validate_pb_aspect_ratio(const PbAspectRatio& config,
 }
 
 bool write_pb_aspect_ratio(BitWriter& writer, const PbAspectRatio& config,
-                           std::string* error) {
+                           std::string& error) {
   if (!validate_pb_aspect_ratio(config, error)) return false;
   writer.put_bit(config.reduce);
   if (config.reduce) {
@@ -522,7 +522,7 @@ bool write_pb_aspect_ratio(BitWriter& writer, const PbAspectRatio& config,
 }
 
 bool read_pb_aspect_ratio(BitReader& reader, PbAspectRatio* config,
-                          std::string* error) {
+                          std::string& error) {
   if (config == nullptr) {
     set_error(error, "null PbAspectRatio");
     return false;
@@ -571,7 +571,7 @@ bool pb_non_none_partition_allowed_by_aspect(int bw4, int bh4, int max_ratio) {
 // df_par_bits_minus_2
 // ---------------------------------------------------------------------------
 
-bool validate_df_par(const DfPar& config, std::string* error) {
+bool validate_df_par(const DfPar& config, std::string& error) {
   if (config.df_par_bits_minus_2 > 3U) {
     set_error(error, "df_par_bits_minus_2 is f(2), so it must be 0..3");
     return false;
@@ -579,13 +579,13 @@ bool validate_df_par(const DfPar& config, std::string* error) {
   return true;
 }
 
-bool write_df_par(BitWriter& writer, const DfPar& config, std::string* error) {
+bool write_df_par(BitWriter& writer, const DfPar& config, std::string& error) {
   if (!validate_df_par(config, error)) return false;
   writer.put_bits(config.df_par_bits_minus_2, 2U);
   return true;
 }
 
-bool read_df_par(BitReader& reader, DfPar* config, std::string* error) {
+bool read_df_par(BitReader& reader, DfPar* config, std::string& error) {
   if (config == nullptr) {
     set_error(error, "null DfPar");
     return false;
@@ -605,7 +605,7 @@ bool df_delta_q_representable(int value, const DfPar& config) {
 }
 
 bool validate_df_delta_q(const DfPar& config, const DfDeltaQSet& values,
-                         std::string* error) {
+                         std::string& error) {
   if (!validate_df_par(config, error)) return false;
   for (int i = 0; i < 4; ++i) {
     if (!values.present[static_cast<std::size_t>(i)]) continue;
@@ -632,7 +632,7 @@ bool operator==(const SegmentInfo& a, const SegmentInfo& b) {
 }
 
 bool validate_segment_info(const SegmentInfo& info, int num_segments,
-                           std::string* error) {
+                           std::string& error) {
   if (num_segments != kBaseSegments && num_segments != kMaxSegments) {
     set_error(error, "num_segments must be 8 or 16");
     return false;
@@ -676,7 +676,7 @@ bool validate_segment_info(const SegmentInfo& info, int num_segments,
 }
 
 bool write_segment_info(BitWriter& writer, const SegmentInfo& info,
-                        int num_segments, std::string* error) {
+                        int num_segments, std::string& error) {
   if (!validate_segment_info(info, num_segments, error)) return false;
   for (int i = 0; i < num_segments; ++i) {
     for (int j = 0; j < kSegLvlMax; ++j) {
@@ -697,7 +697,7 @@ bool write_segment_info(BitWriter& writer, const SegmentInfo& info,
 }
 
 bool read_segment_info(BitReader& reader, int num_segments, SegmentInfo* info,
-                       std::string* error) {
+                       std::string& error) {
   if (info == nullptr) {
     set_error(error, "null SegmentInfo");
     return false;
@@ -738,7 +738,7 @@ bool read_segment_info(BitReader& reader, int num_segments, SegmentInfo* info,
 }
 
 bool validate_sequence_segment_config(const SequenceSegmentConfig& config,
-                                      std::string* error) {
+                                      std::string& error) {
   if (!config.present) {
     if (config.allow_change) {
       set_error(error,
@@ -754,7 +754,7 @@ bool validate_sequence_segment_config(const SequenceSegmentConfig& config,
 
 bool write_sequence_segment_config(BitWriter& writer,
                                    const SequenceSegmentConfig& config,
-                                   std::string* error) {
+                                   std::string& error) {
   if (!validate_sequence_segment_config(config, error)) return false;
   writer.put_bit(config.enable_ext_seg);
   writer.put_bit(config.present);
@@ -765,7 +765,7 @@ bool write_sequence_segment_config(BitWriter& writer,
 
 bool read_sequence_segment_config(BitReader& reader,
                                   SequenceSegmentConfig* config,
-                                  std::string* error) {
+                                  std::string& error) {
   if (config == nullptr) {
     set_error(error, "null SequenceSegmentConfig");
     return false;
@@ -798,7 +798,7 @@ bool write_frame_segmentation_params(BitWriter& writer,
                                      bool derived_primary_ref_none,
                                      bool frame_type_switch,
                                      FrameSegmentState* state,
-                                     std::string* error) {
+                                     std::string& error) {
   if (state == nullptr) {
     set_error(error, "null FrameSegmentState");
     return false;
@@ -880,7 +880,7 @@ bool read_frame_segmentation_params(BitReader& reader,
                                     bool derived_primary_ref_none,
                                     bool frame_type_switch,
                                     FrameSegmentState* state,
-                                    std::string* error) {
+                                    std::string& error) {
   if (state == nullptr) {
     set_error(error, "null FrameSegmentState");
     return false;
@@ -1015,7 +1015,7 @@ bool write_tile_params(BitWriter& writer, int frame_width, int frame_height,
                        SbSize uniform_sb_size, SbSize sb_size,
                        int seq_level_idx, int seq_tier,
                        const TileParamsRequest& request, TileParams* params,
-                       std::string* error) {
+                       std::string& error) {
   if (params == nullptr) {
     set_error(error, "null TileParams");
     return false;
@@ -1187,7 +1187,7 @@ bool write_tile_params(BitWriter& writer, int frame_width, int frame_height,
 bool read_tile_params(BitReader& reader, int frame_width, int frame_height,
                       SbSize uniform_sb_size, SbSize sb_size,
                       int seq_level_idx, int seq_tier, TileParams* params,
-                      std::string* error) {
+                      std::string& error) {
   if (params == nullptr) {
     set_error(error, "null TileParams");
     return false;
@@ -1318,7 +1318,7 @@ bool read_tile_params(BitReader& reader, int frame_width, int frame_height,
 bool validate_sequence_tile_config(const SequenceTileConfig& config,
                                    int max_frame_width, int max_frame_height,
                                    SbSize sb_size, int seq_level_idx,
-                                   int seq_tier, std::string* error) {
+                                   int seq_tier, std::string& error) {
   if (!config.present) {
     if (config.allow_change) {
       set_error(error,
@@ -1360,7 +1360,7 @@ bool write_sequence_tile_config(BitWriter& writer,
                                 SequenceTileConfig* config,
                                 int max_frame_width, int max_frame_height,
                                 SbSize sb_size, int seq_level_idx,
-                                int seq_tier, std::string* error) {
+                                int seq_tier, std::string& error) {
   if (config == nullptr) {
     set_error(error, "null SequenceTileConfig");
     return false;
@@ -1388,7 +1388,7 @@ bool read_sequence_tile_config(BitReader& reader,
                                SequenceTileConfig* config,
                                int max_frame_width, int max_frame_height,
                                SbSize sb_size, int seq_level_idx,
-                               int seq_tier, std::string* error) {
+                               int seq_tier, std::string& error) {
   if (config == nullptr) {
     set_error(error, "null SequenceTileConfig");
     return false;
@@ -1418,7 +1418,7 @@ bool write_frame_tile_info(BitWriter& writer,
                            int frame_width, int frame_height, SbSize sb_size,
                            int seq_level_idx, int seq_tier,
                            const FrameTileRequest& request,
-                           FrameTileInfo* info, std::string* error) {
+                           FrameTileInfo* info, std::string& error) {
   if (info == nullptr) {
     set_error(error, "null FrameTileInfo");
     return false;
@@ -1468,7 +1468,7 @@ bool read_frame_tile_info(BitReader& reader,
                           const SequenceTileConfig& sequence,
                           int frame_width, int frame_height, SbSize sb_size,
                           int seq_level_idx, int seq_tier, FrameTileInfo* info,
-                          std::string* error) {
+                          std::string& error) {
   if (info == nullptr) {
     set_error(error, "null FrameTileInfo");
     return false;

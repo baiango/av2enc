@@ -37,18 +37,14 @@ bool partition_config_valid(const PartitionDecideConfig& config) noexcept {
 }
 
 bool validate_partition_config(const PartitionDecideConfig& config,
-                               std::string* error) {
+                               std::string& error) {
   if (!std::isfinite(config.lambda) || config.lambda < 0.0) {
-    if (error != nullptr) {
-      *error = "PartitionDecideConfig.lambda must be finite and >= 0";
-    }
+error = "PartitionDecideConfig.lambda must be finite and >= 0";
     return false;
   }
   if (!std::isfinite(config.sse_only_split_cost) ||
       config.sse_only_split_cost < 0.0) {
-    if (error != nullptr) {
-      *error = "PartitionDecideConfig.sse_only_split_cost must be >= 0";
-    }
+error = "PartitionDecideConfig.sse_only_split_cost must be >= 0";
     return false;
   }
   return true;
@@ -83,9 +79,9 @@ PartitionRdoDecision decide_frame_rdo(const partition::FrameGeometry& geometry,
                                       const PartitionRawCostFunction& costs,
                                       const partition::DecisionOptions& options,
                                       const PartitionDecideConfig& config,
-                                      std::string* error) {
+                                      std::string& error) {
   PartitionRdoDecision result;
-  if (error != nullptr) error->clear();
+  error.clear();
   if (!validate_partition_config(config, error)) {
     result.status = partition::DecisionStatus::kInvalidCost;
     return result;
@@ -93,7 +89,7 @@ PartitionRdoDecision decide_frame_rdo(const partition::FrameGeometry& geometry,
   if (!costs) {
     result.status = partition::DecisionStatus::kInvalidCost;
     result.error = "partition raw cost callback is empty";
-    if (error != nullptr) *error = result.error;
+    error = result.error;
     return result;
   }
 
@@ -123,8 +119,8 @@ PartitionRdoDecision decide_frame_rdo(const partition::FrameGeometry& geometry,
   if (result.status != partition::DecisionStatus::kOk && result.error.empty()) {
     result.error = "partition decision failed";
   }
-  if (result.status != partition::DecisionStatus::kOk && error != nullptr) {
-    *error = result.error;
+  if (result.status != partition::DecisionStatus::kOk) {
+    error = result.error;
   }
   return result;
 }
@@ -133,9 +129,9 @@ PartitionRdoDecision decide_superblock_rdo(
     const partition::FrameGeometry& geometry, int sb_mi_row, int sb_mi_col,
     const PartitionRawCostFunction& costs,
     const partition::DecisionOptions& options,
-    const PartitionDecideConfig& config, std::string* error) {
+    const PartitionDecideConfig& config, std::string& error) {
   PartitionRdoDecision result;
-  if (error != nullptr) error->clear();
+  error.clear();
   if (!validate_partition_config(config, error)) {
     result.status = partition::DecisionStatus::kInvalidCost;
     return result;
@@ -143,7 +139,7 @@ PartitionRdoDecision decide_superblock_rdo(
   if (!costs) {
     result.status = partition::DecisionStatus::kInvalidCost;
     result.error = "partition raw cost callback is empty";
-    if (error != nullptr) *error = result.error;
+    error = result.error;
     return result;
   }
 
@@ -182,8 +178,8 @@ PartitionRdoDecision decide_superblock_rdo(
   if (result.status != partition::DecisionStatus::kOk && result.error.empty()) {
     result.error = "partition decision failed";
   }
-  if (result.status != partition::DecisionStatus::kOk && error != nullptr) {
-    *error = result.error;
+  if (result.status != partition::DecisionStatus::kOk) {
+    error = result.error;
   }
   return result;
 }

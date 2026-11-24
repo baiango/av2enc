@@ -123,13 +123,13 @@ bool valid_plane(const LrChromaPlane& plane, int width, int height,
 }
 
 bool valid_frame(const LrChromaWorkspace& ws, const LrChromaFrame& frame,
-                 std::string* error) {
+                 std::string& error) {
   const LrChromaConfig& config = ws.config();
   const int width = plane_width(config);
   const int height = plane_height(config);
   const int luma_width = config.mi_cols * kMiSize;
   auto fail = [&](const char* text) {
-    if (error != nullptr) *error = text;
+    error = text;
     return false;
   };
   if (frame.mi_cols != config.mi_cols || frame.mi_rows != config.mi_rows ||
@@ -295,7 +295,7 @@ void LrChromaWorkspace::reset() noexcept {
 
 Status allocate_checked(Arena& arena, const LrChromaConfig& config,
                         LrChromaWorkspace* ws,
-                        std::size_t* required_bytes, std::string* error) {
+                        std::size_t* required_bytes, std::string& error) {
   if (ws == nullptr) {
     return Status::kInvalidArgument;
   }
@@ -305,14 +305,14 @@ Status allocate_checked(Arena& arena, const LrChromaConfig& config,
   }
   Layout layout{};
   if (!compute_layout(config, &layout)) {
-    if (error != nullptr) *error = "lr_chroma: invalid configuration";
+    error = "lr_chroma: invalid configuration";
     return Status::kInvalidArgument;
   }
   if (required_bytes != nullptr) {
     *required_bytes = layout.total;
   }
   if (!arena.initialized()) {
-    if (error != nullptr) *error = "lr_chroma: arena is not initialized";
+    error = "lr_chroma: arena is not initialized";
     return Status::kNotInitialized;
   }
 
@@ -346,14 +346,12 @@ Status allocate_checked(Arena& arena, const LrChromaConfig& config,
   if (!is_ok(status)) {
     arena.rewind(mark);
     ws->reset();
-    if (error != nullptr) {
-      if (status == Status::kArenaExhausted) {
-        *error = "lr_chroma: arena too small: need " +
-                 std::to_string(layout.total) + " bytes";
-      } else {
-        *error = std::string("lr_chroma: arena allocation failed: ") +
-                 status_name(status);
-      }
+if (status == Status::kArenaExhausted) {
+  error = "lr_chroma: arena too small: need " +
+           std::to_string(layout.total) + " bytes";
+} else {
+  error = std::string("lr_chroma: arena allocation failed: ") +
+           status_name(status);
     }
     return (status == Status::kArenaExhausted) ? kArenaTooSmall : status;
   }
@@ -374,12 +372,12 @@ Status allocate_checked(Arena& arena, const LrChromaConfig& config,
   ws->active_[0] = static_cast<std::uint8_t*>(active0);
   ws->active_[1] = static_cast<std::uint8_t*>(active1);
   ws->banks_ = static_cast<LrChromaBankState*>(banks);
-  if (error != nullptr) error->clear();
+  error.clear();
   return Status::kOk;
 }
 
 Status LrChromaWorkspace::create(Arena& arena, const LrChromaConfig& config,
-                                 std::string* error) {
+                                 std::string& error) {
   return lr_chroma::allocate_checked(arena, config, this, nullptr, error);
 }
 
@@ -389,23 +387,21 @@ Status LrChromaWorkspace::create(Arena& arena, const LrChromaConfig& config,
 
 Status upload_units(LrChromaWorkspace& ws, int chroma,
                     const LrChromaUnit* host_units, int count,
-                    cudaStream_t stream, std::string* error) {
+                    cudaStream_t stream, std::string& error) {
   if (!ws.initialized()) {
-    if (error != nullptr) *error = "lr_chroma: workspace is not initialized";
+    error = "lr_chroma: workspace is not initialized";
     return Status::kNotInitialized;
   }
   if (chroma < 0 || chroma > 1) {
-    if (error != nullptr) *error = "lr_chroma: chroma plane must be 0 or 1";
+    error = "lr_chroma: chroma plane must be 0 or 1";
     return Status::kInvalidArgument;
   }
   if (count != ws.unit_count(chroma)) {
-    if (error != nullptr) {
-      *error = "lr_chroma: unit count does not match the workspace grid";
-    }
+error = "lr_chroma: unit count does not match the workspace grid";
     return Status::kInvalidArgument;
   }
   if (count > 0 && host_units == nullptr) {
-    if (error != nullptr) *error = "lr_chroma: null host unit array";
+    error = "lr_chroma: null host unit array";
     return Status::kInvalidArgument;
   }
   if (count == 0) {
@@ -415,16 +411,16 @@ Status upload_units(LrChromaWorkspace& ws, int chroma,
       ws.units(chroma), host_units,
       static_cast<std::size_t>(count) * sizeof(LrChromaUnit),
       cudaMemcpyHostToDevice, stream));
-  if (!is_ok(status) && error != nullptr) {
-    *error = "lr_chroma: unit upload failed";
+  if (!is_ok(status)) {
+    error = "lr_chroma: unit upload failed";
   }
   return status;
 }
 
 Status resolve_units(LrChromaWorkspace& ws, cudaStream_t stream,
-                     std::string* error) {
+                     std::string& error) {
   if (!ws.initialized()) {
-    if (error != nullptr) *error = "lr_chroma: workspace is not initialized";
+    error = "lr_chroma: workspace is not initialized";
     return Status::kNotInitialized;
   }
   resolve_kernel<<<1, 2, 0, stream>>>(
@@ -432,16 +428,16 @@ Status resolve_units(LrChromaWorkspace& ws, cudaStream_t stream,
       ws.resolved(0), ws.resolved(1), ws.active(0), ws.active(1),
       ws.bank_state());
   const Status status = status_from_cuda(cudaGetLastError());
-  if (!is_ok(status) && error != nullptr) {
-    *error = "lr_chroma: resolve launch failed";
+  if (!is_ok(status)) {
+    error = "lr_chroma: resolve launch failed";
   }
   return status;
 }
 
 Status apply(const LrChromaWorkspace& ws, const LrChromaFrame& frame,
-             cudaStream_t stream, std::string* error) {
+             cudaStream_t stream, std::string& error) {
   if (!ws.initialized()) {
-    if (error != nullptr) *error = "lr_chroma: workspace is not initialized";
+    error = "lr_chroma: workspace is not initialized";
     return Status::kNotInitialized;
   }
   if (!valid_frame(ws, frame, error)) {
@@ -451,7 +447,7 @@ Status apply(const LrChromaWorkspace& ws, const LrChromaFrame& frame,
   const long long total =
       2LL * static_cast<long long>(core.mi_cols) * core.mi_rows;
   if (total <= 0 || total > std::numeric_limits<int>::max()) {
-    if (error != nullptr) *error = "lr_chroma: empty or oversized frame";
+    error = "lr_chroma: empty or oversized frame";
     return Status::kInvalidArgument;
   }
   const int total_int = static_cast<int>(total);
@@ -466,8 +462,8 @@ Status apply(const LrChromaWorkspace& ws, const LrChromaFrame& frame,
         core, ws.resolved(0), ws.resolved(1), active0, active1);
   }
   const Status status = status_from_cuda(cudaGetLastError());
-  if (!is_ok(status) && error != nullptr) {
-    *error = "lr_chroma: apply launch failed";
+  if (!is_ok(status)) {
+    error = "lr_chroma: apply launch failed";
   }
   return status;
 }

@@ -833,7 +833,7 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
     std::string jmvd_error;
     if (!inter::mvprec::write_jmvd_scale_mode(
             enc_, cdfs_.mv_precision, /*use_amvd=*/false,
-            /*mode=*/0, &jmvd_error)) {
+            /*mode=*/0, jmvd_error)) {
       error = "write_jmvd_scale_mode failed: " + jmvd_error;
       return false;
     }
@@ -1007,7 +1007,7 @@ bool Writer::write_compound_mode_info(const BlockSyntax& node, std::string& erro
       std::string filter_error;
       if (!inter::mvprec::write_block_interp_filter(
               enc_, cdfs_.mv_precision, filter_ctx, node.mrl_index,
-              &filter_error)) {
+              filter_error)) {
         error = "write_block_interp_filter failed: " + filter_error;
         return false;
       }
@@ -1351,7 +1351,7 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
             enc_, cdfs_.mv_precision,
             inter::mvprec::use_amvd_cdf_index(inter::mvprec::kYModeNewMv,
                                               false),
-            amvd_ctx, node.use_amvd != 0, &amvd_error)) {
+            amvd_ctx, node.use_amvd != 0, amvd_error)) {
       error = "write_use_amvd failed: " + amvd_error;
       return false;
     }
@@ -1402,7 +1402,7 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
       symbols.wedge_index = node.wedge_index;
       std::string mm_error;
       if (!adv::write_motion_mode(enc_, adv_cdfs_, node.bsize, symbols,
-                                  &mm_error)) {
+                                  mm_error)) {
         error = "motion mode: " + mm_error;
         return false;
       }
@@ -1434,7 +1434,7 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
     if (!inter::mvprec::plan_block_precision(
             res_config, frame_prec, inter::mvprec::kYModeNewMv,
             node.use_amvd != 0, target, &precision_plan,
-            &precision_error)) {
+            precision_error)) {
       error = "plan_block_precision failed: " + precision_error;
       return false;
     }
@@ -1449,7 +1449,7 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
         inter::mvprec::pb_mv_precision_ctx(neigh, frame_prec.frame_precision);
     if (!inter::mvprec::write_block_precision(
             enc_, cdfs_.mv_precision, most_probable_ctx, pb_ctx,
-            precision_plan, &precision_error)) {
+            precision_plan, precision_error)) {
       error = "write_block_precision failed: " + precision_error;
       return false;
     }
@@ -1465,17 +1465,17 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
     if (precision_plan.is_adaptive_mvd) {
       inter::mvprec::AmvdMvSyntax amvd;
       if (!inter::mvprec::amvd_mv_from_mv(mvd[0], &amvd,
-                                          &precision_error)) {
+                                          precision_error)) {
         error = "amvd_mv_from_mv failed: " + precision_error;
         return false;
       }
       if (!inter::mvprec::write_amvd_mv(enc_, cdfs_.mv_precision, amvd,
-                                        &precision_error)) {
+                                        precision_error)) {
         error = "write_amvd_mv failed: " + precision_error;
         return false;
       }
       if (!inter::mvprec::write_mvd_signs(enc_, sign_config, mvd, 1,
-                                          &precision_error)) {
+                                          precision_error)) {
         error = "write_mvd_signs (AMVD) failed: " + precision_error;
         return false;
       }
@@ -1489,12 +1489,12 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
     } else {
       if (!inter::mvprec::write_shell_mv(
               enc_, cdfs_.mv_precision, node.mvd_y, node.mvd_x,
-              precision_plan.mv_precision, &precision_error)) {
+              precision_plan.mv_precision, precision_error)) {
         error = "write_shell_mv failed: " + precision_error;
         return false;
       }
       if (!inter::mvprec::write_mvd_signs(enc_, sign_config, mvd, 1,
-                                          &precision_error)) {
+                                          precision_error)) {
         error = "write_mvd_signs failed: " + precision_error;
         return false;
       }
@@ -1521,7 +1521,7 @@ bool Writer::write_inter_mode_info(const BlockSyntax& node, std::string& error) 
       std::string filter_error;
       if (!inter::mvprec::write_block_interp_filter(
               enc_, cdfs_.mv_precision, filter_ctx, node.mrl_index,
-              &filter_error)) {
+              filter_error)) {
         error = "write_block_interp_filter failed: " + filter_error;
         return false;
       }

@@ -127,7 +127,7 @@ class TileWriter {
   }
 
   bool run(const std::vector<LeafPlan>& leaves, TileOutput* out,
-           std::string* error) {
+           std::string& error) {
     const int sb_cols = (mi_cols_ + 15) / 16;
     const int sb_rows = (mi_rows_ + 15) / 16;
     std::size_t expected = 0;
@@ -144,7 +144,7 @@ class TileWriter {
                  static_cast<std::size_t>(mi_rows_ / leaf_mi);
     }
     if (leaves.size() != expected) {
-      *error = "leaf plan size " + std::to_string(leaves.size()) +
+      error = "leaf plan size " + std::to_string(leaves.size()) +
                " does not match " + std::to_string(expected) + " 4x4 blocks";
       return false;
     }
@@ -160,7 +160,7 @@ class TileWriter {
     }
     std::size_t bytes = 0;
     if (enc_.exit_symbol(&bytes) != av2::Status::kOk) {
-      *error = "exit_symbol failed";
+      error = "exit_symbol failed";
       return false;
     }
     out->payload.assign(buffer_.begin(),
@@ -317,27 +317,27 @@ class TileWriter {
   // alternating rectangular partitions).
   bool write_node(int r, int c, int w4, int h4,
                   const std::vector<LeafPlan>& leaves, TileOutput* out,
-                  std::size_t* leaf_index, std::string* error) {
+                  std::size_t* leaf_index, std::string& error) {
     const BlockSize size = block_size_from_extent(w4, h4);
     if (size == BlockSize::kInvalid) {
-      *error = "unsupported gate partition size";
+      error = "unsupported gate partition size";
       return false;
     }
     if (w4 == 4 && h4 == 4 && config_.leaf_rect_16 != 0) {
       if (!code_do_split(1, r, c, size)) {
-        *error = error_;
+        error = error_;
         return false;
       }
       const bool vert = config_.leaf_rect_16 == 2;
       if (!code_rect_type(vert ? 1 : 0, r, c, size)) {
-        *error = error_;
+        error = error_;
         return false;
       }
       const int w = vert ? 2 : 4;
       const int h = vert ? 4 : 2;
       for (int k = 0; k < 2; ++k) {
         if (*leaf_index >= leaves.size()) {
-          *error = "leaf plan overrun";
+          error = "leaf plan overrun";
           return false;
         }
         if (!write_leaf(r + (vert ? 0 : k * 2), c + (vert ? k * 2 : 0), w, h,
@@ -351,11 +351,11 @@ class TileWriter {
     if (config_.leaf_size >= 8 && w4 * 4 == config_.leaf_size &&
         h4 * 4 == config_.leaf_size) {
       if (!code_do_split(0, r, c, size)) {
-        *error = error_;
+        error = error_;
         return false;
       }
       if (*leaf_index >= leaves.size()) {
-        *error = "leaf plan overrun";
+        error = "leaf plan overrun";
         return false;
       }
       if (!write_leaf(r, c, w4, h4, *leaf_index, leaves[*leaf_index], out,
@@ -368,11 +368,11 @@ class TileWriter {
     if (w4 == 2 && h4 == 2) {  // 8x8: leaf or one rect split to 8x4/4x8
       if (config_.leaf_size == 8) {
         if (!code_do_split(0, r, c, size)) {
-          *error = error_;
+          error = error_;
           return false;
         }
         if (*leaf_index >= leaves.size()) {
-          *error = "leaf plan overrun";
+          error = "leaf plan overrun";
           return false;
         }
         if (!write_leaf(r, c, 2, 2, *leaf_index, leaves[*leaf_index], out,
@@ -384,11 +384,11 @@ class TileWriter {
       }
       const bool vertical = (((r >> 1) + (c >> 1)) & 1) == 0;
       if (!code_do_split(1, r, c, size)) {
-        *error = error_;
+        error = error_;
         return false;
       }
       if (!code_rect_type(vertical ? 1 : 0, r, c, size)) {
-        *error = error_;
+        error = error_;
         return false;
       }
       const int w = vertical ? 1 : 2;
@@ -397,7 +397,7 @@ class TileWriter {
       const int dc = vertical ? 1 : 0;
       for (int k = 0; k < 2; ++k) {
         if (*leaf_index >= leaves.size()) {
-          *error = "leaf plan overrun";
+          error = "leaf plan overrun";
           return false;
         }
         if (!write_leaf(r + k * dr, c + k * dc, w, h, *leaf_index,
@@ -409,13 +409,13 @@ class TileWriter {
       return true;
     }
     if (!code_do_split(1, r, c, size)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     // PARTITION_SPLIT is invalid below 128x128, so no do_square_split symbol.
     const bool vertical = w4 >= h4;  // halve the longer dimension
     if (!code_rect_type(vertical ? 1 : 0, r, c, size)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     const int half_w = vertical ? w4 / 2 : w4;
@@ -435,7 +435,7 @@ class TileWriter {
   bool choose_candidate(int r, int c, int w4, int h4, const LeafPlan& plan,
                         LeafStats* stats, merge::MvStack* chosen,
                         Mode* active_mode, int* signalled_index,
-                        std::string* error) {
+                        std::string& error) {
     merge::StackParams p;
     p.mi_row = r;
     p.mi_col = c;
@@ -456,7 +456,7 @@ class TileWriter {
     p.num_refs = 2;
     merge::MvStack pre;
     if (merge::build_mv_stack(p, &pre) != merge::Status::kOk) {
-      *error = "build_mv_stack failed";
+      error = "build_mv_stack failed";
       return false;
     }
     const int m = config_.max_drl_bits_minus_1 + 1;
@@ -480,7 +480,7 @@ class TileWriter {
       // No spatial/global candidate: GLOBALMV would be the only legal mode.
       // The gate's grid always has the global candidate, so this is a
       // structural error rather than a fallback path.
-      *error = "empty MV stack at a gate leaf";
+      error = "empty MV stack at a gate leaf";
       return false;
     }
 
@@ -516,7 +516,7 @@ class TileWriter {
       }
       const int signalled = config_.legacy_sort ? legacy_post : spec_post;
       if (spec_post < 0 || signalled < 0 || signalled >= m) {
-        *error = "NEWMV predictor index is outside [0,m)";
+        error = "NEWMV predictor index is outside [0,m)";
         return false;
       }
       stats->pre_index = 0;
@@ -585,7 +585,7 @@ class TileWriter {
     }
     if (best < 0) best = fallback;
     if (best < 0) {
-      *error = "no signalable DRL candidate in [0,m)";
+      error = "no signalable DRL candidate in [0,m)";
       return false;
     }
     // Recompute the two mappings for the chosen candidate.
@@ -617,7 +617,7 @@ class TileWriter {
     *active_mode = config_.mode;
     *signalled_index = stats->signalled_index;
     if (*signalled_index < 0 || *signalled_index >= m) {
-      *error = "chosen DRL index is outside [0,m)";
+      error = "chosen DRL index is outside [0,m)";
       return false;
     }
     return true;
@@ -728,7 +728,7 @@ class TileWriter {
 
   bool write_leaf(int r, int c, int w4, int h4, std::size_t leaf_index,
                   const LeafPlan& plan, TileOutput* out,
-                  std::string* error) {
+                  std::string& error) {
     LeafStats stats;
     stats.mi_row = r;
     stats.mi_col = c;
@@ -750,11 +750,11 @@ class TileWriter {
     }
 
     if (!sym(&cdfs_.is_inter[is_inter_context(r, c, w4, h4)][0], 2, 1)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     if (!sym(&cdfs_.skip[skip_context(r, c, w4, h4)][0], 2, 1)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     // reference_select == 0 -> no comp_mode bit.  With NumTotalRefs == 2 the
@@ -764,19 +764,19 @@ class TileWriter {
       const int ref_ctx = single_ref_context(0, r, c, w4, h4);
       const int ref_symbol = plan.ref == 0 ? 1 : 0;
       if (!sym(&cdfs_.single_ref[ref_ctx][0][0], 2, ref_symbol)) {
-        *error = error_;
+        error = error_;
         return false;
       }
     }
     if (config_.force_global_mv) {
       if (!sym(&cdfs_.single_mode[new_mv_ctx][0], 3, 1)) {
-        *error = error_;
+        error = error_;
         return false;
       }
     } else {
     // single_mode: 0 = NEARMV, 2 = NEWMV; CDF row = NewMvContext.
     if (!sym(&cdfs_.single_mode[new_mv_ctx][0], 3, plan.newmv ? 2 : 0)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     if (config_.corrupt_index) {
@@ -789,11 +789,11 @@ class TileWriter {
     drl_ctx.new_mv_context = new_mv_ctx;
     if (write_drl_index(&enc_, &cdfs_.drl, drl_ctx, signalled, 0,
                         config_.max_drl_bits_minus_1 + 1) != Status::kOk) {
-      *error = "write_drl_index failed";
+      error = "write_drl_index failed";
       return false;
     }
     if (plan.newmv && !write_mv(stats.mvd.y, stats.mvd.x)) {
-      *error = "write_mv failed";
+      error = "write_mv failed";
       return false;
     }
     }
@@ -824,7 +824,7 @@ class TileWriter {
     }
     const BlockSize bsize = block_size_from_extent(w4, h4);
     if (bsize == BlockSize::kInvalid) {
-      *error = "unsupported gate leaf extent";
+      error = "unsupported gate leaf extent";
       return false;
     }
     for (int yy = 0; yy < h4; ++yy) {
@@ -860,14 +860,14 @@ class TileWriter {
 
 bool write_drl_tile(int width, int height, const std::vector<LeafPlan>& leaves,
                     const TileConfig& config, TileOutput* out,
-                    std::string* error) {
-  if (out == nullptr || error == nullptr) {
+                    std::string& error) {
+  if (out == nullptr) {
     return false;
   }
-  error->clear();
+  error.clear();
   *out = TileOutput{};
   if (width <= 0 || height <= 0 || width % 64 != 0 || height % 64 != 0) {
-    *error = "gate tile requires 64-multiple dimensions";
+    error = "gate tile requires 64-multiple dimensions";
     return false;
   }
   TileWriter writer(width, height, config);

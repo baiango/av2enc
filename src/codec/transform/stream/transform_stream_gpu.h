@@ -90,12 +90,12 @@ struct CandidateOutcome {
 [[nodiscard]] bool evaluate_batch(const Request* requests, int count,
                     const BatchOptions& options,
                     std::vector<CandidateOutcome>* outcomes,
-                    std::string* error = nullptr);
+                    std::string& error);
 
 // Full decision batch.  Fills `decisions[0..count)`; on failure returns false
 // and leaves decisions reset (`valid == false`).
 [[nodiscard]] bool quantize_batch(const Request* requests, int count,
                     const BatchOptions& options, Decision* decisions,
-                    std::string* error = nullptr);
+                    std::string& error);
 
 }  // namespace av2enc::still::ts::gpu

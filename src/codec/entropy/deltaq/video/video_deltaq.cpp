@@ -5,8 +5,8 @@
 namespace av2enc::video::deltaq {
 namespace {
 
-void set_error(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+void set_error(std::string& error, const char* message) {
+  error = message;
 }
 
 av2enc::deltaq::SegmentBlock to_segment_block(
@@ -20,7 +20,7 @@ av2enc::deltaq::SegmentBlock to_segment_block(
   return block;
 }
 
-bool valid_node(const syntax::BlockSyntax& node, std::string* error) {
+bool valid_node(const syntax::BlockSyntax& node, std::string& error) {
   const auto size = static_cast<partition::BlockSize>(node.bsize);
   if (!partition::is_valid_block_size(size)) {
     set_error(error, "deltaq: block has an invalid size");
@@ -46,7 +46,7 @@ av2enc::deltaq::FrameQpHeader frame_qp_header(const FrameQpPlan& plan) noexcept 
 bool begin_frame(FrameQpContext& context, const FrameQpPlan& plan,
                  const VideoFrameHeader& header, int mi_cols, int mi_rows,
                  std::span<const std::uint8_t> prev_segment_ids,
-                 std::string* error) {
+                 std::string& error) {
   context = FrameQpContext{};
   context.plan = plan;
   context.header = frame_qp_header(plan);
@@ -95,11 +95,9 @@ bool begin_frame(FrameQpContext& context, const FrameQpPlan& plan,
 
 std::size_t write_frame_qp_syntax(BitWriter& writer, const FrameQpPlan& plan,
                                   const VideoFrameHeader& header,
-                                  std::string* error) {
+                                  std::string& error) {
   if (header.keyframe && !plan.primary_ref_is_none) {
-    if (error != nullptr) {
-      *error = "m2 deltaq: a key frame cannot have a primary reference";
-    }
+error = "m2 deltaq: a key frame cannot have a primary reference";
     return 0;
   }
   const av2enc::deltaq::FrameQpHeader qp_header = frame_qp_header(plan);
@@ -126,7 +124,7 @@ bool write_inter_segment_id_pre(FrameQpContext& context,
                                 av2::Encoder& encoder,
                                 const syntax::BlockSyntax& node,
                                 int segment_id, bool skip_flag,
-                                std::string* error) {
+                                std::string& error) {
   if (!valid_node(node, error)) return false;
   bool coded = false;
   return av2enc::deltaq::write_inter_segment_id(
@@ -139,7 +137,7 @@ bool write_inter_segment_id_post(FrameQpContext& context,
                                  av2::Encoder& encoder,
                                  const syntax::BlockSyntax& node,
                                  int segment_id, bool skip_flag,
-                                 std::string* error) {
+                                 std::string& error) {
   if (!valid_node(node, error)) return false;
   bool coded = false;
   return av2enc::deltaq::write_inter_segment_id(
@@ -150,7 +148,7 @@ bool write_inter_segment_id_post(FrameQpContext& context,
 
 bool write_intra_segment_id(FrameQpContext& context, av2::Encoder& encoder,
                             const syntax::BlockSyntax& node, int segment_id,
-                            bool skip_flag, std::string* error) {
+                            bool skip_flag, std::string& error) {
   if (!valid_node(node, error)) return false;
   return av2enc::deltaq::write_intra_segment_id(
       encoder, context.cdfs, context.segmentation, context.grid,
@@ -159,7 +157,7 @@ bool write_intra_segment_id(FrameQpContext& context, av2::Encoder& encoder,
 
 bool write_delta_qindex(FrameQpContext& context, av2::Encoder& encoder,
                         const syntax::BlockSyntax& node, bool skip_flag,
-                        int reduced_delta, std::string* error) {
+                        int reduced_delta, std::string& error) {
   if (!valid_node(node, error)) return false;
   // M2 uses 64x64 superblocks (VideoConfig has no superblock-size knob).
   constexpr int kSbSize = 64;
@@ -171,7 +169,7 @@ bool write_delta_qindex(FrameQpContext& context, av2::Encoder& encoder,
 bool write_superblock_delta_q(FrameQpContext& context, av2::Encoder& encoder,
                               const rc::DeltaQPlanStep& step,
                               const syntax::BlockSyntax& first_block,
-                              bool skip_flag, std::string* error) {
+                              bool skip_flag, std::string& error) {
   if (!av2enc::deltaq::check_plan_step(context.tile_qp, step, error)) {
     return false;
   }
@@ -188,7 +186,7 @@ bool write_superblock_delta_q(FrameQpContext& context, av2::Encoder& encoder,
 
 bool commit_segment_block(FrameQpContext& context,
                           const syntax::BlockSyntax& node, int segment_id,
-                          std::string* error) {
+                          std::string& error) {
   if (!valid_node(node, error)) return false;
   return av2enc::deltaq::commit_segment_block(context.grid,
                                               to_segment_block(node),

@@ -146,7 +146,7 @@ bool build_raw(const TileGroupGeometry& geometry,
                const std::vector<TileGroupWriteParams>& params,
                const std::vector<std::vector<std::uint8_t>>& payloads,
                std::vector<std::vector<std::uint8_t>>* out,
-               std::string* error) {
+               std::string& error) {
   out->clear();
   for (const auto& one : params) {
     std::vector<std::uint8_t> payload;
@@ -214,7 +214,7 @@ GoldenCase make_golden_three_group() {
 }
 
 bool build_golden_case(GoldenCase* c, std::vector<std::vector<std::uint8_t>>* out,
-                       FrameTileGroupPlan* plan_out, std::string* error) {
+                       FrameTileGroupPlan* plan_out, std::string& error) {
   std::vector<TileGroupSpan> groups;
   if (!av2enc::video::tile_groups::plan_contiguous_tile_groups(
           c->geometry, c->group_sizes, c->copy_header, c->bru_default, &groups,

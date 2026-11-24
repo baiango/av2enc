@@ -288,7 +288,7 @@ bool run_case(int width, int height, int cols, int rows,
   const auto emit_frame = [&](const av2enc::video::post::VideoTiledFrameHeader& fh,
                               const av2enc::video::post::VideoTiledFrame& frame,
                               std::vector<std::vector<std::uint8_t>>* obus,
-                              std::string* err) -> bool {
+                              std::string& err) -> bool {
     const TileGroupGeometry geometry =
         av2enc::video::tile_groups::geometry_from_layout(
             layout, frame.tile_size_bytes, /*use_bru=*/false,
@@ -300,7 +300,7 @@ bool run_case(int width, int height, int cols, int rows,
       return false;
     }
     if (header_bits.bit_count != frame.frame_header_bits) {
-      *err = "frame header bit count differs from the tile-group writer";
+      err = "frame header bit count differs from the tile-group writer";
       return false;
     }
 
@@ -340,7 +340,7 @@ bool run_case(int width, int height, int cols, int rows,
       const auto parity_obu = av2enc::basic::make_obu(
           av2enc::basic::ObuHeader{parity_type}, single_payloads[0]);
       if (parity_obu != frame.obu) {
-        *err = "one-group framing differs from the existing single-group writer";
+        err = "one-group framing differs from the existing single-group writer";
         return false;
       }
     }

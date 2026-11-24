@@ -36,7 +36,7 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
           /*sb_width_log2=*/plan_.sb_size == 64
               ? 4
               : (plan_.sb_size == 128 ? 5 : 6),
-          &error)) {
+          error)) {
     return false;
   }
   if (cdef_active) {
@@ -65,7 +65,7 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
     pc_params.luma_shift = filters_->lr.plane[0].shift;
     pc_params.chroma_shift = filters_->lr.chroma_shift;
     pc_ready_ = pcw::InitTileState(&pc_state_, pc_params, mi_cols_, mi_rows_,
-                                   /*sub_x=*/1, /*sub_y=*/1, &error);
+                                   /*sub_x=*/1, /*sub_y=*/1, error);
     if (!pc_ready_) return false;
     // §8.2.2: the tile LR CDFs come from the frame image, which §7.4.4/
     // §7.5 carries across frames under --cdf-continuity.
@@ -89,7 +89,7 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
       params.chroma_shift = filters_->lr.chroma_shift;
       if (!filters_stream::lr_state_init(&lr_state_, params, mi_cols_,
                                          mi_rows_, 1, 1, plan_.sb_size,
-                                         &error)) {
+                                         error)) {
         return false;
       }
       filters_stream::lr_state_seed_cdfs(&lr_state_, cdfs_.lr_cdfs);
@@ -124,7 +124,7 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
     params.chroma_shift = filters_->lr.chroma_shift;
     if (!filters_stream::lr_state_init(&lr_state_, params, mi_cols_,
                                        mi_rows_, 1, 1, plan_.sb_size,
-                                       &error)) {
+                                       error)) {
       return false;
     }
     filters_stream::lr_state_seed_cdfs(&lr_state_, cdfs_.lr_cdfs);
@@ -196,7 +196,7 @@ bool Writer::run(std::size_t* tile_bytes, std::string& error) {
       dst.offset_idx = src.offset_idx;
     }
     if (!filters_stream::ccso_tile_init(&ccso_state_, params, mi_cols_,
-                                        mi_rows_, 1, 1, &error)) {
+                                        mi_rows_, 1, 1, error)) {
       return false;
     }
     // §8.2.2: seed the CCSO symbol CDFs from the frame image.
@@ -627,11 +627,9 @@ std::size_t cdf_image_words() { return cdf_image_words_impl(); }
 
 bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
                                        std::vector<std::uint16_t>& out,
-                                       std::string* error) {
+                                       std::string& error) {
   if (base_q_idx < 1 || base_q_idx > 255) {
-    if (error != nullptr) {
-      *error = "base_q_idx must be in [1, 255] for a CDF default image";
-    }
+error = "base_q_idx must be in [1, 255] for a CDF default image";
     return false;
   }
   CdfState state{};
@@ -646,20 +644,18 @@ bool cdf_image_tables(std::vector<std::uint16_t>& frame,
                       std::vector<std::uint16_t>& saved,
                       std::vector<std::uint16_t>& defaults,
                       std::vector<entropy::avg_cdf::CdfTable>& tables,
-                      std::string* error) {
+                      std::string& error) {
   const std::size_t words = cdf_image_words_impl();
   if (frame.size() != words || tile.size() != words ||
       saved.size() != words || defaults.size() != words) {
-    if (error != nullptr) {
-      *error = "CDF images must all have cdf_image_words() entries";
-    }
+error = "CDF images must all have cdf_image_words() entries";
     return false;
   }
   tables.clear();
   for (const CdfArrayDesc& desc : cdf_arrays()) {
     const std::size_t entries = static_cast<std::size_t>(desc.symbols) + 1U;
     if (entries == 0U || desc.words % entries != 0U) {
-      if (error != nullptr) *error = "CDF array size is not a multiple of N+1";
+      error = "CDF array size is not a multiple of N+1";
       return false;
     }
     const std::size_t instances = desc.words / entries;

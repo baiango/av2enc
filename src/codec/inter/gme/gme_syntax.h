@@ -104,12 +104,12 @@ struct GmSyntaxContext {
 // failure `error` is set and the writer may contain partial bits; callers
 // validate before committing a header.
 std::size_t write_global_motion_params(BitWriter& writer, const GmSyntaxContext& context,
-                                       std::string* error);
+                                       std::string& error);
 
 // Reads global_motion_params() and fills `params_out[0..num_total_refs-1]`.
 [[nodiscard]] bool read_global_motion_params(GmBitReader& reader, const GmSyntaxContext& context,
                                std::array<GmParams, kMaxRefsPerFrame>* params_out,
-                               std::string* error, bool* use_global_motion_out = nullptr);
+                               std::string& error, bool* use_global_motion_out = nullptr);
 
 // §5.18.9.1 scale_warp_model. Writes six Q16 parameters to `out`.
 void scale_warp_model(const std::int32_t base[6], int base_distance, int distance,
@@ -117,9 +117,9 @@ void scale_warp_model(const std::int32_t base[6], int base_distance, int distanc
 
 // Exposed for tests: one read/write_global_param() pair.
 [[nodiscard]] bool write_global_param(BitWriter& writer, int ref, int index, const std::int32_t prev[6],
-                        const GmParams& params, std::string* error);
+                        const GmParams& params, std::string& error);
 [[nodiscard]] bool read_global_param(GmBitReader& reader, int ref, int index, const std::int32_t prev[6],
-                       std::int32_t out[6], std::string* error);
+                       std::int32_t out[6], std::string& error);
 
 }  // namespace av2enc::inter::gme
 

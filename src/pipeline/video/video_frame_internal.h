@@ -427,7 +427,7 @@ inline bool plan_grain_frame(const VideoInputFrame& frame, std::uint32_t index,
                       grain::GrainFramePlan& plan, std::string& error,
                       int tlayer_id = 0, int mlayer_id = 0) {
   return planner.PlanFrame(make_grain_view(frame), index, tlayer_id, mlayer_id,
-                           &plan, &error);
+                           &plan, error);
 }
 
 inline bool insert_grain_obu(const grain::GrainFramePlan& plan,
@@ -435,13 +435,13 @@ inline bool insert_grain_obu(const grain::GrainFramePlan& plan,
   if (!plan.emit_model) return true;
   std::string grain_error;
   const std::vector<std::uint8_t> obu =
-      grain::MakeFilmGrainObu(plan.obu, &grain_error);
+      grain::MakeFilmGrainObu(plan.obu, grain_error);
   if (obu.empty()) {
     error = "film grain OBU: " + grain_error;
     return false;
   }
   std::vector<std::uint8_t> with_grain;
-  if (!grain::InsertFilmGrainObu(unit, obu, &with_grain, &grain_error)) {
+  if (!grain::InsertFilmGrainObu(unit, obu, &with_grain, grain_error)) {
     error = "film grain OBU: " + grain_error;
     return false;
   }
@@ -649,7 +649,7 @@ inline bool derive_implicit_fields(const inter::mv_stack_full::RefSlotBank& bank
                             int height, int tlayer_id,
                             const inter::mv_stack_full::DependencyMaps& deps,
                             inter::mv_stack_full::ImplicitRefMap* out,
-                            std::string* error) {
+                            std::string& error) {
   inter::mv_stack_full::RefMapParams params;
   params.num_ref_frames = bank.num_ref_frames;
   params.active_num_ref_frames =
@@ -950,7 +950,7 @@ inline bool make_video_segmentation(const VideoOptions& options,
     // qindex.  The intra key frame has no inter blocks, so it keeps ALT_Q and
     // the P-frame table enables the feature instead (the table is per frame).
     if (!frame_is_intra && (id == skip_seg || id == gm_seg)) continue;
-    if (!rc::set_segment_alt_q(seg, id, delta, &error)) {
+    if (!rc::set_segment_alt_q(seg, id, delta, error)) {
       error = "segmentation: " + error;
       return false;
     }
@@ -1051,7 +1051,7 @@ inline bool build_video_frame_qp(const VideoOptions& options, int base_q_idx,
   deltaq::FrameSegmentation derived;
   if (!deltaq::derive_frame_segmentation(header.qp.segmentation,
                                          header.qp.delta_q, base_q_idx,
-                                         qp_header, derived, &error)) {
+                                         qp_header, derived, error)) {
     error = "segmentation: " + error;
     return false;
   }
@@ -1211,7 +1211,7 @@ inline bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, 
     info.is_inter = true;
     av2enc::rdoq::av2::Model model;
     std::string rdoq_error;
-    if (!model.init(info, scalar_scan, &rdoq_error)) {
+    if (!model.init(info, scalar_scan, rdoq_error)) {
       error = "rdoq model init failed: " + rdoq_error;
       return false;
     }
@@ -1269,7 +1269,7 @@ inline bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, 
     info.tx_class_2d = true;
     av2enc::tcq::av2::Model model;
     std::string tcq_error;
-    if (!model.init(info, reference, &tcq_error)) {
+    if (!model.init(info, reference, tcq_error)) {
       error = "tcq model init failed: " + tcq_error;
       return false;
     }
@@ -1280,7 +1280,7 @@ inline bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, 
     tcq_config.max_coefficients = area;
     av2enc::tcq::Result tcq_result;
     if (!av2enc::tcq::quantize(input, tcq_config, model.rate_model(),
-                               tcq_result, &tcq_error)) {
+                               tcq_result, tcq_error)) {
       error = "tcq quantize failed: " + tcq_error;
       return false;
     }
@@ -1916,7 +1916,7 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   options.search_partition = search_partition;
   txtsearch::Result result;
   if (!txtsearch::search(residual.data(), cw, ch, mode, qindex, 0, 0,
-                         pred.data(), options, &result, &error)) {
+                         pred.data(), options, &result, error)) {
     return false;
   }
   plan.searched = true;
@@ -2281,7 +2281,7 @@ inline bool compute_chroma_cctx(const VideoInputFrame& frame, int x0, int y0, in
   std::string cctx_error;
   if (!av2enc::tcq::cctx_enumerate_scalar(u_coeff, v_coeff, params.w,
                                           params.h, config, &candidates,
-                                          &cctx_error)) {
+                                          cctx_error)) {
     error = "cctx enumerate failed: " + cctx_error;
     return false;
   }

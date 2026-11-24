@@ -91,9 +91,9 @@ struct RefSlotBank {
   // FrameCounter, which is the decoder behaviour.
   bool refresh(int refresh_frame_flags, int order_hint, int frame_width,
                int frame_height, int base_q_idx, bool key_frame,
-               int tlayer_id = 0, int mlayer_id = 0,
-               bool implicit_output = true, bool immediate_output = true,
-               int counter = -1, std::string* error = nullptr);
+               int tlayer_id, int mlayer_id,
+               bool implicit_output, bool immediate_output,
+               int counter, std::string& error);
 };
 
 struct RefMap {
@@ -122,12 +122,12 @@ struct RefMap {
 // §7.7 get_ref_frames().  `out->num_total_refs/ref_frame_idx` are the final
 // mapping for this pass.
 [[nodiscard]] bool get_ref_frames(const RefMapParams& params, RefMap* out,
-                    std::string* error);
+                    std::string& error);
 
 // §7.8 get_past_future_cur_ref_lists().  Requires a RefMap produced by
 // get_ref_frames() with the same params.
 [[nodiscard]] bool get_past_future_cur_ref_lists(const RefMapParams& params, RefMap* map,
-                                   std::string* error);
+                                   std::string& error);
 
 // §5.18.2 for an *explicit* map: after frame_size() the decoder sets
 // `ScoresDistance[i] = get_relative_dist(OrderHint, RefOrderHint[ref_frame_idx[i]])`
@@ -137,7 +137,7 @@ struct RefMap {
 // The indices are validated against the live slot bank.
 [[nodiscard]] bool derive_explicit_ref_map(const RefMapParams& params, int num_total_refs,
                              const int* ref_frame_idx, RefMap* out,
-                             std::string* error);
+                             std::string& error);
 
 // Full implicit-mapping sequence for one frame: §5.18.2 calls get_ref_frames(0)
 // before frame_size() and get_ref_frames(1) after it.  Both passes are
@@ -147,7 +147,7 @@ struct ImplicitRefMap {
   RefMap stage1;  // checkRes = 1 (after the frame size is known)
 };
 [[nodiscard]] bool derive_implicit_ref_map(const RefMapParams& params, ImplicitRefMap* out,
-                             std::string* error);
+                             std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.18.2 get_disp_order_hint / get_max_disp_order_hint
@@ -170,13 +170,13 @@ struct DispOrderHintParams {
 // Returns the maximum RefOrderHint over the eligible slots (0 when none).
 [[nodiscard]] bool get_max_disp_order_hint(const DispOrderHintParams& params,
                              bool only_showable, int* max_disp,
-                             std::string* error);
+                             std::string& error);
 
 // Returns the derived display order hint (can exceed (1<<OrderHintBits)-1).
 // Fails when the §5.18.2 conformance bound
 // `value < (1 << (DISPLAY_ORDER_HINT_BITS - 1))` is violated.
 [[nodiscard]] bool get_disp_order_hint(const DispOrderHintParams& params, int* disp_order_hint,
-                         std::string* error);
+                         std::string& error);
 
 // ---------------------------------------------------------------------------
 // R77 — §6.4.1 operating-point consistency
@@ -207,7 +207,7 @@ struct R77Result {
 //   3. an explicit map associates each buffer index with the same frame in
 //      every operating point.
 [[nodiscard]] bool validate_r77(std::span<const OperatingPointRefMap> maps, R77Result* out,
-                  std::string* error);
+                  std::string& error);
 
 // ---------------------------------------------------------------------------
 // Frame-header reference-map syntax (§5.18.2)
@@ -253,7 +253,7 @@ struct FrameRefMapResult {
                                 const FrameRefMapSyntax& syntax,
                                 const RefMapParams& params,
                                 const ImplicitRefMap& implicit,
-                                std::string* error);
+                                std::string& error);
 
 // Reader.  Mirrors the writer, including the frame_explicit_ref_frame_map bit.
 // In explicit mode it also derives ScoresDistance and the §7.8 classification
@@ -263,6 +263,6 @@ struct FrameRefMapResult {
 [[nodiscard]] bool read_frame_ref_map_syntax(BitReader* reader,
                                const FrameRefMapSyntax& gates,
                                const RefMapParams& params,
-                               FrameRefMapResult* out, std::string* error);
+                               FrameRefMapResult* out, std::string& error);
 
 }  // namespace av2enc::inter::mv_stack_full

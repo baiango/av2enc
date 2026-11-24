@@ -107,7 +107,7 @@ class MorphWorkspace {
   // arena bump pointer is restored and `required_bytes()` still reports the
   // size the caller must make available (Status::kArenaExhausted).
   Status init(Arena& arena, const MorphArenaConfig& config,
-              std::string* error = nullptr);
+              std::string& error);
 
   bool initialized() const noexcept { return jobs_ != nullptr; }
   int capacity() const noexcept { return capacity_; }

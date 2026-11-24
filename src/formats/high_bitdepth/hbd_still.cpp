@@ -144,9 +144,9 @@ void dequantize_qindex(const std::int32_t* levels, const txv::TxParams& params,
 
 }  // namespace
 
-bool qindex_encodable(std::uint16_t base_q_idx, std::string* reason) {
-  const auto fail = [reason](const char* text) {
-    if (reason != nullptr) *reason = text;
+bool qindex_encodable(std::uint16_t base_q_idx, std::string& reason) {
+  const auto fail = [&reason](const char* text) {
+    reason = text;
     return false;
   };
   if (base_q_idx == 0) {
@@ -172,14 +172,14 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
     return false;
   }
   if (!av2enc::high_bitdepth::high_bitdepth_geometry_supported(picture.format.width, picture.format.height,
-                                   &error)) {
+                                   error)) {
     return false;
   }
   if (!fmt::samples_in_range(picture)) {
     error = "hbd input samples must be in [0,1023]";
     return false;
   }
-  if (!qindex_encodable(options.base_q_idx, &error)) return false;
+  if (!qindex_encodable(options.base_q_idx, error)) return false;
 
   const int quant_step = depth::qlookup(options.base_q_idx);
   const int num_planes = fmt::num_planes(picture.format.chroma);
@@ -368,10 +368,10 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
   if (options.enable_deblock) {
     DeblockGrids grids;
     if (!build_deblock_grids(picture.format, blocks, options.base_q_idx, &grids,
-                             &error)) {
+                             error)) {
       return false;
     }
-    if (!apply_deblock_16(grids, recon, &error)) return false;
+    if (!apply_deblock_16(grids, recon, error)) return false;
   }
 
   // §7.18 CDEF (opt-in).  CurrFrame is the post-deblock reconstruction; the
@@ -412,7 +412,7 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
     filter_frame.num_planes = num_planes;
     filter_frame.bit_depth = depth::kBitDepth;
     if (!plan_cdef(filter_frame, options.cdef_damping,
-                   options.cdef_num_strengths, &cdef_plan, &error)) {
+                   options.cdef_num_strengths, &cdef_plan, error)) {
       return false;
     }
     std::uint16_t* dst_planes[3] = {nullptr, nullptr, nullptr};
@@ -421,7 +421,7 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
       dst_planes[plane] = cdef_samples[plane].data();
     }
     if (!apply_cdef16(cdef_plan, picture.format, src_planes, dst_planes,
-                      src_stride, mi_cols, mi_rows, &error)) {
+                      src_stride, mi_cols, mi_rows, error)) {
       return false;
     }
     for (int plane = 0; plane < num_planes; ++plane) {
@@ -458,11 +458,11 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
     filter_frame.num_planes = num_planes;
     filter_frame.bit_depth = depth::kBitDepth;
     if (!plan_ccso(filter_frame, options.ccso_luma_size_log2,
-                   options.ccso_edge_only, &ccso_plan, &error)) {
+                   options.ccso_edge_only, &ccso_plan, error)) {
       return false;
     }
     if (!apply_ccso16(ccso_plan, picture.format, curr_planes, out_planes,
-                      cdef_stride, cdef_stride, mi_cols, mi_rows, &error)) {
+                      cdef_stride, cdef_stride, mi_cols, mi_rows, error)) {
       return false;
     }
   }
@@ -522,7 +522,7 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
     if (any_lr) {
       if (!plan_lr(lr_frame, options.enable_wiener,
                    options.enable_chroma_lr, options.enable_pc_wiener,
-                   options.base_q_idx, &lr_plan, &error)) {
+                   options.base_q_idx, &lr_plan, error)) {
         return false;
       }
       lr_plan.config.lr_tx_skip = lr_tx_skip;
@@ -546,7 +546,7 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
     }
     if (any_lr && lr_plan.config.enabled) {
       if (!apply_wiener16(lr_frame, lr_plan.config, lr_ptr, lr_stride,
-                          &error)) {
+                          error)) {
         return false;
       }
       if (options.enable_pc_wiener && lr_plan.config.plane[0].enabled) {
@@ -574,9 +574,9 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
       gdf_frame.mi_rows = mi_rows;
       gdf_frame.bit_depth = depth::kBitDepth;
       gdf_frame.base_q_idx = options.base_q_idx;
-      if (!plan_gdf(gdf_frame, &gdf_plan, &error)) return false;
+      if (!plan_gdf(gdf_frame, &gdf_plan, error)) return false;
       if (!apply_gdf16(gdf_plan, gdf_frame, lr_ptr[0], lr_stride[0],
-                       &error)) {
+                       error)) {
         return false;
       }
     }
@@ -613,7 +613,7 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
   std::uint32_t tile_bytes = 0;
   if (!av2enc::high_bitdepth::assemble_high_bitdepth_tile_payload(
           picture, payload_options, blocks.data(), blocks.size(),
-          levels.data(), levels.size(), &payload, &tile_bytes, &error)) {
+          levels.data(), levels.size(), &payload, &tile_bytes, error)) {
     return false;
   }
 
@@ -641,7 +641,7 @@ bool encode_still(const fmt::Picture& picture, const HbdOptions& options,
   if (ccso_plan.config.enabled) config.ccso = &ccso_plan.config;
   if (lr_plan.config.enabled) config.lr = &lr_plan.config;
   if (gdf_plan.config.enabled) config.gdf = &gdf_plan.config;
-  if (!validate_config(config, &error)) return false;
+  if (!validate_config(config, error)) return false;
 
   result.frame = assemble_still_picture(config, payload);
   result.tile_bytes = tile_bytes;

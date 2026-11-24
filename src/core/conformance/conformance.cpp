@@ -182,54 +182,40 @@ int64_t TileGrid::max_tile_area() const {
   return best;
 }
 
-bool TileGrid::structurally_valid(std::string* why) const {
+bool TileGrid::structurally_valid(std::string& why) const {
   if (cols <= 0 || rows <= 0) {
-    if (why != nullptr) {
-      *why = "tile grid has a non-positive dimension";
-    }
+      why = "tile grid has a non-positive dimension";
     return false;
   }
   if (cols > 64 || rows > 64) {
-    if (why != nullptr) {
-      *why = "tile grid exceeds MAX_TILE_COLS / MAX_TILE_ROWS (64x64)";
-    }
+      why = "tile grid exceeds MAX_TILE_COLS / MAX_TILE_ROWS (64x64)";
     return false;
   }
   if (log2_exact(cols) < 0 || log2_exact(rows) < 0) {
-    if (why != nullptr) {
-      *why = "tile grid dimensions are not powers of two";
-    }
+      why = "tile grid dimensions are not powers of two";
     return false;
   }
   if (tile_widths.empty() && tile_heights.empty()) {
     if (cols != 1 || rows != 1) {
-      if (why != nullptr) {
-        *why = "tile grid is missing its tile dimensions";
-      }
+        why = "tile grid is missing its tile dimensions";
       return false;
     }
     return true;
   }
   if (static_cast<int>(tile_widths.size()) != cols * rows ||
       static_cast<int>(tile_heights.size()) != cols * rows) {
-    if (why != nullptr) {
-      *why = "tile grid does not have cols * rows entries";
-    }
+      why = "tile grid does not have cols * rows entries";
     return false;
   }
   for (int width : tile_widths) {
     if (width <= 0) {
-      if (why != nullptr) {
-        *why = "tile grid has a non-positive tile width";
-      }
+        why = "tile grid has a non-positive tile width";
       return false;
     }
   }
   for (int height : tile_heights) {
     if (height <= 0) {
-      if (why != nullptr) {
-        *why = "tile grid has a non-positive tile height";
-      }
+        why = "tile grid has a non-positive tile height";
       return false;
     }
   }

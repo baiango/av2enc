@@ -202,9 +202,9 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const HighBitDepthConfi
 
 }  // namespace
 
-bool validate_config(const HighBitDepthConfig& config, std::string* error) {
-  const auto fail = [error](const std::string& text) {
-    if (error != nullptr) *error = text;
+bool validate_config(const HighBitDepthConfig& config, std::string& error) {
+  const auto fail = [&error](const std::string& text) {
+    error = text;
     return false;
   };
   if (config.depth != fmt::BitDepth::k10) {

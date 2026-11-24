@@ -150,7 +150,7 @@ struct Config {
 };
 
 [[nodiscard]] bool config_valid(const Config& config) noexcept;
-[[nodiscard]] bool validate_config(const Config& config, std::string* error = nullptr);
+[[nodiscard]] bool validate_config(const Config& config, std::string& error);
 
 // Bits for coding one coefficient.
 //
@@ -232,7 +232,7 @@ struct Result {
 
 [[nodiscard]] bool quantize(std::span<const Coefficient> coefficients, const Config& config,
               const RateModel& rate_model, Result& result,
-              std::string* error = nullptr);
+              std::string& error);
 
 std::int32_t level_bound(const Coefficient& coefficient,
                          const Config& config) noexcept;
@@ -240,7 +240,7 @@ std::int32_t level_bound(const Coefficient& coefficient,
 [[nodiscard]] bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
                             double quant_step,
                             std::span<std::int32_t> levels, std::int32_t* eob,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 // ---------------------------------------------------------------------------
 // Normative decoder-side mapping
@@ -267,7 +267,7 @@ struct DecodeResult {
 // both parities.
 bool decode_levels(std::span<const std::int32_t> base_levels_scan,
                    bool allow_tcq, bool lossless, DecodeResult* result,
-                   std::string* error = nullptr,
+                   std::string& error,
                    std::span<const std::int32_t> pre_max_scan = {});
 
 }  // namespace av2enc::tcq

@@ -459,7 +459,7 @@ struct ResolvedMode {
 
 // Structural checks that do not depend on a particular stack instance.
 Status validate_mode_syntax(const ModeSyntax& syntax, const StackParams& params,
-                            const MvStack& stack, std::string* why = nullptr);
+                            const MvStack& stack, std::string& why);
 
 // Resolves the final MVs.  skip_mode is the compound merge case: both list MVs
 // come from RefStackMv[RefMvIdx], no MVD.  Single-mode NEARMV is a merge with

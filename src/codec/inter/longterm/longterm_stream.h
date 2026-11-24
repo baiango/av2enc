@@ -56,7 +56,7 @@ struct AssembledSequence {
 [[nodiscard]] bool extract_video_tiles(std::span<const std::vector<std::uint8_t>> units,
                       std::span<const std::uint32_t> tile_bytes,
                       std::vector<std::vector<std::uint8_t>>* tiles,
-                      std::string* error);
+                      std::string& error);
 
 // Validates the whole plan (temporal-unit rules, pool state, reference
 // validity, open/closed random access) and emits one OBU per frame wrapped in
@@ -64,7 +64,7 @@ struct AssembledSequence {
 // sequence header OBU is repeated ahead of the first frame of unit 0.
 [[nodiscard]] bool assemble_sequence(const SequenceConfig& config,
                        const std::vector<TemporalUnitPlan>& units,
-                       AssembledSequence* out, std::string* error);
+                       AssembledSequence* out, std::string& error);
 
 }  // namespace av2enc::inter::longterm
 

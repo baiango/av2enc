@@ -472,7 +472,7 @@ Mv clamp_mv_to_integer(Mv mv);
 Mv project_mv(Mv mv, int numerator, int denominator);
 
 // Structural validation of the parameters (used by build()).
-Status validate(const StackParams& params, std::string* why = nullptr);
+Status validate(const StackParams& params, std::string& why);
 
 // Structural equality (all candidate fields, weights, offsets, cwp).
 [[nodiscard]] bool equal(const Stack& a, const Stack& b);

@@ -81,7 +81,7 @@ struct IntraModeChoice {
 
 [[nodiscard]] bool intra_rdo_config_valid(const IntraRdoConfig& config) noexcept;
 [[nodiscard]] bool validate_intra_rdo_config(const IntraRdoConfig& config,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 // Streaming selector. Invalid candidates (bad mode/angle, negative/non-finite
 // SSE or rate) are rejected and counted. Memory use is constant.
@@ -89,7 +89,7 @@ class IntraModeSelector {
  public:
   explicit IntraModeSelector(const IntraRdoConfig& config) noexcept;
 
-  bool add(const IntraCandidateCost& candidate, std::string* error = nullptr);
+  bool add(const IntraCandidateCost& candidate, std::string& error);
 
   const IntraModeChoice& choice() const noexcept { return choice_; }
   void reset() noexcept;
@@ -101,7 +101,7 @@ class IntraModeSelector {
 
 IntraModeChoice select_intra_mode(std::span<const IntraCandidateCost> candidates,
                                   const IntraRdoConfig& config,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 
 // Pure comparator for GPU reductions. Equal cost/SSE/rate/mode/angle compare
 // equal (false), so a stable reduction needs no insertion index. The CPU
@@ -171,6 +171,6 @@ using IntraRateEstimator = bool (*)(void* context,
                           void* context,
                           const IntraRateRequest& request,
                           IntraRateEstimate& out,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 }  // namespace av2enc::rdo

@@ -169,14 +169,14 @@ struct Plan {
 
 // Runs the strength search.  Does not touch pixels.
 [[nodiscard]] bool plan(const FrameView& frame, const Options& options, Plan* out,
-          std::string* error);
+          std::string& error);
 
 // Applies §7.18 to `frame.recon` and writes the filtered frame.  `dst` is the
 // CDEF output (`CdefFrame`); `src` and `dst` must not alias.  When no CDEF
 // stage runs, the caller keeps the post-deblock frame as the reference.
 [[nodiscard]] bool filter(const FrameView& frame, const Plan& plan,
             std::uint8_t* const dst[3], const int dst_stride[3],
-            std::string* error);
+            std::string& error);
 
 // §5.18.7.10 cdef_params() bits for this plan.
 //
@@ -186,14 +186,14 @@ struct Plan {
 std::size_t write_frame_header_cdef(BitWriter& writer, const Plan& plan,
                                     bool single_picture_header,
                                     int cdef_on_skip_txfm,
-                                    std::string* error);
+                                    std::string& error);
 
 // §5.4.10 sequence_filter_config() row for M2.  `enable_cdef` is the only bit
 // this adapter sets; everything else is off.  Returns the bit count.
 std::size_t write_sequence_filter_config(BitWriter& writer, bool enable_cdef,
                                          bool on_skip_always_on,
                                          bool on_skip_disabled,
-                                         std::string* error);
+                                         std::string& error);
 
 // The per-tile `read_cdef()` state.  One instance per tile; never shared
 // between tiles or frames.  `sb_width_log2` is 4 for 64x64 superblocks.
@@ -203,31 +203,31 @@ struct TileIndexWriter {
   int tile_mi_row_start = 0;
 
   bool init(int mi_cols, int mi_rows, int strengths, int sb_width_log2,
-            std::string* error);
+            std::string& error);
   // §5.20.9.6 clear_cdef(): call once at every superblock start, before the
   // first coding block of that superblock.
   void clear_superblock(int mi_row, int mi_col);
   // §5.20.10.1: call from intra_frame_mode_info()/inter_frame_mode_info() for
   // every coding block.  A repeat call for an already-coded 64x64 is a no-op.
   bool write(av2::Encoder& encoder, int mi_row, int mi_col, int idx,
-             std::string* error);
+             std::string& error);
 };
 
 // Decoder mirror for round-trip tests.
 [[nodiscard]] bool read_tile_index(av2::Decoder& decoder, TileIndexWriter* tile, int mi_row,
-                     int mi_col, int* idx, std::string* error);
+                     int mi_col, int* idx, std::string& error);
 
 // Writes the whole frame's cdef_idx grid as a standalone §8.2 stream, in the
 // exact coding order (64x64 raster).  This is the byte/bit cost of the index
 // syntax and the reference for the tile-writer hook.
 [[nodiscard]] bool write_index_symbols(const Plan& plan, std::vector<std::uint8_t>* payload,
-                         std::string* error);
+                         std::string& error);
 
 // Decodes a standalone stream produced by write_index_symbols() and checks it
 // against `plan.cdef_idx`.
 [[nodiscard]] bool read_index_symbols(std::span<const std::uint8_t> payload,
                         const Plan& plan, std::vector<std::int8_t>* grid,
-                        std::string* error);
+                        std::string& error);
 
 // Best-effort §7.18.1 grid materialisation from optional per-MI inputs.
 // Returns false when a segment id falls outside the lossless array.
@@ -236,7 +236,7 @@ struct TileIndexWriter {
                     const std::uint8_t* chroma_segment_id,
                     const std::uint8_t* lossless_array,
                     int lossless_array_size, FrameGrids* out,
-                    std::string* error);
+                    std::string& error);
 
 }  // namespace av2enc::video::cdef_adapter
 

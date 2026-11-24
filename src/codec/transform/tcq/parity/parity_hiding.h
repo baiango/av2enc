@@ -123,7 +123,7 @@ struct Geometry {
 // Builds the geometry for a legal TX size.  Rejects tx_size outside 0..24 and
 // plane outside 0..2.
 [[nodiscard]] bool make_geometry(std::int32_t tx_size, TxClass tx_class, std::int32_t plane,
-                   Geometry* geometry, std::string* error = nullptr);
+                   Geometry* geometry, std::string& error);
 
 inline std::int32_t tx_size_sqr(std::int32_t tx_size) noexcept {
   static constexpr std::int32_t kSqr[kTxSizesAll] = {
@@ -230,7 +230,7 @@ std::int32_t eob_pt_for_eob(std::int32_t eob) noexcept;
 void build_scan(std::int32_t w, std::int32_t h, TxClass tx_class,
                 std::span<std::int32_t> scan) noexcept;
 [[nodiscard]] bool build_scan(const Geometry& geometry, std::span<std::int32_t> scan,
-                std::string* error = nullptr);
+                std::string& error);
 
 // ---------------------------------------------------------------------------
 // Exact coefficient syntax (first pass + second pass)
@@ -321,20 +321,20 @@ struct DecodedBlock {
 // with a diagnostic rather than silently changing a level.
 [[nodiscard]] bool derive_syntax(std::span<const std::int32_t> levels_scan,
                    const Geometry& geometry, const Eligibility& eligibility,
-                   BlockSyntax* syntax, std::string* error = nullptr);
+                   BlockSyntax* syntax, std::string& error);
 
 // Pure §5.20.7.27 inverse over a syntax record: recomputes `isHidden` and
 // `sumAbs1` from the coded base/br symbols, then applies
 // `Quant = 2 * Quant + sumAbs1` at the DC.  This is the reader oracle; the
 // entropy reader in `parity_entropy.h` produces the same record from bytes.
 [[nodiscard]] bool decode_syntax(const BlockSyntax& syntax, const Geometry& geometry,
-                   DecodedBlock* decoded, std::string* error = nullptr);
+                   DecodedBlock* decoded, std::string& error);
 
 // Full-level magnitude a syntax record reconstructs, scan order.  This is the
 // `Quant[]` array the §7.14.4 dequant consumes.
 [[nodiscard]] bool decoded_levels(const BlockSyntax& syntax, const Geometry& geometry,
                     std::span<std::int32_t> levels_scan,
-                    std::string* error = nullptr);
+                    std::string& error);
 
 // ---------------------------------------------------------------------------
 // Static §9.3 rate model (no CDF adaptation)
@@ -418,12 +418,12 @@ struct QuantizeResult {
 [[nodiscard]] bool quantize(std::span<const double> original,
               std::span<const std::int32_t> levels_seed,
               const Geometry& geometry, const QuantizeConfig& config,
-              QuantizeResult* result, std::string* error = nullptr);
+              QuantizeResult* result, std::string& error);
 
 // Convenience: scalar-quantise `original` at `quant_step`, then `quantize()`.
 [[nodiscard]] bool quantize_scalar(std::span<const double> original,
                      const Geometry& geometry, const QuantizeConfig& config,
-                     QuantizeResult* result, std::string* error = nullptr);
+                     QuantizeResult* result, std::string& error);
 
 // Post-processing entry point: fix `levels_seed` in place so the hidden DC
 // parity is legal.  Kept separate from `quantize()` for callers that already
@@ -431,7 +431,7 @@ struct QuantizeResult {
 [[nodiscard]] bool apply_parity_hiding(std::span<const double> original,
                          std::span<std::int32_t> levels,
                          const Geometry& geometry, const QuantizeConfig& config,
-                         BlockSyntax* syntax, std::string* error = nullptr);
+                         BlockSyntax* syntax, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Small helpers shared by the tests and the RD harness

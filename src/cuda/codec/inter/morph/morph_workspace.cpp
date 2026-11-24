@@ -45,10 +45,8 @@ std::size_t field_bytes(int samples) {
   return align_up(n * 2 * sizeof(std::int16_t), kAlign);
 }
 
-void set_error(std::string* error, const std::string& text) {
-  if (error != nullptr) {
-    *error = text;
-  }
+void set_error(std::string& error, const std::string& text) {
+error = text;
 }
 
 }  // namespace
@@ -85,7 +83,7 @@ std::size_t required_scratch_bytes(int job_count) {
 }
 
 Status MorphWorkspace::init(Arena& arena, const MorphArenaConfig& config,
-                            std::string* error) {
+                            std::string& error) {
   jobs_ = nullptr;
   fits_ = nullptr;
   statuses_ = nullptr;

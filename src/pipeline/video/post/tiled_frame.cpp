@@ -20,8 +20,8 @@ namespace {
 using av2enc::basic::ObuHeader;
 using av2enc::basic::ObuType;
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -79,7 +79,7 @@ void put_trailing_bits(BitWriter& writer) {
 }
 
 bool validate_sequence_options(const VideoPostSequenceOptions& sequence,
-                               std::string* error) {
+                               std::string& error) {
   if (video_base_q_idx_bits(sequence.depth) < 0 ||
       video_max_quantizer(sequence.depth) < 0) {
     return fail(error, "m2 tiled: 12-bit is reserved in AV2 v1.0.0");
@@ -95,7 +95,7 @@ bool validate_sequence_options(const VideoPostSequenceOptions& sequence,
 
 std::size_t write_sequence_header(const VideoConfig& c,
                                   const VideoPostSequenceOptions& sequence,
-                                  BitWriter& writer, std::string* error) {
+                                  BitWriter& writer, std::string& error) {
   const std::size_t start = writer.bit_size();
   assert(c.order_hint_bits >= 1U && c.order_hint_bits <= 16U);
   assert(c.num_ref_frames >= 1U && c.num_ref_frames <= 16U);
@@ -229,7 +229,7 @@ std::size_t write_sequence_header(const VideoConfig& c,
   std::string filter_error;
   const std::size_t filter_bits = filters_stream::write_sequence_filter_config(
       writer, sequence.filters, /*single_picture_header_flag=*/false,
-      &filter_error);
+      filter_error);
   if (!filter_error.empty()) {
     fail(error, "m2 tiled: sequence_filter_config: " + filter_error);
     return 0;
@@ -247,7 +247,7 @@ std::size_t write_sequence_header(const VideoConfig& c,
 }
 
 bool validate_layout(const VideoConfig& config, const tiles::TileLayout& layout,
-                     std::string* error) {
+                     std::string& error) {
   if (layout.tile_count() <= 0) return fail(error, "m2 tiled: empty layout");
   if (layout.width != static_cast<int>(config.max_frame_width) ||
       layout.height != static_cast<int>(config.max_frame_height)) {
@@ -296,7 +296,7 @@ VideoTilePlan plan_video_tiles(int width, int height, int cols, int rows,
                          int sb_size, int seq_level_idx, int seq_tier) {
   VideoTilePlan out;
   std::string geometry_error;
-  if (!video_geometry_supported(width, height, sb_size, &geometry_error)) {
+  if (!video_geometry_supported(width, height, sb_size, geometry_error)) {
     out.error = geometry_error;
     return out;
   }
@@ -314,7 +314,7 @@ VideoTilePlan plan_video_tiles(int width, int height, int cols, int rows,
 
 bool adopt_pipeline_frame_plan(const pipeline::FramePipelinePlan& plan,
                                VideoTiledFrameHeader* header, VideoTilePlan* tiles,
-                               std::string* error) {
+                               std::string& error) {
   if (header == nullptr || tiles == nullptr) {
     return fail(error, "m2 tiled: null pipeline adoption output");
   }
@@ -343,7 +343,7 @@ bool adopt_pipeline_frame_plan(const pipeline::FramePipelinePlan& plan,
 }
 
 bool write_video_tile_info(BitWriter& writer, const tiles::TileLayout& layout,
-                        int tile_size_bytes, std::string* error,
+                        int tile_size_bytes, std::string& error,
                         bool context_update_present) {
   if (layout.tile_count() <= 0) {
     return fail(error, "m2 tiled: empty layout");
@@ -396,7 +396,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
                                   const VideoTiledFrameHeader& header,
                                   const tiles::TileLayout& layout,
                                   int tile_size_bytes, std::size_t* bits,
-                                  std::string* error) {
+                                  std::string& error) {
   if (!validate_sequence_options(sequence, error)) return false;
   if (!validate_layout(config, layout, error)) return false;
 
@@ -477,7 +477,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
   write_video_deblock_params(writer, header.apply_deblocking_filter,
                           header.df_delta_q_present, header.df_delta_q,
                           sequence.filters.df_par_bits_minus_2,
-                          &deblock_error);
+                          deblock_error);
   if (!deblock_error.empty()) {
     return fail(error, "m2 tiled: " + deblock_error);
   }
@@ -516,7 +516,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
     gdf_params.pic_scale_idx = header.gdf.scale_idx;
     std::string gdf_error;
     ::av2enc::filters::gdf::WriteFrameGdfParams(writer, gdf_context,
-                                               &gdf_params, &gdf_error);
+                                               &gdf_params, gdf_error);
     if (!gdf_error.empty()) {
       return fail(error, "m2 tiled: gdf_params: " + gdf_error);
     }
@@ -538,7 +538,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
     filters_stream::CdefParams params = header.cdef;
     params.frame_enable = header.cdef_frame_enable;
     std::string cdef_error;
-    filters_stream::write_cdef_params(writer, params, ctx, &cdef_error);
+    filters_stream::write_cdef_params(writer, params, ctx, cdef_error);
     if (!cdef_error.empty()) {
       return fail(error, "m2 tiled: cdef_params: " + cdef_error);
     }
@@ -580,7 +580,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
             : sequence.filters.lr_disable_luma_wiener_ns;
     ctx.lr_tools_disable[1][3] = false;
     std::string lr_error;
-    filters_stream::write_lr_params(writer, params, ctx, &lr_error);
+    filters_stream::write_lr_params(writer, params, ctx, lr_error);
     if (!lr_error.empty()) {
       return fail(error, "m2 tiled: lr_params: " + lr_error);
     }
@@ -605,7 +605,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
     filters_stream::CcsoParams params = header.ccso;
     params.frame_flag = header.ccso_frame_flag;
     std::string ccso_error;
-    filters_stream::write_ccso_params(writer, params, ctx, &ccso_error);
+    filters_stream::write_ccso_params(writer, params, ctx, ccso_error);
     if (!ccso_error.empty()) {
       return fail(error, "m2 tiled: ccso_params: " + ccso_error);
     }
@@ -633,7 +633,7 @@ bool write_video_frame_header_syntax(BitWriter& writer, const VideoConfig& confi
     context.implicit_output_frame = false;
     std::string grain_error;
     if (!grain::WriteFilmGrainConfig(writer, grain_config, context,
-                                     &grain_error)) {
+                                     grain_error)) {
       return fail(error, "m2 tiled: film_grain_config: " + grain_error);
     }
   }
@@ -680,7 +680,7 @@ filters_stream::CcsoParams make_tiled_ccso_params(
 
 bool split_video_blocks_for_tile(const tiles::TileLayout& layout, int tile_index,
                               std::span<const syntax::BlockSyntax> blocks,
-                              VideoTileBlocks* out, std::string* error) {
+                              VideoTileBlocks* out, std::string& error) {
   if (out == nullptr) return fail(error, "m2 tiled: null tile block output");
   const tiles::TileRect* tile = layout.at_index(tile_index);
   if (tile == nullptr) return fail(error, "m2 tiled: tile index out of range");
@@ -750,7 +750,7 @@ bool assemble_video_tiled_frame(const VideoConfig& config,
                              const tiles::TileLayout& layout,
                              std::span<const syntax::BlockSyntax> blocks,
                              std::span<const std::int32_t> levels,
-                             VideoTiledFrame* out, std::string* error) {
+                             VideoTiledFrame* out, std::string& error) {
   if (out == nullptr) return fail(error, "m2 tiled: null output");
   if (sequence.depth != fmt::BitDepth::k8) {
     return fail(error,
@@ -798,7 +798,7 @@ bool assemble_video_tile_group_from_payloads(
     const VideoConfig& config, const VideoPostSequenceOptions& sequence,
     const VideoTiledFrameHeader& header, const tiles::TileLayout& layout,
     std::span<const std::vector<std::uint8_t>> tile_payloads,
-    VideoTiledFrame* out, std::string* error) {
+    VideoTiledFrame* out, std::string& error) {
   if (out == nullptr) return fail(error, "m2 tiled: null output");
   if (tile_payloads.size() != static_cast<std::size_t>(layout.tile_count()) ||
       tile_payloads.empty()) {
@@ -876,8 +876,8 @@ bool assemble_video_tile_group_from_payloads(
 
 std::vector<std::uint8_t> make_video_sequence_header_obu(
     const VideoConfig& config, const VideoPostSequenceOptions& sequence,
-    std::string* error) {
-  if (error != nullptr) error->clear();
+    std::string& error) {
+  error.clear();
   if (!validate_sequence_options(sequence, error)) return {};
   BitWriter writer;
   if (write_sequence_header(config, sequence, writer, error) == 0) return {};

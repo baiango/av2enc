@@ -96,7 +96,7 @@ class Model {
   // params.w * params.h.  Returns false for an unsupported size/context.
   bool init(const BlockInfo& info,
             std::span<const std::int32_t> scalar_levels_scan,
-            std::string* error = nullptr);
+            std::string& error);
 
   RateModel rate_model() noexcept;
 

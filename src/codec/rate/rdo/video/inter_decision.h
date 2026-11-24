@@ -90,7 +90,7 @@ struct ScoredInterCandidate {
                            const RdoConfig& config,
                            const InterRateModel& model,
                            ScoredInterCandidate& out,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // Intra fallback candidate.  `coefficient_bits` comes from the M1
 // TransformStreamRate adapter (`intra_coefficient_bits()`), so this layer does
@@ -116,6 +116,6 @@ struct InterDecision {
 // accepted (the M2 path generates at most four inter + one intra).
 InterDecision decide_inter_candidates(
     std::span<const InterCandidate> candidates, const RdoConfig& config,
-    std::string* error = nullptr);
+    std::string& error);
 
 }  // namespace av2enc::video::rdo

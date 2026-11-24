@@ -35,16 +35,16 @@ struct DeblockGrids {
 inline bool build_deblock_grids(
     const av2enc::fmt::Format& format,
     const std::vector<av2enc::high_bitdepth::HighBitDepthBlock>& blocks,
-    int base_q_idx, DeblockGrids* out, std::string* error) {
+    int base_q_idx, DeblockGrids* out, std::string& error) {
   if (out == nullptr) {
-    if (error != nullptr) *error = "deblock grid: null output";
+    error = "deblock grid: null output";
     return false;
   }
   const int mi_cols = static_cast<int>(av2enc::fmt::mi_cols(format.width));
   const int mi_rows = static_cast<int>(av2enc::fmt::mi_rows(format.height));
   const int num_planes = av2enc::fmt::num_planes(format.chroma);
   if (mi_cols <= 0 || mi_rows <= 0 || num_planes < 1 || num_planes > 3) {
-    if (error != nullptr) *error = "deblock grid: invalid geometry";
+    error = "deblock grid: invalid geometry";
     return false;
   }
   out->mi_cols = mi_cols;
@@ -62,7 +62,7 @@ inline bool build_deblock_grids(
     const int by = static_cast<int>(block.mi_row);
     const int w4 = block.luma_size / 4;
     if (w4 <= 0) {
-      if (error != nullptr) *error = "deblock grid: empty block";
+      error = "deblock grid: empty block";
       return false;
     }
     // The fixed M10 plan keeps a 64x64 edge block even where the MI grid ends
@@ -101,7 +101,7 @@ inline bool build_deblock_grids(
 // Filters host reconstruction planes with the 10-bit core.
 inline bool apply_deblock_16(
     const DeblockGrids& grids,
-    av2enc::high_bitdepth::HighBitDepthPlane recon[3], std::string* error) {
+    av2enc::high_bitdepth::HighBitDepthPlane recon[3], std::string& error) {
   deblock::DeblockFrame16 frame{};
   for (int p = 0; p < grids.num_planes; ++p) {
     frame.planes[p].data = recon[p].samples.data();
@@ -120,7 +120,7 @@ inline bool apply_deblock_16(
   options.frame_is_intra = true;
   options.bit_depth = 10;
   if (deblock::deblock_frame16(frame, options) != deblock::DeblockStatus::kOk) {
-    if (error != nullptr) *error = "hbd deblock failed";
+    error = "hbd deblock failed";
     return false;
   }
   return true;

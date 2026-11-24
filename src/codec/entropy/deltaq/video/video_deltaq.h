@@ -86,7 +86,7 @@ av2enc::deltaq::FrameQpHeader frame_qp_header(const FrameQpPlan& plan) noexcept;
 [[nodiscard]] bool begin_frame(FrameQpContext& context, const FrameQpPlan& plan,
                  const VideoFrameHeader& header, int mi_cols, int mi_rows,
                  std::span<const std::uint8_t> prev_segment_ids,
-                 std::string* error = nullptr);
+                 std::string& error);
 
 // Writes the three frame-header pieces in normative order.  The caller has
 // already written the M2 frame-header prefix up to and including base_q_idx
@@ -94,7 +94,7 @@ av2enc::deltaq::FrameQpHeader frame_qp_header(const FrameQpPlan& plan) noexcept;
 std::size_t write_frame_qp_syntax(BitWriter& writer,
                                   const FrameQpPlan& plan,
                                   const VideoFrameHeader& header,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 
 // §5.20.2.1: ReadDeltas = delta_q_present and clear_left_context() for the
 // segment-prediction arrays.  Call once at each superblock, before the first
@@ -107,7 +107,7 @@ void begin_superblock(FrameQpContext& context, int mi_col) noexcept;
                                 av2::Encoder& encoder,
                                 const syntax::BlockSyntax& node,
                                 int segment_id, bool skip_flag,
-                                std::string* error = nullptr);
+                                std::string& error);
 
 // §5.20.7.2 inter_segment_id(preSkip = 0).  Must not be called when
 // SegIdPreSkip == 1.
@@ -115,19 +115,19 @@ void begin_superblock(FrameQpContext& context, int mi_col) noexcept;
                                  av2::Encoder& encoder,
                                  const syntax::BlockSyntax& node,
                                  int segment_id, bool skip_flag,
-                                 std::string* error = nullptr);
+                                 std::string& error);
 
 // §5.20.5.7 intra_segment_id() for a key-frame block.
 [[nodiscard]] bool write_intra_segment_id(FrameQpContext& context, av2::Encoder& encoder,
                             const syntax::BlockSyntax& node, int segment_id,
-                            bool skip_flag, std::string* error = nullptr);
+                            bool skip_flag, std::string& error);
 
 // §5.20.5.11 read_delta_qindex() at the first non-full-skip block of a
 // superblock.  `reduced_delta` is the planner's coded value; it is ignored
 // when this block does not code a delta.
 [[nodiscard]] bool write_delta_qindex(FrameQpContext& context, av2::Encoder& encoder,
                         const syntax::BlockSyntax& node, bool skip_flag,
-                        int reduced_delta, std::string* error = nullptr);
+                        int reduced_delta, std::string& error);
 
 // Writes the delta for the superblock at (sb_x, sb_y) using an RC plan step.
 // Verifies that the tile state matches the plan's qindex_before and that the
@@ -136,13 +136,13 @@ void begin_superblock(FrameQpContext& context, int mi_col) noexcept;
                               av2::Encoder& encoder,
                               const rc::DeltaQPlanStep& step,
                               const syntax::BlockSyntax& first_block,
-                              bool skip_flag, std::string* error = nullptr);
+                              bool skip_flag, std::string& error);
 
 // Fills SegmentIds for this block after its mode info.  Call after both
 // segment-id calls (or after the single intra call).
 [[nodiscard]] bool commit_segment_block(FrameQpContext& context,
                           const syntax::BlockSyntax& node, int segment_id,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 // MiSize == SbSize for M2's 64x64 superblocks.
 [[nodiscard]] bool mi_size_is_sb(const syntax::BlockSyntax& node, int sb_size) noexcept;

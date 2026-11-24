@@ -10,9 +10,9 @@
 namespace av2enc::restoration::classes {
 namespace {
 
-bool fail(std::string* error, const std::string& message) {
-  if (error != nullptr && error->empty()) {
-    *error = message;
+bool fail(std::string& error, const std::string& message) {
+  if (error.empty()) {
+    error = message;
   }
   return false;
 }
@@ -52,7 +52,7 @@ int unsigned_subexp_with_ref_value(int mx, int r, int k, int v) {
 }
 
 bool encode_subexp(BitWriter& writer, int num_syms, int k, int value,
-                   std::string* error) {
+                   std::string& error) {
   if (num_syms <= 0 || value < 0 || value >= num_syms) {
     return fail(error, "subexp value out of range");
   }
@@ -89,7 +89,7 @@ bool encode_subexp(BitWriter& writer, int num_syms, int k, int value,
 }
 
 bool decode_subexp(WienerBitReader& reader, int num_syms, int k, int* value,
-                   std::string* error) {
+                   std::string& error) {
   if (value == nullptr || num_syms <= 0) {
     return fail(error, "invalid subexp argument");
   }
@@ -157,7 +157,7 @@ int unsigned_4part_value(int k, int r, int v) {
   return mx - 1 - inverse_recenter(mx - 1 - r, v);
 }
 
-bool raw_bit(av2::Encoder& encoder, bool bit, std::string* error) {
+bool raw_bit(av2::Encoder& encoder, bool bit, std::string& error) {
   const av2::Status status = encoder.encode_bool(bit);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("raw bit encode failed: ") +
@@ -166,7 +166,7 @@ bool raw_bit(av2::Encoder& encoder, bool bit, std::string* error) {
   return true;
 }
 
-bool raw_bit(av2::Decoder& decoder, bool* bit, std::string* error) {
+bool raw_bit(av2::Decoder& decoder, bool* bit, std::string& error) {
   const av2::Status status = decoder.read_bool(bit);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("raw bit decode failed: ") +
@@ -187,7 +187,7 @@ void copy_cdf(std::uint16_t (&dst)[N], const std::uint16_t (&src)[N]) {
 }
 
 bool write_lr_size_flags(BitWriter& writer, int shift, int sb_size,
-                         std::string* error) {
+                         std::string& error) {
   if (shift < 0 || shift > 3) {
     return fail(error, "LoopRestorationSize shift outside 0..3");
   }
@@ -223,7 +223,7 @@ bool write_lr_size_flags(BitWriter& writer, int shift, int sb_size,
 }
 
 bool read_lr_size_flags(WienerBitReader& reader, int sb_size, int* shift,
-                        std::string* error) {
+                        std::string& error) {
   bool half = false;
   if (!reader.read_bit(&half)) {
     return fail(error, "truncated lr size flag");
@@ -302,7 +302,7 @@ struct GroupSetup {
 
 bool prepare_groups(int plane, const WienerLrHeaderParams& params,
                     const WienerReferenceSet& refs, bool nopcw,
-                    GroupSetup* out, std::string* error) {
+                    GroupSetup* out, std::string& error) {
   if (out == nullptr) {
     return fail(error, "null group setup");
   }
@@ -393,7 +393,7 @@ bool WienerBitReader::read_ns(unsigned n, std::uint32_t* value) {
 }
 
 bool wiener_put_ns(BitWriter& writer, unsigned n, std::uint32_t value,
-                   std::string* error) {
+                   std::string& error) {
   if (n == 0U || value >= n) {
     return fail(error, "ns() value out of range");
   }
@@ -419,7 +419,7 @@ bool wiener_put_ns(BitWriter& writer, unsigned n, std::uint32_t value,
 
 bool wiener_encode_signed_subexp_with_ref(BitWriter& writer, int low,
                                           int high, int r, int k,
-                                          int target, std::string* error) {
+                                          int target, std::string& error) {
   if (high <= low || target < low || target >= high) {
     return fail(error, "signed subexp target out of range");
   }
@@ -436,7 +436,7 @@ bool wiener_encode_signed_subexp_with_ref(BitWriter& writer, int low,
 
 bool wiener_decode_signed_subexp_with_ref(WienerBitReader& reader, int low,
                                           int high, int r, int k,
-                                          int* target, std::string* error) {
+                                          int* target, std::string& error) {
   if (target == nullptr || high <= low) {
     return fail(error, "invalid signed subexp argument");
   }
@@ -450,7 +450,7 @@ bool wiener_decode_signed_subexp_with_ref(WienerBitReader& reader, int low,
 
 bool wiener_encode_signed_4part(av2::Encoder& encoder,
                                 std::uint16_t* base_cdf, int low, int k,
-                                int r, int target, std::string* error) {
+                                int r, int target, std::string& error) {
   if (base_cdf == nullptr || k < 0 || k > 15) {
     return fail(error, "invalid 4part argument");
   }
@@ -498,7 +498,7 @@ bool wiener_encode_signed_4part(av2::Encoder& encoder,
 
 bool wiener_decode_signed_4part(av2::Decoder& decoder,
                                 std::uint16_t* base_cdf, int low, int k,
-                                int r, int* target, std::string* error) {
+                                int r, int* target, std::string& error) {
   if (base_cdf == nullptr || target == nullptr) {
     return fail(error, "invalid 4part argument");
   }
@@ -594,7 +594,7 @@ bool write_frame_filters_impl(BitWriter& writer,
                               const WienerLrHeaderConfig& config,
                               WienerLrHeaderParams* params, int plane,
                               const WienerReferenceSet& refs,
-                              std::string* error) {
+                              std::string& error) {
   const bool nopcw = config.lr_tools_disable[0][kRestorePcWiener];
   if (!nopcw) {
     return fail(error,
@@ -772,7 +772,7 @@ bool read_frame_filters_impl(WienerBitReader& reader,
                              const WienerLrHeaderConfig& config,
                              WienerLrHeaderParams* params, int plane,
                              const WienerReferenceSet& refs,
-                             std::string* error) {
+                             std::string& error) {
   const bool nopcw = config.lr_tools_disable[0][kRestorePcWiener];
   if (!nopcw) {
     return fail(error,
@@ -935,7 +935,7 @@ bool wiener_write_lr_params(BitWriter& writer,
                             const WienerLrHeaderConfig& config,
                             WienerLrHeaderParams* params,
                             const WienerReferenceSet& refs,
-                            std::string* error) {
+                            std::string& error) {
   if (params == nullptr) {
     return fail(error, "null LrParams");
   }
@@ -1109,7 +1109,7 @@ bool wiener_read_lr_params(WienerBitReader& reader,
                            const WienerLrHeaderConfig& config,
                            WienerLrHeaderParams* params,
                            const WienerReferenceSet& refs,
-                           std::string* error) {
+                           std::string& error) {
   if (params == nullptr) {
     return fail(error, "null LrParams");
   }
@@ -1267,7 +1267,7 @@ bool wiener_read_lr_params(WienerBitReader& reader,
 bool wiener_tile_init(WienerTileState* state,
                       const WienerLrHeaderParams& params, int mi_cols,
                       int mi_rows, int sub_x, int sub_y,
-                      std::string* error) {
+                      std::string& error) {
   if (state == nullptr || mi_cols <= 0 || mi_rows <= 0) {
     return fail(error, "invalid LR tile geometry");
   }
@@ -1350,7 +1350,7 @@ namespace {
 
 bool write_unit_filter(av2::Encoder& encoder, WienerTileState& state,
                        int plane, int unit_row, int unit_col,
-                       const WienerUnitSyntax& unit, std::string* error) {
+                       const WienerUnitSyntax& unit, std::string& error) {
   const bool chroma = plane > 0;
   const int n_coeffs = (plane == 0) ? kWienerNsLumaCoeffs
                                     : kWienerNsChromaCoeffs;
@@ -1479,7 +1479,7 @@ bool write_unit_filter(av2::Encoder& encoder, WienerTileState& state,
 
 bool read_unit_filter(av2::Decoder& decoder, WienerTileState& state,
                       int plane, int unit_row, int unit_col,
-                      WienerUnitSyntax* unit, std::string* error) {
+                      WienerUnitSyntax* unit, std::string& error) {
   const bool chroma = plane > 0;
   const int n_coeffs = (plane == 0) ? kWienerNsLumaCoeffs
                                     : kWienerNsChromaCoeffs;
@@ -1612,7 +1612,7 @@ bool read_unit_filter(av2::Decoder& decoder, WienerTileState& state,
 
 bool wiener_write_unit(av2::Encoder& encoder, WienerTileState& state,
                        int plane, int unit_row, int unit_col,
-                       const WienerUnitSyntax& unit, std::string* error) {
+                       const WienerUnitSyntax& unit, std::string& error) {
   if (plane < 0 || plane > 2 || unit_row < 0 || unit_col < 0 ||
       unit_row >= state.unit_rows[plane] ||
       unit_col >= state.unit_cols[plane]) {
@@ -1680,7 +1680,7 @@ bool wiener_write_unit(av2::Encoder& encoder, WienerTileState& state,
 
 bool wiener_read_unit(av2::Decoder& decoder, WienerTileState& state,
                       int plane, int unit_row, int unit_col,
-                      WienerUnitSyntax* unit, std::string* error) {
+                      WienerUnitSyntax* unit, std::string& error) {
   if (plane < 0 || plane > 2 || unit_row < 0 || unit_col < 0 ||
       unit_row >= state.unit_rows[plane] ||
       unit_col >= state.unit_cols[plane]) {
@@ -1753,7 +1753,7 @@ bool walk_tile(av2::Encoder* encoder, av2::Decoder* decoder,
                const std::vector<WienerUnitSyntax> write_plans[3],
                std::vector<WienerUnitSyntax> read_plans[3], int sb_size,
                int tile_mi_row_start, int tile_mi_col_start,
-               std::string* error) {
+               std::string& error) {
   if (sb_size <= 0 || (sb_size % kMiSize) != 0) {
     return fail(error, "invalid superblock size");
   }
@@ -1865,7 +1865,7 @@ bool walk_tile(av2::Encoder* encoder, av2::Decoder* decoder,
 bool wiener_write_tile(av2::Encoder& encoder, WienerTileState& state,
                        const std::vector<WienerUnitSyntax> plans[3],
                        int sb_size, int tile_mi_row_start,
-                       int tile_mi_col_start, std::string* error) {
+                       int tile_mi_col_start, std::string& error) {
   if (plans == nullptr) {
     return fail(error, "null tile plans");
   }
@@ -1876,7 +1876,7 @@ bool wiener_write_tile(av2::Encoder& encoder, WienerTileState& state,
 bool wiener_read_tile(av2::Decoder& decoder, WienerTileState& state,
                       std::vector<WienerUnitSyntax> plans[3], int sb_size,
                       int tile_mi_row_start, int tile_mi_col_start,
-                      std::string* error) {
+                      std::string& error) {
   return walk_tile(nullptr, &decoder, state, nullptr, plans, sb_size,
                    tile_mi_row_start, tile_mi_col_start, error);
 }
@@ -1884,7 +1884,7 @@ bool wiener_read_tile(av2::Decoder& decoder, WienerTileState& state,
 bool wiener_unit_range(const WienerTileState& state, int plane, int mi_row,
                        int mi_col, int w4, int h4, int tile_mi_row_start,
                        int tile_mi_col_start, WienerUnitRange* range,
-                       std::string* error) {
+                       std::string& error) {
   if (range == nullptr || plane < 0 || plane > 2) {
     return fail(error, "invalid read_lr argument");
   }

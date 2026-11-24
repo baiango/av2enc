@@ -619,8 +619,11 @@ bool Encoder::choose_luma_mode(int x0, int y0, int w, int h, ModeChoice& best) {
       }
     }
     if (options_.rdo_intra && !rdo_candidates.empty()) {
+      // The choice carries `found`; the message is not consumed here.
+      std::string intra_rdo_error;
       const av2enc::rdo::IntraModeChoice choice =
-          av2enc::rdo::select_intra_mode(rdo_candidates, rdo_config);
+          av2enc::rdo::select_intra_mode(rdo_candidates, rdo_config,
+                                         intra_rdo_error);
       if (choice.found) {
         best.mode = static_cast<intra::Mode>(choice.mode);
         best.angle_delta = choice.angle_delta;
@@ -683,7 +686,7 @@ bool Encoder::choose_luma_tx_partition(int r, int c, int w, int h,
       tpart::SplitGeometry geometry;
       std::string geometry_error;
       if (!tpart::tx_partition_geometry(static_cast<int>(size), r, c, option,
-                                        &geometry, &geometry_error)) {
+                                        &geometry, geometry_error)) {
         continue;
       }
       bool inside = true;
@@ -855,8 +858,9 @@ bool Encoder::choose_ibc(int r, int c, partition::BlockSize size, IbcChoice& out
     const auto try_bv = [&](ibc::BlockVector bv, int stack_index) {
       // Integer block vectors only (force_integer_mv = 1).
       if ((bv.row & 7) != 0 || (bv.col & 7) != 0) return false;
+      std::string ignored;
       if (!ibc_stream::is_bv_encodable(frame, ibc_config_, ibc_buffer_, r, c,
-                                       static_cast<int>(size), bv, nullptr)) {
+                                       static_cast<int>(size), bv, ignored)) {
         return false;
       }
       std::int64_t sse = 0;

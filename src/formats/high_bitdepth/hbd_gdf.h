@@ -58,7 +58,7 @@ inline gdf::GdfFilterInputs make_gdf_inputs(const HbdGdfFrame16& frame) {
 
 // Builds the §5.18.7.9 context for a single-picture header.
 inline gdf::FrameGdfContext make_gdf_context(const HbdGdfFrame16& frame,
-                                             std::string* error) {
+                                             std::string& error) {
   gdf::FrameGdfContext context;
   context.enable_gdf = true;
   context.gdf_unit_matches_sb_size = true;
@@ -78,7 +78,7 @@ inline gdf::FrameGdfContext make_gdf_context(const HbdGdfFrame16& frame,
   context.mi_col_starts.assign(1, 0);
   context.mi_row_starts.assign(1, 0);
   if (context.width <= 0 || context.height <= 0) {
-    if (error != nullptr) *error = "gdf: invalid MI-aligned geometry";
+    error = "gdf: invalid MI-aligned geometry";
   }
   return context;
 }
@@ -86,9 +86,9 @@ inline gdf::FrameGdfContext make_gdf_context(const HbdGdfFrame16& frame,
 // Chooses the best header-only GDF configuration by exact SSE against the
 // source.  Returns an all-zero plan when no candidate helps.
 inline bool plan_gdf(const HbdGdfFrame16& frame, HbdGdfPlan* plan,
-                     std::string* error) {
-  auto fail = [error](const std::string& text) {
-    if (error != nullptr) *error = text;
+                     std::string& error) {
+  auto fail = [&error](const std::string& text) {
+    error = text;
     return false;
   };
   if (plan == nullptr) return fail("gdf plan: null output");
@@ -182,7 +182,7 @@ inline bool plan_gdf(const HbdGdfFrame16& frame, HbdGdfPlan* plan,
   if (best_sse >= before) {
     plan->config.enabled = false;
   }
-  if (error != nullptr) error->clear();
+  error.clear();
   return true;
 }
 
@@ -190,7 +190,7 @@ inline bool plan_gdf(const HbdGdfFrame16& frame, HbdGdfPlan* plan,
 // §7.20.2 source.  `lr_luma` is the post-Wiener LrFrame luma.
 inline bool apply_gdf16(const HbdGdfPlan& plan, const HbdGdfFrame16& frame,
                         std::uint16_t* lr_luma, int lr_stride,
-                        std::string* error) {
+                        std::string& error) {
   if (!plan.config.enabled) return true;
   gdf::GdfSourceFrame source;
   source.curr = frame.curr;

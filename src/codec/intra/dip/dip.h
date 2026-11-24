@@ -271,7 +271,7 @@ struct DipModeInfo {
 // Validates a parsed/signalled DipModeInfo against the syntax context.
 [[nodiscard]] bool validate_dip_mode_info(const SyntaxContext& context,
                             const DipModeInfo& info,
-                            std::string* error = nullptr) noexcept;
+                            std::string& error) noexcept;
 
 // §8.3.1: TileUseDipCdf[ctx], ctx = number of above/left neighbours whose
 // UseDip flag is 1.  DIP_CTXS = 3.

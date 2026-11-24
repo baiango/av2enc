@@ -135,8 +135,8 @@ class Workspace {
   // Allocates the staging region and initializes the supplemental workspace.
   // On failure the arena bump pointer is restored and `*required_out` (when
   // non-null) receives `required_device_bytes(config)`.
-  Status init(Arena& arena, const Config& config = {},
-              std::string* error = nullptr,
+  Status init(Arena& arena, const Config& config,
+              std::string& error,
               std::uint64_t* required_out = nullptr);
 
   bool initialized() const noexcept { return arena_ != nullptr; }
@@ -232,7 +232,7 @@ inline Status Workspace::synchronize(cudaStream_t stream) {
 }
 
 inline Status Workspace::init(Arena& arena, const Config& config,
-                              std::string* error,
+                              std::string& error,
                               std::uint64_t* required_out) {
   arena_ = nullptr;
   config_ = Config{};
@@ -241,20 +241,18 @@ inline Status Workspace::init(Arena& arena, const Config& config,
 
   if (!detail::config_valid(config)) {
     if (required_out != nullptr) *required_out = 0;
-    if (error != nullptr) *error = "intra_workspace: invalid configuration";
+    error = "intra_workspace: invalid configuration";
     return Status::kInvalidArgument;
   }
   const std::uint64_t need = required_device_bytes(config);
   if (required_out != nullptr) *required_out = need;
   if (!arena.initialized()) {
-    if (error != nullptr) *error = "intra_workspace: arena is not initialized";
+    error = "intra_workspace: arena is not initialized";
     return Status::kNotInitialized;
   }
   if (arena.remaining() < need) {
-    if (error != nullptr) {
-      *error = "intra_workspace: arena needs " + std::to_string(need) +
-               " bytes, " + std::to_string(arena.remaining()) + " available";
-    }
+error = "intra_workspace: arena needs " + std::to_string(need) +
+         " bytes, " + std::to_string(arena.remaining()) + " available";
     return Status::kArenaExhausted;
   }
 
@@ -263,10 +261,8 @@ inline Status Workspace::init(Arena& arena, const Config& config,
       static_cast<std::size_t>(detail::staging_bytes(config)));
   if (staging_ == nullptr) {
     arena.rewind(mark);
-    if (error != nullptr) {
-      *error = "intra_workspace: arena exhausted staging " +
-               std::to_string(detail::staging_bytes(config)) + " bytes";
-    }
+error = "intra_workspace: arena exhausted staging " +
+         std::to_string(detail::staging_bytes(config)) + " bytes";
     return Status::kArenaExhausted;
   }
   std::uint64_t supplemental_need = 0;

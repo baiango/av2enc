@@ -77,13 +77,11 @@ bool better(const Scored& a, const Scored& b,
 
 bool estimate_chroma_rates(ChromaRateEstimator estimator, void* context,
                            const ChromaRateRequest& request,
-                           ChromaRateEstimate& out, std::string* error) {
+                           ChromaRateEstimate& out, std::string& error) {
   out = ChromaRateEstimate{};
   if (estimator != nullptr) {
     if (!estimator(context, request, out)) {
-      if (error != nullptr) {
-        *error = "ChromaRateEstimator rejected the candidate";
-      }
+error = "ChromaRateEstimator rejected the candidate";
       return false;
     }
   } else {
@@ -97,9 +95,7 @@ bool estimate_chroma_rates(ChromaRateEstimator estimator, void* context,
   if (!std::isfinite(out.syntax_rate_bits) || out.syntax_rate_bits < 0.0 ||
       !std::isfinite(out.coefficient_rate_bits) ||
       out.coefficient_rate_bits < 0.0) {
-    if (error != nullptr) {
-      *error = "chroma rate estimate must be finite and >= 0";
-    }
+error = "chroma rate estimate must be finite and >= 0";
     return false;
   }
   return true;
@@ -109,17 +105,15 @@ ChromaModeSelector::ChromaModeSelector(const ChromaRdoConfig& config) noexcept
     : config_(config) {}
 
 bool ChromaModeSelector::add(const ChromaCandidateCost& candidate,
-                             std::string* error) {
+                             std::string& error) {
   if (!std::isfinite(config_.lambda) || config_.lambda < 0.0) {
     ++choice_.rejected_count;
-    if (error != nullptr) *error = "invalid ChromaRdoConfig.lambda";
+    error = "invalid ChromaRdoConfig.lambda";
     return false;
   }
   if (!candidate_valid(candidate)) {
     ++choice_.rejected_count;
-    if (error != nullptr) {
-      *error = "invalid chroma candidate (mode/angle/distortion/rate)";
-    }
+error = "invalid chroma candidate (mode/angle/distortion/rate)";
     return false;
   }
 
@@ -133,7 +127,7 @@ bool ChromaModeSelector::add(const ChromaCandidateCost& candidate,
   score.input_index = choice_.candidate_count;
   if (!std::isfinite(score.cost)) {
     ++choice_.rejected_count;
-    if (error != nullptr) *error = "chroma candidate cost is not finite";
+    error = "chroma candidate cost is not finite";
     return false;
   }
   ++choice_.candidate_count;
@@ -181,13 +175,13 @@ void ChromaModeSelector::reset() noexcept { choice_ = ChromaChoice{}; }
 
 ChromaChoice select_chroma_mode(
     std::span<const ChromaCandidateCost> candidates,
-    const ChromaRdoConfig& config, std::string* error) {
+    const ChromaRdoConfig& config, std::string& error) {
   ChromaModeSelector selector(config);
   for (const ChromaCandidateCost& candidate : candidates) {
     std::string local_error;
     if (!selector.add(candidate, &local_error)) {
-      if (error != nullptr && error->empty()) {
-        *error = local_error;
+      if (error.empty()) {
+        error = local_error;
       }
     }
   }
@@ -198,8 +192,8 @@ ChromaChoice decide_chroma(std::span<const ChromaCandidateCost> candidates,
                            std::span<ChromaCandidateCost> scratch,
                            const LambdaConfig& config,
                            ChromaRateEstimator estimator,
-                           void* estimator_context, std::string* error) {
-  if (error != nullptr) error->clear();
+                           void* estimator_context, std::string& error) {
+  error.clear();
   if (!validate_lambda_config(config, error)) {
     return ChromaChoice{};
   }
@@ -211,9 +205,7 @@ ChromaChoice decide_chroma(std::span<const ChromaCandidateCost> candidates,
     return select_chroma_mode(candidates, selector_config, error);
   }
   if (scratch.size() < candidates.size()) {
-    if (error != nullptr) {
-      *error = "chroma rate-estimator scratch span is too small";
-    }
+error = "chroma rate-estimator scratch span is too small";
     return ChromaChoice{};
   }
   for (std::size_t i = 0; i < candidates.size(); ++i) {
@@ -233,7 +225,7 @@ ChromaChoice decide_chroma(std::span<const ChromaCandidateCost> candidates,
     std::string local_error;
     if (!estimate_chroma_rates(estimator, estimator_context, request, estimate,
                                &local_error)) {
-      if (error != nullptr && error->empty()) *error = local_error;
+      if (error.empty()) error = local_error;
       continue;
     }
     target.syntax_rate_bits = estimate.syntax_rate_bits;

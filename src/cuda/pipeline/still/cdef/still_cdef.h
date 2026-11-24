@@ -85,7 +85,7 @@ struct CdefHeaderParams {
 // {0,1,2,4}, damping outside 3..6, count outside 1..8).
 [[nodiscard]] bool still_cdef_build_header(const cdef::CdefOptions& options,
                           bool single_picture_header, CdefHeaderParams* out,
-                          std::string* error);
+                          std::string& error);
 
 // ---------------------------------------------------------------------------
 // MI metadata -> §7.18.1 grids
@@ -115,7 +115,7 @@ struct CdefMiGrids {
 // Materialises the three MI grids the filter reads.  `lossless` is
 // `LosslessArray[SegmentIds[mi]]` (0 when no segment/lossless data is given).
 [[nodiscard]] bool still_cdef_build_mi_grids(const CdefMiInputs& inputs, CdefMiGrids* out,
-                            std::string* error);
+                            std::string& error);
 
 // ---------------------------------------------------------------------------
 // Stage input / options / plan
@@ -193,7 +193,7 @@ struct CdefStagePlan {
 // orchestrator uploads `cdef_idx` (or uses the device search) and calls
 // `still_cdef_filter()` in `still_cdef_cuda.h`.
 [[nodiscard]] bool still_cdef_plan(const CdefStageFrame& frame, const CdefStageOptions& options,
-                  CdefStagePlan* plan, std::string* error);
+                  CdefStagePlan* plan, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Device view (POD; the header itself needs no CUDA)
@@ -224,7 +224,7 @@ struct CdefDeviceFrame {
 // non-aliasing planes, metadata presence, option ranges.
 [[nodiscard]] bool still_cdef_validate_device_frame(const CdefDeviceFrame& frame,
                                    const cdef::CdefOptions& options,
-                                   std::string* error);
+                                   std::string& error);
 
 }  // namespace av2enc::cuda::still
 

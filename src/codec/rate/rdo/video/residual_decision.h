@@ -29,6 +29,6 @@ residual::DecisionOptions make_residual_options(const RdoConfig& config);
 [[nodiscard]] bool decide_residual(const residual::BlockInput& input,
                      const RdoConfig& config, bool allow_residual,
                      bool force_residual, residual::BlockDecision& decision,
-                     std::string* error = nullptr);
+                     std::string& error);
 
 }  // namespace av2enc::video::rdo

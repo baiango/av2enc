@@ -69,7 +69,7 @@ struct LambdaConfig {
 
 [[nodiscard]] bool lambda_config_valid(const LambdaConfig& config) noexcept;
 [[nodiscard]] bool validate_lambda_config(const LambdaConfig& config,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 // Base lambda = sse_scale * quant_step^2 (via the shared RDO framework).
 double lambda_sse(const LambdaConfig& config) noexcept;
@@ -93,7 +93,7 @@ rdo_decide::LambdaConfig to_decide_config(const LambdaConfig& config) noexcept;
 
 // The M1 QP-90 profile.  `base_q_idx` is accepted for diagnostics only: M1 pins
 // 90.  Any other value returns a zeroed config and sets `error`.
-LambdaConfig calibrated_still_config(std::string* error = nullptr);
+LambdaConfig calibrated_still_config(std::string& error);
 
 // cost(distortion, rate_bits) under the same convention.
 double block_cost(double distortion, double rate_bits,

@@ -217,14 +217,14 @@ void write_frame_header_syntax(BitWriter& writer, const Config& config, const Ti
 // ---------------------------------------------------------------------------
 
 bool crop_plane(std::span<const std::uint8_t> plane, int stride, int x0, int y0, int width,
-                int height, std::vector<std::uint8_t>* out, std::string* error) {
+                int height, std::vector<std::uint8_t>* out, std::string& error) {
   if (x0 < 0 || y0 < 0 || width < 0 || height < 0) {
-    *error = "negative crop rectangle";
+    error = "negative crop rectangle";
     return false;
   }
   const std::size_t need = static_cast<std::size_t>(y0 + height) * static_cast<std::size_t>(stride);
   if (plane.size() < need) {
-    *error = "source plane is too small for a tile crop";
+    error = "source plane is too small for a tile crop";
     return false;
   }
   out->resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
@@ -250,7 +250,7 @@ void paste_plane(const std::vector<std::uint8_t>& tile, int tile_w, int tile_h,
 // OBU splitting for a single-frame temporal unit: Annex B.2 leb128 length plus
 // a 1-byte obu_header (no extension). Only the CLK payload is needed.
 bool extract_clk_payload(std::span<const std::uint8_t> data, std::vector<std::uint8_t>* clk_payload,
-                         std::string* error) {
+                         std::string& error) {
   std::size_t off = 0;
   bool found = false;
   while (off < data.size()) {
@@ -258,7 +258,7 @@ bool extract_clk_payload(std::span<const std::uint8_t> data, std::vector<std::ui
     unsigned shift = 0;
     while (true) {
       if (off >= data.size() || shift > 28) {
-        *error = "truncated OBU size";
+        error = "truncated OBU size";
         return false;
       }
       const std::uint8_t byte = data[off++];
@@ -267,7 +267,7 @@ bool extract_clk_payload(std::span<const std::uint8_t> data, std::vector<std::ui
       if ((byte & 0x80U) == 0) break;
     }
     if (off + size > data.size() || size < 1) {
-      *error = "truncated OBU payload";
+      error = "truncated OBU payload";
       return false;
     }
     const std::uint8_t header = data[off];
@@ -280,39 +280,39 @@ bool extract_clk_payload(std::span<const std::uint8_t> data, std::vector<std::ui
     off += size;
   }
   if (!found) {
-    *error = "M1 frame has no CLK OBU";
+    error = "M1 frame has no CLK OBU";
     return false;
   }
   return true;
 }
 
-bool validate_config(const Config& config, std::string* error) {
+bool validate_config(const Config& config, std::string& error) {
   if (config.width <= 0 || config.height <= 0) {
-    *error = "frame dimensions must be positive";
+    error = "frame dimensions must be positive";
     return false;
   }
   if (config.width > 65535 || config.height > 65535) {
-    *error = "frame dimensions exceed max_frame_width/height f(16)";
+    error = "frame dimensions exceed max_frame_width/height f(16)";
     return false;
   }
   if ((config.width & 1) != 0 || (config.height & 1) != 0) {
-    *error = "M1 4:2:0 requires even frame dimensions";
+    error = "M1 4:2:0 requires even frame dimensions";
     return false;
   }
   if (config.base_q_idx == 0) {
-    *error = "M1 does not support lossless base_q_idx = 0";
+    error = "M1 does not support lossless base_q_idx = 0";
     return false;
   }
   if (config.sb_size != tiles::kSuperblockPixels64) {
-    *error = "M1 core only implements 64x64 superblocks";
+    error = "M1 core only implements 64x64 superblocks";
     return false;
   }
   if (!config.enable_chroma_dctonly) {
-    *error = "M1 core always signals enable_chroma_dctonly = 1";
+    error = "M1 core always signals enable_chroma_dctonly = 1";
     return false;
   }
   if (config.seq_level_idx > 31U) {
-    *error = "seq_level_idx outside 0..31";
+    error = "seq_level_idx outside 0..31";
     return false;
   }
   return true;
@@ -321,8 +321,8 @@ bool validate_config(const Config& config, std::string* error) {
 }  // namespace
 
 bool build_layout(int width, int height, tiles::TileLayoutPreset preset, int sb_size,
-                  int seq_level_idx, TileLayout* layout, std::string* error) {
-  if (layout == nullptr || error == nullptr) return false;
+                  int seq_level_idx, TileLayout* layout, std::string& error) {
+  if (layout == nullptr) return false;
   const tiles::TileLayoutDims dims = tiles::preset_dims(preset);
   // `seq_level_idx` is treated as a floor: a grid above the level's Table A.9
   // MaxTiles/MaxTileCols would otherwise be rejected by plan_tile_layout() (or
@@ -340,31 +340,29 @@ bool build_layout(int width, int height, tiles::TileLayoutPreset preset, int sb_
       tiles::plan_tile_layout(width, height, dims.cols, dims.rows, sb_size,
                               effective_level, 0);
   if (!planned.ok()) {
-    *error = "layout " + std::string(tiles::preset_name(preset)) + " rejected: " + planned.error;
+    error = "layout " + std::string(tiles::preset_name(preset)) + " rejected: " + planned.error;
     return false;
   }
   *layout = planned.layout;
   return true;
 }
 
-int select_tile_size_bytes(std::span<const std::uint32_t> sizes, std::string* error) {
+int select_tile_size_bytes(std::span<const std::uint32_t> sizes, std::string& error) {
   if (sizes.empty()) {
-    if (error != nullptr) *error = "a tile group needs at least one payload";
+    error = "a tile group needs at least one payload";
     return 0;
   }
   std::uint32_t largest = 0;
   for (const std::uint32_t size : sizes) {
     if (size < 2U) {
-      if (error != nullptr) {
-        *error = "every tile payload must be at least 2 bytes";
-      }
+error = "every tile payload must be at least 2 bytes";
       return 0;
     }
     largest = std::max(largest, size);
   }
   const int bytes = tiles::tile_size_bytes_for(largest);
-  if (bytes == 0 && error != nullptr) {
-    *error = "tile size cannot be represented in a 1..4 byte field";
+  if (bytes == 0) {
+    error = "tile size cannot be represented in a 1..4 byte field";
   }
   return bytes;
 }
@@ -415,16 +413,16 @@ std::vector<std::uint8_t> make_sequence_header_obu(const Config& config) {
 bool make_tile_group_payload(const TileLayout& layout, const Config& config,
                              std::span<const TilePayloadView> payloads,
                              std::vector<std::uint8_t>* clk_payload, int* tile_size_bytes,
-                             std::string* error) {
-  if (clk_payload == nullptr || tile_size_bytes == nullptr || error == nullptr) {
+                             std::string& error) {
+  if (clk_payload == nullptr || tile_size_bytes == nullptr) {
     return false;
   }
   if (layout.empty()) {
-    *error = "tile layout is empty";
+    error = "tile layout is empty";
     return false;
   }
   if (payloads.size() != static_cast<std::size_t>(layout.tile_count())) {
-    *error = "tile payload count does not match the layout";
+    error = "tile payload count does not match the layout";
     return false;
   }
 
@@ -433,7 +431,7 @@ bool make_tile_group_payload(const TileLayout& layout, const Config& config,
   for (const TilePayloadView& payload : payloads) {
     if (payload.bytes.size() >
         static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
-      *error = "a tile payload exceeds the 32-bit size field";
+      error = "a tile payload exceeds the 32-bit size field";
       return false;
     }
     sizes.push_back(static_cast<std::uint32_t>(payload.bytes.size()));
@@ -465,9 +463,8 @@ bool make_tile_group_payload(const TileLayout& layout, const Config& config,
   return true;
 }
 
-bool core_header_parity(const Config& config, std::string* error) {
-  if (error == nullptr) return false;
-  *error = "";
+bool core_header_parity(const Config& config, std::string& error) {
+  error = "";
 
   TileLayout one_by_one;
   if (!build_layout(config.width, config.height, tiles::TileLayoutPreset::k1x1, config.sb_size,
@@ -484,29 +481,29 @@ bool core_header_parity(const Config& config, std::string* error) {
   write_frame_header_syntax(writer, config, one_by_one, 0);
   writer.align_to_byte();
   if (reference.bit_size() != writer.bit_size() || reference.take_bytes() != writer.take_bytes()) {
-    *error = "1x1 frame header does not match av2enc::still::write_frame_header()";
+    error = "1x1 frame header does not match av2enc::still::write_frame_header()";
     return false;
   }
 
   Config sequence_config = config;
   sequence_config.disable_loopfilters_across_tiles = false;
   if (av2enc::still::make_sequence_header_obu(m1) != make_sequence_header_obu(sequence_config)) {
-    *error = "sequence header does not match av2enc::still::make_sequence_header_obu()";
+    error = "sequence header does not match av2enc::still::make_sequence_header_obu()";
     return false;
   }
   return true;
 }
 
 bool encode(const StillPicture& source, const Config& config, Frame* frame,
-            std::string* error, const TileEncoder& tile_encoder) {
-  if (frame == nullptr || error == nullptr) return false;
-  error->clear();
+            std::string& error, const TileEncoder& tile_encoder) {
+  if (frame == nullptr) return false;
+  error.clear();
   *frame = Frame{};
 
   if (!validate_config(config, error)) return false;
   if (source.width != static_cast<std::uint32_t>(config.width) ||
       source.height != static_cast<std::uint32_t>(config.height)) {
-    *error = "Config dimensions do not match StillPicture";
+    error = "Config dimensions do not match StillPicture";
     return false;
   }
 
@@ -524,11 +521,11 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
   // Unit check first: a core header change must fail loudly, not emit a stream
   // the decoder disagrees with.
   if (!core_header_parity(effective, error)) {
-    *error = "tiled header self-check failed: " + *error;
+    error = "tiled header self-check failed: " + error;
     return false;
   }
   if (layout.width != config.width || layout.height != config.height) {
-    *error = "planned layout dimensions do not match the frame";
+    error = "planned layout dimensions do not match the frame";
     return false;
   }
 
@@ -538,7 +535,7 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
       static_cast<std::size_t>(config.width / 2) * static_cast<std::size_t>(config.height / 2);
   if (source.y.size() < luma_size || source.u.size() < chroma_size ||
       source.v.size() < chroma_size) {
-    *error = "source planes are too small for the configured frame";
+    error = "source planes are too small for the configured frame";
     return false;
   }
 
@@ -588,7 +585,7 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
     bank_config.enable_avg_cdf = true;
     bank_config.avg_cdf_type = true;
     if (!bank.init(bank_tables, bank_config, error)) {
-      *error = "average-CDF bank: " + *error;
+      error = "average-CDF bank: " + error;
       return false;
     }
     bank.begin_frame(/*reset_to_defaults=*/true);
@@ -614,11 +611,11 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
     const int tile_w = rect.pixel_width();
     const int tile_h = rect.pixel_height();
     if (tile_w <= 0 || tile_h <= 0) {
-      *error = "tile has empty visible geometry";
+      error = "tile has empty visible geometry";
       return false;
     }
     if ((tile_w & 1) != 0 || (tile_h & 1) != 0) {
-      *error = "tile dimensions must be even for 4:2:0";
+      error = "tile dimensions must be even for 4:2:0";
       return false;
     }
     tile.local_pixel_width = tile_w;
@@ -626,7 +623,7 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
     tile.local_sb_cols = tiles::sb_cols(tile_w, config.sb_size);
     tile.local_sb_rows = tiles::sb_rows(tile_h, config.sb_size);
     if (tile.local_sb_cols != rect.sb_cols || tile.local_sb_rows != rect.sb_rows) {
-      *error = "tile-local superblock geometry disagrees with the plan";
+      error = "tile-local superblock geometry disagrees with the plan";
       return false;
     }
 
@@ -669,8 +666,8 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
       if (!tile_encoder(picture, options,
                         std::span<const std::uint16_t>(options.cdf_seed),
                         &external, error)) {
-        *error =
-            "tile " + std::to_string(rect.index) + " encode failed: " + *error;
+        error =
+            "tile " + std::to_string(rect.index) + " encode failed: " + error;
         return false;
       }
       result.tile_bytes = external.tile_bytes;
@@ -680,15 +677,15 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
       result.recon_v = std::move(external.recon_v);
       result.cdf_final = std::move(external.cdf_final);
     } else if (!av2enc::still::encode_still_picture(picture, options, result,
-                                                    *error)) {
-      *error = "tile " + std::to_string(rect.index) + " encode failed: " + *error;
+                                                    error)) {
+      error = "tile " + std::to_string(rect.index) + " encode failed: " + error;
       return false;
     }
 
     // §8.2.4: at exit_symbol() the tile CDFs feed the Saved* average.
     if (config.adaptive_cdf) {
       if (result.cdf_final.size() != tile_image.size()) {
-        *error = "tile " + std::to_string(rect.index) +
+        error = "tile " + std::to_string(rect.index) +
                  " did not export its final CDFs";
         return false;
       }
@@ -697,22 +694,22 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
       tile_image.assign(result.cdf_final.begin(), result.cdf_final.end());
       if (!bank.save_tile_cdfs(static_cast<std::uint32_t>(tile_num),
                                static_cast<std::uint32_t>(layout.tile_count()))) {
-        *error = "average-CDF save_tile_cdfs rejected the tile index";
+        error = "average-CDF save_tile_cdfs rejected the tile index";
         return false;
       }
     }
     if (result.tile_bytes == 0) {
-      *error = "tile " + std::to_string(rect.index) + " produced no payload";
+      error = "tile " + std::to_string(rect.index) + " produced no payload";
       return false;
     }
 
     std::vector<std::uint8_t> clk_payload;
     if (!extract_clk_payload(result.frame, &clk_payload, error)) {
-      *error = "tile " + std::to_string(rect.index) + ": " + *error;
+      error = "tile " + std::to_string(rect.index) + ": " + error;
       return false;
     }
     if (clk_payload.size() < result.tile_bytes) {
-      *error = "tile payload is larger than the CLK OBU";
+      error = "tile payload is larger than the CLK OBU";
       return false;
     }
     const std::size_t offset = clk_payload.size() - result.tile_bytes;
@@ -725,7 +722,7 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
         static_cast<std::size_t>(chroma_w) * static_cast<std::size_t>(chroma_h);
     if (result.recon_y.size() != expect_y || result.recon_u.size() != expect_c ||
         result.recon_v.size() != expect_c) {
-      *error = "tile reconstruction size does not match the tile rectangle";
+      error = "tile reconstruction size does not match the tile rectangle";
       return false;
     }
     tile.recon_y = std::move(result.recon_y);
@@ -774,15 +771,15 @@ bool encode(const StillPicture& source, const Config& config, Frame* frame,
   return true;
 }
 
-bool assemble_reconstruction(const Frame& frame, Reconstruction* out, std::string* error) {
-  if (out == nullptr || error == nullptr) return false;
+bool assemble_reconstruction(const Frame& frame, Reconstruction* out, std::string& error) {
+  if (out == nullptr) return false;
   const TileLayout& layout = frame.layout;
   if (layout.width <= 0 || layout.height <= 0) {
-    *error = "layout has no frame dimensions";
+    error = "layout has no frame dimensions";
     return false;
   }
   if (layout.tiles.size() != frame.tiles.size()) {
-    *error = "frame tiles do not match the layout";
+    error = "frame tiles do not match the layout";
     return false;
   }
   const int width = layout.width;
@@ -798,7 +795,7 @@ bool assemble_reconstruction(const Frame& frame, Reconstruction* out, std::strin
   for (const Tile& tile : frame.tiles) {
     const TileRect* rect = layout.at_index(tile.index);
     if (rect == nullptr) {
-      *error = "tile index is outside the layout";
+      error = "tile index is outside the layout";
       return false;
     }
     const int tile_w = rect->pixel_width();
@@ -810,7 +807,7 @@ bool assemble_reconstruction(const Frame& frame, Reconstruction* out, std::strin
         tile.recon_u.size() !=
             static_cast<std::size_t>(tile_cw) * static_cast<std::size_t>(tile_ch) ||
         tile.recon_v.size() != tile.recon_u.size()) {
-      *error = "tile reconstruction size does not match the tile rectangle";
+      error = "tile reconstruction size does not match the tile rectangle";
       return false;
     }
     paste_plane(tile.recon_y, tile_w, tile_h, &out->y, width, rect->x0, rect->y0);

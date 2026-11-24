@@ -41,7 +41,7 @@ struct DispatchTable {
 // plan tile list does not match the assignment block.
 DispatchTable build_dispatch_table(const MultiGpuPlan& plan,
                                    std::span<const int> gpu_ordinals,
-                                   std::string* error = nullptr);
+                                   std::string& error);
 
 struct TilePayloadView {
   int tile_index = -1;
@@ -63,6 +63,6 @@ struct MergedFrame {
 // or missing tiles abort the whole frame; a partial merge is never returned.
 [[nodiscard]] bool merge_payloads(const MultiGpuPlan& plan,
                     std::span<const TilePayloadView> payloads,
-                    MergedFrame& out, std::string* error = nullptr);
+                    MergedFrame& out, std::string& error);
 
 }  // namespace av2enc::multigpu::runtime

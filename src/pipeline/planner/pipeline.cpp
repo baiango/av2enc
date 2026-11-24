@@ -20,10 +20,8 @@ namespace {
 // 24 qindex steps, which is the conversion used by the CRF qcomp term.
 constexpr double kQpOctave = 24.0;
 
-void set_error(std::string* error, const std::string& message) {
-  if (error != nullptr) {
-    *error = message;
-  }
+void set_error(std::string& error, const std::string& message) {
+error = message;
 }
 
 bool finite_nonnegative(double value) noexcept {
@@ -78,7 +76,7 @@ OrderedTileStats order_tile_stats(const std::vector<TileStats>& tiles,
 
 bool build_segment_map(const tiles::TileLayout& layout, int sb_size,
                        const std::vector<int>& segment_ids,
-                       rc::SegmentationMap& map, std::string* error) {
+                       rc::SegmentationMap& map, std::string& error) {
   const int mi_cols = tiles::mi_cols(layout.width);
   const int mi_rows = tiles::mi_rows(layout.height);
   if (mi_cols <= 0 || mi_rows <= 0) {
@@ -127,7 +125,7 @@ bool build_segment_map(const tiles::TileLayout& layout, int sb_size,
 
 bool select_layout(const PipelineConfig& config, tiles::TileLayout& layout,
                    int& selected_preset_index, std::string& reason,
-                   std::string* error) {
+                   std::string& error) {
   const int gpu_count = config.gpu.gpu_count;
   std::vector<tiles::TileLayoutPreset> candidates;
   const tiles::TileLayoutPreset preferred =
@@ -222,7 +220,7 @@ int tile_target_qindex(const TileStats* stats, double frame_sigma,
   return clamp_qindex_value(base_q_idx + delta);
 }
 
-bool vram_failure(const multigpu::MultiGpuPlan& plan, std::string* error) {
+bool vram_failure(const multigpu::MultiGpuPlan& plan, std::string& error) {
   std::ostringstream out;
   bool any = false;
   for (const multigpu::GpuPlan& gpu : plan.gpus) {
@@ -306,7 +304,7 @@ tiles::TileLayoutPreset default_layout_for_gpus(
 // Validation
 // ---------------------------------------------------------------------------
 
-bool tile_qp_config_valid(const TileQpConfig& config, std::string* error) {
+bool tile_qp_config_valid(const TileQpConfig& config, std::string& error) {
   switch (config.mode) {
     case TileQpMode::kUniform:
     case TileQpMode::kDeltaQ:
@@ -335,7 +333,7 @@ bool tile_qp_config_valid(const TileQpConfig& config, std::string* error) {
   return true;
 }
 
-bool pipeline_config_valid(const PipelineConfig& config, std::string* error) {
+bool pipeline_config_valid(const PipelineConfig& config, std::string& error) {
   if (config.width <= 0 || config.height <= 0) {
     set_error(error, "pipeline: width and height must be positive");
     return false;
@@ -384,7 +382,7 @@ bool pipeline_config_valid(const PipelineConfig& config, std::string* error) {
 }
 
 bool frame_stats_valid(const FrameStats& stats, int tile_count,
-                       std::string* error) {
+                       std::string& error) {
   if (!rc::frame_complexity_valid(stats.complexity, error)) {
     return false;
   }
@@ -486,10 +484,8 @@ int effective_tile_qindex(int base_q_idx, const rc::DeltaQParams& delta_q,
 // ---------------------------------------------------------------------------
 
 bool PipelinePlanner::configure(const PipelineConfig& config,
-                                std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
+                                std::string& error) {
+error.clear();
   configured_ = false;
   frame_open_ = false;
   layout_ = tiles::TileLayout{};
@@ -549,10 +545,8 @@ bool PipelinePlanner::configure(const PipelineConfig& config,
 }
 
 bool PipelinePlanner::plan_frame(const FrameStats& stats,
-                                 FramePipelinePlan& plan, std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
+                                 FramePipelinePlan& plan, std::string& error) {
+error.clear();
   plan = FramePipelinePlan{};
   if (!configured_) {
     set_error(error, "pipeline: configure() must be called first");
@@ -573,7 +567,7 @@ bool PipelinePlanner::plan_frame(const FrameStats& stats,
   }
   frame_open_ = true;
 
-  const auto fail_after_begin = [this, &qp, error](const std::string& message) {
+  const auto fail_after_begin = [this, &qp, &error](const std::string& message) {
     // Keep the controller usable: a failed decision still closes its frame
     // with the deterministic model estimate. An encode loop that sees this
     // error must abort; it must not continue as if a frame had been planned.
@@ -756,10 +750,8 @@ bool PipelinePlanner::plan_frame(const FrameStats& stats,
 }
 
 bool PipelinePlanner::end_frame(std::int64_t actual_bits,
-                                std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
+                                std::string& error) {
+error.clear();
   if (!configured_) {
     set_error(error, "pipeline: configure() must be called first");
     return false;
@@ -787,10 +779,8 @@ void PipelinePlanner::reset() noexcept {
 bool plan_sequence(const PipelineConfig& config,
                    std::span<const FrameStats> stats,
                    std::span<const std::int64_t> actual_bits,
-                   SequencePlan& plan, std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
+                   SequencePlan& plan, std::string& error) {
+error.clear();
   plan = SequencePlan{};
   if (!actual_bits.empty() && actual_bits.size() != stats.size()) {
     set_error(error, "plan_sequence: actual_bits size does not match frames");
@@ -815,7 +805,7 @@ bool plan_sequence(const PipelineConfig& config,
     if (!planner.plan_frame(stats[i], frame, error)) {
       set_error(error, std::string("plan_sequence frame ") +
                            std::to_string(i) + ": " +
-                           (error != nullptr ? *error : std::string()));
+                           error);
       return false;
     }
     std::int64_t bits = 0;

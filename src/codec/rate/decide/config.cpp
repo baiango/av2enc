@@ -9,17 +9,13 @@ bool lambda_config_valid(const LambdaConfig& config) noexcept {
          std::isfinite(config.sse_scale) && config.sse_scale >= 0.0;
 }
 
-bool validate_lambda_config(const LambdaConfig& config, std::string* error) {
+bool validate_lambda_config(const LambdaConfig& config, std::string& error) {
   if (!std::isfinite(config.quant_step) || config.quant_step <= 0.0) {
-    if (error != nullptr) {
-      *error = "LambdaConfig.quant_step must be finite and > 0";
-    }
+error = "LambdaConfig.quant_step must be finite and > 0";
     return false;
   }
   if (!std::isfinite(config.sse_scale) || config.sse_scale < 0.0) {
-    if (error != nullptr) {
-      *error = "LambdaConfig.sse_scale must be finite and >= 0";
-    }
+error = "LambdaConfig.sse_scale must be finite and >= 0";
     return false;
   }
   return true;
@@ -33,11 +29,9 @@ double lambda_sse(const LambdaConfig& config) noexcept {
                                                  config.sse_scale);
 }
 
-LambdaConfig calibrated_still_config(std::string* error) {
+LambdaConfig calibrated_still_config(std::string& error) {
   LambdaConfig config;
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return config;
 }
 

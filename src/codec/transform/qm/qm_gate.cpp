@@ -97,16 +97,16 @@ struct Obu {
 };
 
 bool parse_obus(std::span<const std::uint8_t> frame, std::vector<Obu>* out,
-                std::string* error) {
+                std::string& error) {
   std::size_t pos = 0;
   while (pos < frame.size()) {
     std::uint32_t size = 0;
     if (!read_leb128(frame, &pos, &size)) {
-      *error = "bad OBU leb128 size";
+      error = "bad OBU leb128 size";
       return false;
     }
     if (size == 0 || pos + size > frame.size()) {
-      *error = "OBU size outside frame";
+      error = "OBU size outside frame";
       return false;
     }
     const std::size_t start = pos;
@@ -114,12 +114,12 @@ bool parse_obus(std::span<const std::uint8_t> frame, std::vector<Obu>* out,
     const bool extension = (header & 0x80U) != 0;
     const int type = (header >> 2) & 0x1f;
     if (extension || (header & 0x3U) != 0U) {
-      *error = "gate only supports non-extension, tlayer 0 OBUs";
+      error = "gate only supports non-extension, tlayer 0 OBUs";
       return false;
     }
     const std::size_t header_bytes = 1 + (extension ? 1 : 0);
     if (start + header_bytes > start + size) {
-      *error = "OBU header exceeds payload";
+      error = "OBU header exceeds payload";
       return false;
     }
     Obu obu;
@@ -182,7 +182,7 @@ std::size_t pre_qm_bits(const av2enc::still::StillConfig& config) {
 bool rewrite_clk_payload(const Obu& clk, const Options& options,
                          const av2enc::qm::QmFrameState& state,
                          std::vector<std::uint8_t>* out_payload,
-                         std::string* error) {
+                         std::string& error) {
   av2enc::still::StillConfig config;
   build_frame_config(options, &config);
 
@@ -191,7 +191,7 @@ bool rewrite_clk_payload(const Obu& clk, const Options& options,
   const std::size_t original_header_bits = 1U + syntax_bits;
   const std::size_t pre = pre_qm_bits(config);
   if (pre + 1 > original_header_bits) {
-    *error = "frame-header probe is shorter than the using_qmatrix field";
+    error = "frame-header probe is shorter than the using_qmatrix field";
     return false;
   }
 
@@ -200,18 +200,18 @@ bool rewrite_clk_payload(const Obu& clk, const Options& options,
   for (std::size_t i = 0; i < pre; ++i) {
     bool bit = false;
     if (!reader.bit(&bit)) {
-      *error = "CLK payload truncated before using_qmatrix";
+      error = "CLK payload truncated before using_qmatrix";
       return false;
     }
     writer.put_bit(bit);
   }
   bool original_using_qmatrix = true;
   if (!reader.bit(&original_using_qmatrix)) {
-    *error = "CLK payload truncated at using_qmatrix";
+    error = "CLK payload truncated at using_qmatrix";
     return false;
   }
   if (original_using_qmatrix) {
-    *error = "base stream already has using_qmatrix = 1";
+    error = "base stream already has using_qmatrix = 1";
     return false;
   }
   // setup_qm_params() writes the using_qmatrix bit itself.
@@ -228,7 +228,7 @@ bool rewrite_clk_payload(const Obu& clk, const Options& options,
   for (std::size_t i = pre + 1; i < original_header_bits; ++i) {
     bool bit = false;
     if (!reader.bit(&bit)) {
-      *error = "CLK payload truncated in frame header";
+      error = "CLK payload truncated in frame header";
       return false;
     }
     writer.put_bit(bit);
@@ -240,7 +240,7 @@ bool rewrite_clk_payload(const Obu& clk, const Options& options,
 
   const std::size_t tile_start = (original_header_bits + 7U) / 8U;
   if (tile_start > clk.payload.size()) {
-    *error = "CLK payload shorter than its frame header";
+    error = "CLK payload shorter than its frame header";
     return false;
   }
   out_payload->insert(out_payload->end(),

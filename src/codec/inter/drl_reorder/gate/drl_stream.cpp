@@ -266,19 +266,19 @@ std::vector<std::uint8_t> make_td() {
 }  // namespace
 
 bool build_drl_stream(const StreamInput& input, StreamOutput* output,
-                      std::string* error) {
-  if (output == nullptr || error == nullptr) {
+                      std::string& error) {
+  if (output == nullptr) {
     return false;
   }
-  error->clear();
+  error.clear();
   *output = StreamOutput{};
   if (input.width <= 0 || input.height <= 0 || input.width % 64 != 0 ||
       input.height % 64 != 0) {
-    *error = "gate stream requires 64-multiple dimensions";
+    error = "gate stream requires 64-multiple dimensions";
     return false;
   }
   if (input.key_tile.empty() || input.p1_tile.empty() || input.p2_tile.empty()) {
-    *error = "gate stream is missing a tile payload";
+    error = "gate stream is missing a tile payload";
     return false;
   }
 

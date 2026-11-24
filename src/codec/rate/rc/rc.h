@@ -112,7 +112,7 @@ struct FrameComplexity {
 };
 
 [[nodiscard]] bool frame_complexity_valid(const FrameComplexity& complexity,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 // Residual sigma used by the model and by CRF complexity adaptation:
 // sqrt(residual_mse) when mse > 0, otherwise mad_to_sigma * residual_mad.
@@ -147,7 +147,7 @@ struct BitrateModelParams {
 };
 
 [[nodiscard]] bool bitrate_model_params_valid(const BitrateModelParams& params,
-                                std::string* error = nullptr);
+                                std::string& error);
 
 // Direct model evaluation (caller must pass valid inputs). base_q_idx is
 // clamped to [1, 255].
@@ -169,7 +169,7 @@ struct BitrateEstimator {
 };
 
 [[nodiscard]] bool bitrate_estimator_valid(const BitrateEstimator& estimator,
-                             std::string* error = nullptr);
+                             std::string& error);
 
 // Validates the inputs, dispatches to the hook or built-in model, and writes
 // the bit estimate. Returns false and fills `error` on invalid input or an
@@ -178,7 +178,7 @@ struct BitrateEstimator {
                          const FrameComplexity& complexity,
                          int base_q_idx,
                          double& bits,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 // ---------------------------------------------------------------------------
 // Segmentation and delta-Q data structures (no bitstream syntax)
@@ -208,7 +208,7 @@ struct SegmentationParams {
 
 SegmentationParams disabled_segmentation() noexcept;
 [[nodiscard]] bool segmentation_params_valid(const SegmentationParams& params,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 // Enables segmentation and sets SEG_LVL_ALT_Q for `segment_id`. delta_q is a
 // quantizer index delta (base + delta, or CurrentQIndex + delta when delta-Q is
@@ -216,7 +216,7 @@ SegmentationParams disabled_segmentation() noexcept;
 [[nodiscard]] bool set_segment_alt_q(SegmentationParams& params,
                        int segment_id,
                        int delta_q,
-                       std::string* error = nullptr);
+                       std::string& error);
 
 struct DeltaQParams {
   bool present = false;
@@ -224,7 +224,7 @@ struct DeltaQParams {
 };
 
 [[nodiscard]] bool delta_q_params_valid(const DeltaQParams& params,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 // Mirrors get_qindex(ignoreDeltaQ, segmentId) (§7.14.2). `current_q_index` is
 // the decoder's CurrentQIndex for delta-Q, reset to base_q_idx at each tile.
@@ -240,13 +240,13 @@ struct QpContext {
   SegmentationParams segmentation{};
 };
 
-[[nodiscard]] bool qp_context_valid(const QpContext& context, std::string* error = nullptr);
+[[nodiscard]] bool qp_context_valid(const QpContext& context, std::string& error);
 
 [[nodiscard]] bool effective_qindex(const QpContext& context,
                       int segment_id,
                       bool ignore_delta_q,
                       int& qindex,
-                      std::string* error = nullptr);
+                      std::string& error);
 
 // Incremental delta-Q state used by a planner or a real block encoder.
 struct DeltaQState {
@@ -257,7 +257,7 @@ struct DeltaQState {
 // base_q_idx in [1, 255] because delta_q_present is only read when base > 0.
 [[nodiscard]] bool delta_q_reset(int base_q_idx,
                    DeltaQState& state,
-                   std::string* error = nullptr);
+                   std::string& error);
 
 // Applies one coded reduced delta: current = Clip3(1, 255,
 // current + (reduced_delta << res)). Requires params.present and an initialized
@@ -265,7 +265,7 @@ struct DeltaQState {
 [[nodiscard]] bool delta_q_apply(const DeltaQParams& params,
                    int reduced_delta,
                    DeltaQState& state,
-                   std::string* error = nullptr);
+                   std::string& error);
 
 // Raster-order delta-Q plan for one tile. The AV2 decoder resets CurrentQIndex
 // to base_q_idx at every tile, so a plan is per tile; callers must not carry
@@ -298,7 +298,7 @@ struct DeltaQPlan {
 };
 
 [[nodiscard]] bool delta_q_plan_config_valid(const DeltaQPlanConfig& config,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 // Builds the plan. `target_qindex` is row-major, cols * rows entries, and must
 // be in [1, 255]; target 0 (lossless) is not reachable through delta-Q and must
@@ -308,7 +308,7 @@ struct DeltaQPlan {
 [[nodiscard]] bool plan_delta_q(const DeltaQPlanConfig& config,
                   std::span<const int> target_qindex,
                   DeltaQPlan& plan,
-                  std::string* error = nullptr);
+                  std::string& error);
 
 // Segmentation map on the 4x4 luma MI grid, matching the decoder's MI arrays.
 // `segment_id` is row-major, mi_cols * mi_rows entries, each < kMaxSegments.
@@ -319,7 +319,7 @@ struct SegmentationMap {
 };
 
 [[nodiscard]] bool segmentation_map_valid(const SegmentationMap& map,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 // ---------------------------------------------------------------------------
 // Per-frame rate control
@@ -374,7 +374,7 @@ struct RateControlConfig {
 };
 
 [[nodiscard]] bool rate_control_config_valid(const RateControlConfig& config,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 struct QpDecision {
   int base_q_idx = 90;
@@ -398,17 +398,17 @@ class RateController {
  public:
   RateController() = default;
 
-  bool configure(const RateControlConfig& config, std::string* error = nullptr);
+  bool configure(const RateControlConfig& config, std::string& error);
 
   const RateControlConfig& config() const noexcept { return config_; }
 
   bool begin_frame(const FrameComplexity& complexity,
                    QpDecision& decision,
-                   std::string* error = nullptr);
+                   std::string& error);
 
   // Reports the actual encoded payload bits (not bytes, not OBU overhead) for
   // the frame opened by begin_frame(). Updates the VBR virtual buffer.
-  bool end_frame(std::int64_t actual_bits, std::string* error = nullptr);
+  bool end_frame(std::int64_t actual_bits, std::string& error);
 
   void reset() noexcept;
 

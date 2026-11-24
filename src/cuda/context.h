@@ -82,7 +82,7 @@ class Context {
 
   // Select `device_index`, create the primary context, query the device, and
   // create one non-blocking stream. On failure nothing is left initialized.
-  Status init(int device_index = 0, std::string* error = nullptr);
+  Status init(int device_index, std::string& error);
 
   // Destroy the stream. Does not call cudaDeviceReset() and does not free the
   // arena or staging buffers; destroy those first. Safe to call twice.
@@ -135,7 +135,7 @@ class StagingBuffer {
   StagingBuffer(const StagingBuffer&) = delete;
   StagingBuffer& operator=(const StagingBuffer&) = delete;
 
-  Status init(std::size_t capacity_bytes, std::string* error = nullptr);
+  Status init(std::size_t capacity_bytes, std::string& error);
   void release() noexcept;
 
   bool initialized() const noexcept { return data_ != nullptr; }

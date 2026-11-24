@@ -10,13 +10,13 @@ partition::FrameDecision decide_partition_rdo(
     const partition::FrameGeometry& geometry,
     const partition::DecisionOptions& options,
     const LeafCostFunction& leaf_costs, const PartitionRdoConfig& config,
-    std::string* error) {
-  if (error != nullptr) error->clear();
+    std::string& error) {
+  error.clear();
   if (!leaf_costs) {
     partition::FrameDecision empty;
     empty.status = partition::DecisionStatus::kInvalidCost;
     empty.error = "partition leaf cost callback is empty";
-    if (error != nullptr) *error = empty.error;
+    error = empty.error;
     return empty;
   }
 
@@ -44,9 +44,7 @@ partition::FrameDecision decide_partition_rdo(
   av2enc::still::rdo_decide::PartitionRdoDecision decision =
       av2enc::still::rdo_decide::decide_frame_rdo(geometry, raw_costs, options,
                                                pconfig, &local_error);
-  if (error != nullptr) {
-    *error = decision.error.empty() ? local_error : decision.error;
-  }
+error = decision.error.empty() ? local_error : decision.error;
   return std::move(decision.frame);
 }
 

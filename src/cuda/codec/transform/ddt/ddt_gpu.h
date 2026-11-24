@@ -157,10 +157,10 @@ const char* batch_status_name(BatchStatus status);
 BatchStatus forward_batch(Arena& arena, const DdtJob* jobs, int job_count,
                           const std::int16_t* host_residual_adj,
                           std::int32_t* host_coeff,
-                          std::int32_t* host_levels = nullptr,
-                          cudaStream_t stream = nullptr,
-                          std::uint64_t* required_bytes = nullptr,
-                          std::string* error = nullptr);
+                          std::int32_t* host_levels,
+                          cudaStream_t stream,
+                          std::uint64_t* required_bytes,
+                          std::string& error);
 
 // Decoder inverse for a mixed batch.  `host_input` holds int32 dequant values
 // at `job.in_offset` when `input_is_levels == false`, or quantised levels when
@@ -169,10 +169,10 @@ BatchStatus forward_batch(Arena& arena, const DdtJob* jobs, int job_count,
 BatchStatus inverse_batch(Arena& arena, const DdtJob* jobs, int job_count,
                           const std::int32_t* host_input,
                           std::int16_t* host_residual_coded,
-                          bool input_is_levels = false,
-                          cudaStream_t stream = nullptr,
-                          std::uint64_t* required_bytes = nullptr,
-                          std::string* error = nullptr);
+                          bool input_is_levels,
+                          cudaStream_t stream,
+                          std::uint64_t* required_bytes,
+                          std::string& error);
 
 // Pure launchers over caller-owned device buffers.  No allocation, no
 // synchronization, one kernel launch; return cudaGetLastError().
@@ -190,6 +190,6 @@ cudaError_t inverse_batch_device(const std::int32_t* d_input,
 // True when every field of `job` is a legal AV2 transform configuration for
 // the requested direction (used by the arena entry points).  When `error` is
 // non-null it receives a description of the first failure.
-[[nodiscard]] bool valid_job(const DdtJob& job, Direction direction, std::string* error);
+[[nodiscard]] bool valid_job(const DdtJob& job, Direction direction, std::string& error);
 
 }  // namespace av2enc::cuda::ddt

@@ -1857,7 +1857,7 @@ bool prepare_filter_workspaces(const FramePlan& plan, const GpuOptions& options,
     cfg.sb_shift = sb_shift;
     std::string detail;
     if (lr_chroma::allocate_checked(arena, cfg, &ws.chroma_lr, nullptr,
-                                    &detail) != Status::kOk) {
+                                    detail) != Status::kOk) {
       error = "M1 GPU: chroma loop-restoration workspace: " + detail;
       return false;
     }
@@ -1871,7 +1871,7 @@ bool prepare_filter_workspaces(const FramePlan& plan, const GpuOptions& options,
     cfg.bit_depth = 8;
     cfg.unit_size = 512 >> lr_shift;
     std::string detail;
-    if (ws.pc_wiener.create(arena, cfg, &detail) != Status::kOk) {
+    if (ws.pc_wiener.create(arena, cfg, detail) != Status::kOk) {
       error = "M1 GPU: PC-Wiener workspace: " + detail;
       return false;
     }
@@ -1885,7 +1885,7 @@ bool prepare_filter_workspaces(const FramePlan& plan, const GpuOptions& options,
     gdf::GdfConfig cfg;
     cfg.max_units = gdf::gdf_grid_slots(cols, rows);
     std::string detail;
-    if (gdf::gdf_buffers_init(arena, cfg, &ws.gdf, nullptr, &detail) !=
+    if (gdf::gdf_buffers_init(arena, cfg, &ws.gdf, nullptr, detail) !=
         Status::kOk) {
       error = "M1 GPU: GDF workspace: " + detail;
       return false;
@@ -1906,7 +1906,7 @@ RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
     gpu.init_attempted = true;
     gpu.device = options.device;
     std::string init_error;
-    if (!is_ok(gpu.context.init(options.device, &init_error))) {
+    if (!is_ok(gpu.context.init(options.device, init_error))) {
       gpu.init_error = init_error.empty() ? "CUDA context init failed"
                                           : init_error;
       gpu.ready = false;
@@ -1993,7 +1993,7 @@ RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
     gpu.download.release();
     gpu.arena.release();
     std::string arena_error;
-    if (!is_ok(gpu.arena.init(capacity, Arena::kAlignment, &arena_error))) {
+    if (!is_ok(gpu.arena.init(capacity, Arena::kAlignment, arena_error))) {
       gpu.init_error =
           arena_error.empty() ? "arena init failed" : arena_error;
       gpu.ready = false;
@@ -2024,7 +2024,7 @@ RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
   if (need_upload > gpu.upload.capacity()) {
     gpu.upload.release();
     std::string stage_error;
-    if (!is_ok(gpu.upload.init(need_upload, &stage_error))) {
+    if (!is_ok(gpu.upload.init(need_upload, stage_error))) {
       gpu.init_error =
           stage_error.empty() ? "pinned upload init failed" : stage_error;
       if (options.allow_cpu_fallback) {
@@ -2037,7 +2037,7 @@ RuntimeState ensure_runtime(const GpuOptions& options, const FramePlan* plan,
   if (need_download > gpu.download.capacity()) {
     gpu.download.release();
     std::string stage_error;
-    if (!is_ok(gpu.download.init(need_download, &stage_error))) {
+    if (!is_ok(gpu.download.init(need_download, stage_error))) {
       gpu.init_error =
           stage_error.empty() ? "pinned download init failed" : stage_error;
       if (options.allow_cpu_fallback) {
@@ -2174,7 +2174,7 @@ bool validate_options(const GpuOptions& options,
   }
   // Every M3 tool flag is either implemented by a GPU stage or rejected by
   // name here.  None is accepted-and-ignored.
-  if (!gpu_m3_options_supported(options, &error)) {
+  if (!gpu_m3_options_supported(options, error)) {
     return false;
   }
   const std::size_t luma = static_cast<std::size_t>(picture.width) *
@@ -3723,7 +3723,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     if (gpu.tx_stage.capacity() < need_stage) {
       gpu.tx_stage.release();
       std::string stage_error;
-      if (!is_ok(gpu.tx_stage.init(need_stage, &stage_error))) {
+      if (!is_ok(gpu.tx_stage.init(need_stage, stage_error))) {
         error = "gpu: TX decision staging init failed: " + stage_error;
         return GpuRunStatus::kError;
       }
@@ -5486,7 +5486,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     df.n64_rows = (mi_rows + 15) / 16;
     std::string cdef_error;
     if (!cm1::still_cdef_validate_device_frame(df, cdef_options,
-                                               &cdef_error)) {
+                                               cdef_error)) {
       error = "gpu: CDEF frame rejected: " + cdef_error;
       return GpuRunStatus::kUnsupported;
     }
@@ -5752,7 +5752,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
       std::string detail;
       const Status upload = lr_chroma::upload_units(
           workspaces.chroma_lr, chroma, host_units.data(), units, stream,
-          &detail);
+          detail);
       if (!is_ok(upload)) {
         error = "gpu: chroma loop-restoration unit upload failed: " + detail;
         return GpuRunStatus::kError;
@@ -5760,12 +5760,12 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     }
     std::string detail;
     if (!is_ok(lr_chroma::resolve_units(workspaces.chroma_lr, stream,
-                                        &detail))) {
+                                        detail))) {
       error = "gpu: chroma loop-restoration resolve failed: " + detail;
       return GpuRunStatus::kError;
     }
     if (!is_ok(lr_chroma::apply(workspaces.chroma_lr, frame, stream,
-                                &detail))) {
+                                detail))) {
       error = "gpu: chroma loop-restoration apply failed: " + detail;
       return GpuRunStatus::kError;
     }
@@ -5802,7 +5802,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
         static_cast<std::size_t>(gdf_cols) * gdf_rows, 1);
     std::string detail;
     if (!is_ok(gdf::gdf_upload_use_gdf(workspaces.gdf, use_gdf.data(),
-                                       gdf_cols * gdf_rows, stream, &detail))) {
+                                       gdf_cols * gdf_rows, stream, detail))) {
       error = "gpu: GDF use_gdf upload failed: " + detail;
       return GpuRunStatus::kError;
     }
@@ -5835,7 +5835,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
     grid.index.frame_distance = nullptr;
     grid.index.num_total_refs = 0;
     grid.index.restricted_oh = 0;
-    if (!is_ok(gdf::gdf_apply_grid(grid, workspaces.gdf, stream, &detail))) {
+    if (!is_ok(gdf::gdf_apply_grid(grid, workspaces.gdf, stream, detail))) {
       error = "gpu: GDF apply failed: " + detail;
       return GpuRunStatus::kError;
     }
@@ -6209,7 +6209,7 @@ GpuRunStatus run_gpu_frame(const ::av2enc::still::StillPicture& picture,
   if (options.per_segment_q) {
     std::string seg_error;
     if (!rc::set_segment_alt_q(segment_params, /*segment_id=*/1,
-                               options.per_segment_q_delta, &seg_error)) {
+                               options.per_segment_q_delta, seg_error)) {
       error = "gpu: per-segment Q table: " + seg_error;
       return GpuRunStatus::kError;
     }
@@ -6364,7 +6364,7 @@ bool encode_format_gpu(const ::av2enc::fmt::Picture& picture,
     return false;
   }
   return ::av2enc::cuda::high_bitdepth::encode_high_bitdepth_gpu(
-      picture, options, result, &error);
+      picture, options, result, error);
 }
 
 // ---------------------------------------------------------------------------
@@ -6397,12 +6397,12 @@ class ChromaGpuExecutorImpl final
         ::av2enc::cuda::chroma::required_device_bytes(config_);
     std::string arena_error;
     if (!::av2enc::cuda::is_ok(arena_.init(
-            need, ::av2enc::cuda::Arena::kAlignment, &arena_error))) {
+            need, ::av2enc::cuda::Arena::kAlignment, arena_error))) {
       error = arena_error.empty() ? "chroma GPU arena init failed" : arena_error;
       return false;
     }
     const ::av2enc::cuda::chroma::ChromaStatus status =
-        workspace_.init(arena_, config_, &error);
+        workspace_.init(arena_, config_, error);
     if (!status.ok()) {
       if (error.empty()) error = "chroma GPU workspace init failed";
       return false;
@@ -6478,7 +6478,7 @@ class ChromaGpuExecutorImpl final
     predict.have_above = have_above ? 1 : 0;
     predict.bit_depth = 8;
     predict.pred = workspace_.pred_block(0);
-    ChromaStatus status = workspace_.predict(&predict, 1, nullptr, &error);
+    ChromaStatus status = workspace_.predict(&predict, 1, nullptr, error);
     if (!status.ok()) return false;
 
     std::uint16_t pred_scalar = 0;
@@ -6501,7 +6501,7 @@ class ChromaGpuExecutorImpl final
     residual.bit_depth = 8;
     residual.shape = shape;
     residual.residual_adj = workspace_.residual_adj(0);
-    status = workspace_.make_residuals(&residual, 1, nullptr, &error);
+    status = workspace_.make_residuals(&residual, 1, nullptr, error);
     if (!status.ok()) return false;
 
     ForwardJob forward{};
@@ -6509,7 +6509,7 @@ class ChromaGpuExecutorImpl final
     forward.residual_adj = workspace_.residual_adj(0);
     forward.coeff = workspace_.coeff(0);
     forward.levels = workspace_.levels(0);
-    status = workspace_.forward(&forward, 1, nullptr, &error);
+    status = workspace_.forward(&forward, 1, nullptr, error);
     if (!status.ok()) return false;
 
     const std::size_t area =
@@ -6575,7 +6575,7 @@ class ChromaGpuExecutorImpl final
       dequant.levels = workspace_.levels(0);
       dequant.dequant = workspace_.dequant(0);
       ChromaStatus status =
-          workspace_.dequantize(&dequant, 1, nullptr, &error);
+          workspace_.dequantize(&dequant, 1, nullptr, error);
       if (!status.ok()) return false;
 
       InverseJob inverse{};
@@ -6583,7 +6583,7 @@ class ChromaGpuExecutorImpl final
       inverse.bit_depth = 8;
       inverse.dequant = workspace_.dequant(0);
       inverse.residual_adj = workspace_.residual_adj(0);
-      status = workspace_.inverse(&inverse, 1, nullptr, &error);
+      status = workspace_.inverse(&inverse, 1, nullptr, error);
       if (!status.ok()) return false;
     }
 
@@ -6599,7 +6599,7 @@ class ChromaGpuExecutorImpl final
     reconstruct.x0 = x0;
     reconstruct.y0 = y0;
     const ChromaStatus status =
-        workspace_.reconstruct(&reconstruct, 1, nullptr, &error);
+        workspace_.reconstruct(&reconstruct, 1, nullptr, error);
     return status.ok();
   }
 

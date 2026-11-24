@@ -89,13 +89,13 @@ struct DisplaySize {
 [[nodiscard]] bool validate_cropping_window(const CroppingWindow& window,
                               std::uint32_t max_frame_width,
                               std::uint32_t max_frame_height,
-                              std::string* error);
+                              std::string& error);
 
 [[nodiscard]] bool write_cropping_window(BitWriter& writer, const CroppingWindow& window,
-                           std::string* error);
+                           std::string& error);
 
 [[nodiscard]] bool read_cropping_window(BitReader& reader, CroppingWindow* window,
-                          std::string* error);
+                          std::string& error);
 
 // §5.18.4.4 compute_image_size(): CropLeft/CropRight/CropTop/CropBottom and
 // CropWidth/CropHeight. `max_*` are max_frame_width_minus_1 + 1; `frame_*` are
@@ -105,7 +105,7 @@ struct DisplaySize {
                          std::uint32_t max_frame_height,
                          std::uint32_t frame_width,
                          std::uint32_t frame_height, DisplaySize* size,
-                         std::string* error);
+                         std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.4.3 Prediction-block aspect ratio
@@ -121,13 +121,13 @@ struct PbAspectRatio {
 int max_pb_aspect_ratio(const PbAspectRatio& config);
 
 [[nodiscard]] bool validate_pb_aspect_ratio(const PbAspectRatio& config,
-                              std::string* error);
+                              std::string& error);
 
 [[nodiscard]] bool write_pb_aspect_ratio(BitWriter& writer, const PbAspectRatio& config,
-                           std::string* error);
+                           std::string& error);
 
 [[nodiscard]] bool read_pb_aspect_ratio(BitReader& reader, PbAspectRatio* config,
-                          std::string* error);
+                          std::string& error);
 
 // §6.19.4.1 conformance: bw4 <= bh4 * MaxPbAspectRatio and
 // bh4 <= bw4 * MaxPbAspectRatio for every decoded leaf block.
@@ -155,11 +155,11 @@ struct DfPar {
   int max_value() const { return (1 << (bits() - 1)) - 1; }
 };
 
-[[nodiscard]] bool validate_df_par(const DfPar& config, std::string* error);
+[[nodiscard]] bool validate_df_par(const DfPar& config, std::string& error);
 
-[[nodiscard]] bool write_df_par(BitWriter& writer, const DfPar& config, std::string* error);
+[[nodiscard]] bool write_df_par(BitWriter& writer, const DfPar& config, std::string& error);
 
-[[nodiscard]] bool read_df_par(BitReader& reader, DfPar* config, std::string* error);
+[[nodiscard]] bool read_df_par(BitReader& reader, DfPar* config, std::string& error);
 
 [[nodiscard]] bool df_delta_q_representable(int value, const DfPar& config);
 
@@ -173,7 +173,7 @@ struct DfDeltaQSet {
 };
 
 [[nodiscard]] bool validate_df_delta_q(const DfPar& config, const DfDeltaQSet& values,
-                         std::string* error);
+                         std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.4.4 / §5.4.9 Sequence segments
@@ -202,28 +202,28 @@ struct SequenceSegmentConfig {
 };
 
 [[nodiscard]] bool validate_segment_info(const SegmentInfo& info, int num_segments,
-                           std::string* error);
+                           std::string& error);
 
 // seg_info(numSegments) exactly as §5.4.9. For SEG_LVL_ALT_Q the value is
 // su(1 + 9) and clipped to [-MAXQ_BITS, MAXQ_BITS] by the decoder; the writer
 // rejects out-of-range values rather than relying on the clip. SEG_LVL_SKIP and
 // SEG_LVL_GLOBALMV have zero value bits.
 [[nodiscard]] bool write_segment_info(BitWriter& writer, const SegmentInfo& info,
-                        int num_segments, std::string* error);
+                        int num_segments, std::string& error);
 
 [[nodiscard]] bool read_segment_info(BitReader& reader, int num_segments, SegmentInfo* info,
-                       std::string* error);
+                       std::string& error);
 
 [[nodiscard]] bool validate_sequence_segment_config(const SequenceSegmentConfig& config,
-                                      std::string* error);
+                                      std::string& error);
 
 [[nodiscard]] bool write_sequence_segment_config(BitWriter& writer,
                                    const SequenceSegmentConfig& config,
-                                   std::string* error);
+                                   std::string& error);
 
 [[nodiscard]] bool read_sequence_segment_config(BitReader& reader,
                                   SequenceSegmentConfig* config,
-                                  std::string* error);
+                                  std::string& error);
 
 // §5.18.7.1 segmentation_params() persistence/change rules. The sequence-level
 // state is `config.info`; a frame may override only when
@@ -257,14 +257,14 @@ struct FrameSegmentState {
                                      bool derived_primary_ref_none,
                                      bool frame_type_switch,
                                      FrameSegmentState* state,
-                                     std::string* error);
+                                     std::string& error);
 
 [[nodiscard]] bool read_frame_segmentation_params(BitReader& reader,
                                     const SequenceSegmentConfig& config,
                                     bool derived_primary_ref_none,
                                     bool frame_type_switch,
                                     FrameSegmentState* state,
-                                    std::string* error);
+                                    std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.4.2 sequence_tile_config() and §5.18.7.2 tile_info() reuse
@@ -329,12 +329,12 @@ struct TileParamsRequest {
                        SbSize uniform_sb_size, SbSize sb_size,
                        int seq_level_idx, int seq_tier,
                        const TileParamsRequest& request, TileParams* params,
-                       std::string* error);
+                       std::string& error);
 
 [[nodiscard]] bool read_tile_params(BitReader& reader, int frame_width, int frame_height,
                       SbSize uniform_sb_size, SbSize sb_size,
                       int seq_level_idx, int seq_tier, TileParams* params,
-                      std::string* error);
+                      std::string& error);
 
 struct SequenceTileConfig {
   bool present = false;       // seq_tile_info_present_flag
@@ -346,19 +346,19 @@ struct SequenceTileConfig {
 [[nodiscard]] bool validate_sequence_tile_config(const SequenceTileConfig& config,
                                    int max_frame_width, int max_frame_height,
                                    SbSize sb_size, int seq_level_idx,
-                                   int seq_tier, std::string* error);
+                                   int seq_tier, std::string& error);
 
 [[nodiscard]] bool write_sequence_tile_config(BitWriter& writer,
                                 SequenceTileConfig* config,
                                 int max_frame_width, int max_frame_height,
                                 SbSize sb_size, int seq_level_idx,
-                                int seq_tier, std::string* error);
+                                int seq_tier, std::string& error);
 
 [[nodiscard]] bool read_sequence_tile_config(BitReader& reader,
                                SequenceTileConfig* config,
                                int max_frame_width, int max_frame_height,
                                SbSize sb_size, int seq_level_idx,
-                               int seq_tier, std::string* error);
+                               int seq_tier, std::string& error);
 
 // §5.18.7.3 uniform_eligible().
 [[nodiscard]] bool uniform_eligible(int tile_log2_value, int sb_num);
@@ -384,12 +384,12 @@ struct FrameTileInfo {
                            int frame_width, int frame_height, SbSize sb_size,
                            int seq_level_idx, int seq_tier,
                            const FrameTileRequest& request,
-                           FrameTileInfo* info, std::string* error);
+                           FrameTileInfo* info, std::string& error);
 
 [[nodiscard]] bool read_frame_tile_info(BitReader& reader,
                           const SequenceTileConfig& sequence,
                           int frame_width, int frame_height, SbSize sb_size,
                           int seq_level_idx, int seq_tier, FrameTileInfo* info,
-                          std::string* error);
+                          std::string& error);
 
 }  // namespace av2enc::syntax::small_header

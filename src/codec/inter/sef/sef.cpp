@@ -91,7 +91,7 @@ class BitReader {
 };
 
 void set_error(SefError* error, SefError value) {
-  if (error != nullptr) *error = value;
+  *error = value;
 }
 
 bool fail(SefError* error, SefError value) {
@@ -207,7 +207,7 @@ std::size_t write_sef_frame_header(BitWriter& writer, const SefParams& params,
   context.immediate_output_frame = true;
   std::string grain_error;
   (void)filters::grain::WriteFilmGrainConfig(
-      writer, header.grain, context, &grain_error);
+      writer, header.grain, context, grain_error);
   assert(grain_error.empty());
   return writer.bit_size() - start;
 }
@@ -288,7 +288,7 @@ bool parse_sef_frame_header(std::span<const std::uint8_t> payload,
     std::size_t grain_position = reader.bit_position();
     std::string grain_error;
     if (!filters::grain::ReadFilmGrainConfig(
-            payload, &grain_position, context, &header.grain, &grain_error)) {
+            payload, &grain_position, context, &header.grain, grain_error)) {
       return fail(error, SefError::kTruncated);
     }
     // Advance the local reader past the config bits.

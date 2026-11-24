@@ -72,18 +72,16 @@ inline int video_find_tx_size(int w, int h) {
 // subblocks replace it with `find_tx_size(w, h)`.
 inline bool video_save_subpu(int plane, int x, int y, int w, int h, int pu_w,
                              int pu_h, VideoDeblockGrid* grid,
-                             std::string* error) {
+                             std::string& error) {
   if (grid == nullptr || plane < 0 || plane > 2) {
-    if (error != nullptr) *error = "save_subpu: invalid plane/grid";
+    error = "save_subpu: invalid plane/grid";
     return false;
   }
   if (w == pu_w && h == pu_h) return true;  // normative early return
   const int sub_pu = video_find_tx_size(w, h);
   if (sub_pu < 0) {
-    if (error != nullptr) {
-      *error = "save_subpu: no TX size for " + std::to_string(w) + "x" +
-               std::to_string(h);
-    }
+error = "save_subpu: no TX size for " + std::to_string(w) + "x" +
+         std::to_string(h);
     return false;
   }
   const int sub_x = plane > 0 ? 1 : 0;
@@ -192,7 +190,7 @@ struct VideoSubPuRect {
 inline bool add_video_deblock_blocks(
     const std::vector<syntax::BlockSyntax>& blocks, int tile_mi_row,
     int tile_mi_col, int base_q_idx, bool frame_is_intra,
-    VideoDeblockGrid* grid, std::string* error,
+    VideoDeblockGrid* grid, std::string& error,
     const VideoSubPuRect* sub_pus = nullptr, int num_sub_pus = 0) {
   const int q = std::min(std::max(base_q_idx, 0), 255);
   for (const syntax::BlockSyntax& block : blocks) {
@@ -206,18 +204,14 @@ inline bool add_video_deblock_blocks(
     const int h4 = partition::num_4x4_blocks_high(
         static_cast<partition::BlockSize>(bsize));
     if (w4 <= 0 || h4 <= 0) {
-      if (error != nullptr) {
-        *error = "video deblock: invalid leaf block size " +
-                 std::to_string(bsize);
-      }
+error = "video deblock: invalid leaf block size " +
+         std::to_string(bsize);
       return false;
     }
     const int r = tile_mi_row + static_cast<int>(block.mi_row);
     const int c = tile_mi_col + static_cast<int>(block.mi_col);
     if (r < 0 || c < 0 || r >= grid->mi_rows || c >= grid->mi_cols) {
-      if (error != nullptr) {
-        *error = "video deblock: leaf outside the MI grid";
-      }
+error = "video deblock: leaf outside the MI grid";
       return false;
     }
     const int clamped_w = std::min(w4, grid->mi_cols - c);
@@ -241,9 +235,7 @@ inline bool add_video_deblock_blocks(
       chroma_bsize = static_cast<int>(block.chroma_bsize);
       if (!partition::is_valid_block_size(
               static_cast<partition::BlockSize>(chroma_bsize))) {
-        if (error != nullptr) {
-          *error = "video deblock: invalid ChromaMi size";
-        }
+error = "video deblock: invalid ChromaMi size";
         return false;
       }
       chroma_w4 = std::min(
@@ -262,10 +254,8 @@ inline bool add_video_deblock_blocks(
     const bool inter_skip = block.is_inter != 0 && block.skip_flag != 0;
     const int luma_max_tx = video_deblock_max_tx(bsize);
     if (luma_max_tx < 0) {
-      if (error != nullptr) {
-        *error = "video deblock: no Max_Tx_Size_Rect for leaf size " +
-                 std::to_string(bsize);
-      }
+error = "video deblock: no Max_Tx_Size_Rect for leaf size " +
+         std::to_string(bsize);
       return false;
     }
     int tx_size[3];
@@ -296,10 +286,8 @@ inline bool add_video_deblock_blocks(
     const int sub_pu_size[3] = {luma_max_tx, chroma_max_tx, chroma_max_tx};
     for (int plane = 0; plane < 3; ++plane) {
       if (tx_size[plane] < 0 || tx_size[plane] >= deblock::kTxSizesAll) {
-        if (error != nullptr) {
-          *error = "video deblock: invalid transform size on plane " +
-                   std::to_string(plane);
-        }
+error = "video deblock: invalid transform size on plane " +
+         std::to_string(plane);
         return false;
       }
     }
@@ -343,18 +331,14 @@ inline bool add_video_deblock_blocks(
       for (int i = 0; i < static_cast<int>(block.tx_part_count); ++i) {
         const int part_tx = static_cast<int>(block.tx_part_tx_size[i]);
         if (part_tx < 0 || part_tx >= deblock::kTxSizesAll) {
-          if (error != nullptr) {
-            *error = "video deblock: invalid TX-part size";
-          }
+error = "video deblock: invalid TX-part size";
           return false;
         }
         const int part_r = r + static_cast<int>(block.tx_part_mi_row[i]);
         const int part_c = c + static_cast<int>(block.tx_part_mi_col[i]);
         if (part_r < 0 || part_c < 0 || part_r >= grid->mi_rows ||
             part_c >= grid->mi_cols) {
-          if (error != nullptr) {
-            *error = "video deblock: TX part outside the MI grid";
-          }
+error = "video deblock: TX part outside the MI grid";
           return false;
         }
         const int pw4 =
@@ -398,12 +382,12 @@ inline bool add_video_deblock_blocks(
 }
 
 // Self-check for §5.20.6.3/§7.13.3.15 used by the video gate.
-inline bool video_save_subpu_selftest(std::string* error) {
+inline bool video_save_subpu_selftest(std::string& error) {
   if (video_find_tx_size(8, 8) != static_cast<int>(deblock::TxSize::k8x8) ||
       video_find_tx_size(16, 8) != static_cast<int>(deblock::TxSize::k16x8) ||
       video_find_tx_size(8, 32) != static_cast<int>(deblock::TxSize::k8x32) ||
       video_find_tx_size(48, 8) >= 0) {
-    if (error != nullptr) *error = "find_tx_size table mismatch";
+    error = "find_tx_size table mismatch";
     return false;
   }
   VideoDeblockGrid grid;
@@ -417,7 +401,7 @@ inline bool video_save_subpu_selftest(std::string* error) {
             grid.mi[p][static_cast<std::size_t>(r) * 16U +
                        static_cast<std::size_t>(c)];
         if (mi.sub_pu_size != deblock::TxSize::k4x4) {
-          if (error != nullptr) *error = "whole-PU early return changed sub-PU";
+          error = "whole-PU early return changed sub-PU";
           return false;
         }
       }
@@ -433,7 +417,7 @@ inline bool video_save_subpu_selftest(std::string* error) {
                      static_cast<std::size_t>(c)];
       if (mi.sub_pu_size != deblock::TxSize::k8x8 ||
           mi.sub_pu_row_base != 1 || mi.sub_pu_col_base != 2) {
-        if (error != nullptr) *error = "luma sub-PU rect mismatch";
+        error = "luma sub-PU rect mismatch";
         return false;
       }
     }
@@ -448,7 +432,7 @@ inline bool video_save_subpu_selftest(std::string* error) {
                      static_cast<std::size_t>(c)];
       if (mi.sub_pu_size != deblock::TxSize::k8x8 ||
           mi.sub_pu_row_base != 0 || mi.sub_pu_col_base != 2) {
-        if (error != nullptr) *error = "chroma sub-PU rect mismatch";
+        error = "chroma sub-PU rect mismatch";
         return false;
       }
     }
@@ -459,7 +443,7 @@ inline bool video_save_subpu_selftest(std::string* error) {
 // Convenience wrapper for a single-tile frame.
 inline bool build_video_deblock_grid(    const std::vector<syntax::BlockSyntax>& blocks, int mi_cols, int mi_rows,
     int base_q_idx, bool frame_is_intra, VideoDeblockGrid* grid,
-    std::string* error,
+    std::string& error,
     const VideoSubPuRect* sub_pus = nullptr, int num_sub_pus = 0) {
   init_video_deblock_grid(mi_cols, mi_rows, base_q_idx, frame_is_intra, grid);
   return add_video_deblock_blocks(blocks, 0, 0, base_q_idx, frame_is_intra,
@@ -472,7 +456,7 @@ inline bool build_video_deblock_grid(    const std::vector<syntax::BlockSyntax>&
 inline bool apply_video_deblock_host(const VideoDeblockGrid& grid,
                                      std::uint8_t* const plane[3],
                                      const int stride[3],
-                                     std::string* error) {
+                                     std::string& error) {
   deblock::DeblockFrame frame;
   for (int p = 0; p < 3; ++p) {
     frame.planes[p].data = plane[p];
@@ -494,10 +478,8 @@ inline bool apply_video_deblock_host(const VideoDeblockGrid& grid,
   const deblock::DeblockStatus status =
       deblock::deblock_frame(frame, grid.options);
   if (status != deblock::DeblockStatus::kOk) {
-    if (error != nullptr) {
-      *error = std::string("video deblock failed: ") +
-               deblock::deblock_status_string(status);
-    }
+error = std::string("video deblock failed: ") +
+         deblock::deblock_status_string(status);
     return false;
   }
   // Diagnostic: the §7.17 filter size/threshold is *derived* state (qindex, TX

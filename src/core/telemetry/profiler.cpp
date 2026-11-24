@@ -353,10 +353,8 @@ Profiler::Profiler() {
 Profiler::~Profiler() { close(); }
 
 bool Profiler::open(const std::string& jsonl_path, bool enable_nvtx,
-                    std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
+                    std::string& error) {
+error.clear();
   close();
 
   std::lock_guard<std::mutex> lock(mutex_);
@@ -373,10 +371,8 @@ bool Profiler::open(const std::string& jsonl_path, bool enable_nvtx,
   if (!jsonl_path.empty()) {
     std::FILE* file = std::fopen(jsonl_path.c_str(), "wb");
     if (file == nullptr) {
-      if (error != nullptr) {
-        *error = "cannot open profile log '" + jsonl_path + "': " +
-                 std::strerror(errno);
-      }
+error = "cannot open profile log '" + jsonl_path + "': " +
+         std::strerror(errno);
       enabled_.store(false, std::memory_order_relaxed);
       return false;
     }
@@ -396,9 +392,7 @@ bool Profiler::open(const std::string& jsonl_path, bool enable_nvtx,
       std::fclose(file_);
       file_ = nullptr;
     }
-    if (error != nullptr) {
-      *error = "out of memory allocating CUDA profiler state";
-    }
+error = "out of memory allocating CUDA profiler state";
     enabled_.store(false, std::memory_order_relaxed);
     return false;
   }
@@ -414,13 +408,13 @@ bool Profiler::open(const std::string& jsonl_path, bool enable_nvtx,
   // describe the encode, not profiler initialization.
   origin_ns_ = now_ns();
   enabled_.store(file_ != nullptr || nvtx_ok, std::memory_order_relaxed);
-  if (enable_nvtx && !nvtx_ok && error != nullptr && file_ == nullptr) {
-    *error = "NVTX requested but not available in this build";
+  if (enable_nvtx && !nvtx_ok && file_ == nullptr) {
+    error = "NVTX requested but not available in this build";
   }
   return enabled();
 }
 
-bool Profiler::open_from_env(std::string* error) {
+bool Profiler::open_from_env(std::string& error) {
   const char* path_env = std::getenv("AV2ENC_PROFILE");
   const char* nvtx_env = std::getenv("AV2ENC_PROFILE_NVTX");
   const bool want_nvtx = env_flag(nvtx_env);
@@ -434,9 +428,7 @@ bool Profiler::open_from_env(std::string* error) {
 
   if (path.empty() && !want_nvtx) {
     close();
-    if (error != nullptr) {
-      error->clear();
-    }
+error.clear();
     return false;
   }
   return open(path, want_nvtx, error);

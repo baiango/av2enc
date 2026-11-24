@@ -127,9 +127,9 @@ std::vector<HighBitDepthBlockDesc> make_block_plan(std::uint32_t width,
 }
 
 bool high_bitdepth_geometry_supported(std::uint32_t width, std::uint32_t height,
-                            std::string* reason) {
+                            std::string& reason) {
   if (width == 0 || height == 0) {
-    if (reason != nullptr) *reason = "M10 dimensions must be non-zero";
+    reason = "M10 dimensions must be non-zero";
     return false;
   }
   const std::uint32_t mi_cols = fmt::mi_cols(width);
@@ -137,17 +137,13 @@ bool high_bitdepth_geometry_supported(std::uint32_t width, std::uint32_t height,
   const std::uint32_t col_remainder = mi_cols % 16U;
   const std::uint32_t row_remainder = mi_rows % 16U;
   if (col_remainder != 0U && col_remainder <= 8U) {
-    if (reason != nullptr) {
-      *reason = "M10 fixed tree needs the last superblock column to have more "
+      reason = "M10 fixed tree needs the last superblock column to have more "
                 "than 8 MI; this width forces an implied 64x64 partition";
-    }
     return false;
   }
   if (row_remainder != 0U && row_remainder <= 8U) {
-    if (reason != nullptr) {
-      *reason = "M10 fixed tree needs the last superblock row to have more "
+      reason = "M10 fixed tree needs the last superblock row to have more "
                 "than 8 MI; this height forces an implied 64x64 partition";
-    }
     return false;
   }
   return true;
@@ -163,7 +159,7 @@ bool encode_high_bitdepth_cpu(const fmt::Picture& picture, const HighBitDepthOpt
     return false;
   }
   if (!high_bitdepth_geometry_supported(picture.format.width, picture.format.height,
-                              &error)) {
+                              error)) {
     return false;
   }
   if (!fmt::samples_in_range(picture)) {
@@ -177,7 +173,7 @@ bool encode_high_bitdepth_cpu(const fmt::Picture& picture, const HighBitDepthOpt
     config.base_q_idx = options.base_q_idx;
     config.disable_cdf_update = options.disable_cdf_update;
     std::string reason;
-    if (!validate_config(config, &reason)) {
+    if (!validate_config(config, reason)) {
       error = reason;
       return false;
     }
@@ -299,7 +295,7 @@ bool encode_high_bitdepth_cpu(const fmt::Picture& picture, const HighBitDepthOpt
   std::uint32_t tile_bytes = 0;
   if (!assemble_high_bitdepth_stream(picture, options, blocks.data(), blocks.size(),
                            levels.data(), levels.size(), &frame, &tile_bytes,
-                           &error)) {
+                           error)) {
     return false;
   }
 
@@ -317,9 +313,9 @@ bool encode_high_bitdepth_cpu(const fmt::Picture& picture, const HighBitDepthOpt
 bool convert_8bit_420_to_picture(const std::uint8_t* y, const std::uint8_t* u,
                                  const std::uint8_t* v, std::uint32_t width,
                                  std::uint32_t height, std::uint32_t y_stride,
-                                 fmt::Picture* picture, std::string* error) {
+                                 fmt::Picture* picture, std::string& error) {
   if (picture == nullptr || y == nullptr || u == nullptr || v == nullptr) {
-    if (error != nullptr) *error = "null 8-bit plane";
+    error = "null 8-bit plane";
     return false;
   }
   const std::uint32_t cw = (width + 1U) / 2U;
@@ -332,7 +328,7 @@ bool convert_8bit_420_to_picture(const std::uint8_t* y, const std::uint8_t* u,
   const auto converted = fmt::convert_420_8_to_picture(
       source, fmt::ChromaFormat::k420, fmt::BitDepth::k10, *picture);
   if (!converted.ok()) {
-    if (error != nullptr) *error = converted.error;
+    error = converted.error;
     return false;
   }
   return true;

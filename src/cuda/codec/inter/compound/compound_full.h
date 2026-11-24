@@ -371,31 +371,25 @@ struct CompoundFullWorkspace {
 //                    rewound)
 inline Status workspace_create(Arena& arena, const CompoundFullConfig& config,
                                CompoundFullWorkspace* out,
-                               std::uint64_t* out_required_bytes = nullptr,
-                               std::string* error = nullptr) {
+                               std::uint64_t* out_required_bytes,
+                               std::string& error) {
   const std::uint64_t required = required_device_bytes(config);
   if (out_required_bytes != nullptr) {
     *out_required_bytes = required;
   }
   if (out == nullptr || required == 0) {
-    if (error != nullptr) {
-      *error = "compound_full: invalid workspace configuration";
-    }
+error = "compound_full: invalid workspace configuration";
     return Status::kInvalidArgument;
   }
   *out = CompoundFullWorkspace{};
   if (!arena.initialized()) {
-    if (error != nullptr) {
-      *error = "compound_full: arena not initialized";
-    }
+error = "compound_full: arena not initialized";
     return Status::kNotInitialized;
   }
   if (arena.remaining() < required) {
-    if (error != nullptr) {
-      *error = "compound_full: arena exhausted: need " +
-               std::to_string(required) + " bytes, have " +
-               std::to_string(arena.remaining()) + " available";
-    }
+error = "compound_full: arena exhausted: need " +
+         std::to_string(required) + " bytes, have " +
+         std::to_string(arena.remaining()) + " available";
     return Status::kArenaExhausted;
   }
 
@@ -428,10 +422,8 @@ inline Status workspace_create(Arena& arena, const CompoundFullConfig& config,
     const Status status = arena.allocate_checked(request.bytes, request.target);
     if (status != Status::kOk) {
       arena.rewind(start_mark);
-      if (error != nullptr) {
-        *error = "compound_full: arena allocation failed: need " +
-                 std::to_string(required) + " bytes";
-      }
+error = "compound_full: arena allocation failed: need " +
+         std::to_string(required) + " bytes";
       return status;
     }
   }
@@ -441,10 +433,8 @@ inline Status workspace_create(Arena& arena, const CompoundFullConfig& config,
         reinterpret_cast<void**>(&cache));
     if (status != Status::kOk) {
       arena.rewind(start_mark);
-      if (error != nullptr) {
-        *error = "compound_full: wedge-cache allocation failed: need " +
-                 std::to_string(required) + " bytes";
-      }
+error = "compound_full: wedge-cache allocation failed: need " +
+         std::to_string(required) + " bytes";
       return status;
     }
   }
@@ -455,9 +445,7 @@ inline Status workspace_create(Arena& arena, const CompoundFullConfig& config,
   out->max_mask_samples = config.max_mask_samples;
   out->required_bytes = required;
   out->persistent_mark = arena.mark();
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return Status::kOk;
 }
 

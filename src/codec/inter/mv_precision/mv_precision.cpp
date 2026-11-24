@@ -37,34 +37,34 @@ std::int32_t round2_signed_64(std::int64_t value, int shift) {
 }
 
 bool sym(av2::Encoder& enc, std::uint16_t* cdf, int n, int symbol,
-         std::string* error) {
+         std::string& error) {
   if (enc.encode_symbol(cdf, n, symbol) != Status::kOk) {
-    if (error != nullptr) *error = "entropy encode_symbol failed";
+    error = "entropy encode_symbol failed";
     return false;
   }
   return true;
 }
 
 bool sym(av2::Decoder& dec, std::uint16_t* cdf, int n, int* symbol,
-         std::string* error) {
+         std::string& error) {
   if (dec.decode_symbol(cdf, n, symbol) != Status::kOk) {
-    if (error != nullptr) *error = "entropy decode_symbol failed";
+    error = "entropy decode_symbol failed";
     return false;
   }
   return true;
 }
 
-bool raw_bit(av2::Encoder& enc, bool bit, std::string* error) {
+bool raw_bit(av2::Encoder& enc, bool bit, std::string& error) {
   if (enc.encode_bool(bit) != Status::kOk) {
-    if (error != nullptr) *error = "entropy encode_bool failed";
+    error = "entropy encode_bool failed";
     return false;
   }
   return true;
 }
 
-bool raw_bit(av2::Decoder& dec, bool* bit, std::string* error) {
+bool raw_bit(av2::Decoder& dec, bool* bit, std::string& error) {
   if (dec.read_bool(bit) != Status::kOk) {
-    if (error != nullptr) *error = "entropy read_bool failed";
+    error = "entropy read_bool failed";
     return false;
   }
   return true;
@@ -72,9 +72,9 @@ bool raw_bit(av2::Decoder& dec, bool* bit, std::string* error) {
 
 // §5.10 ns(n): truncated binary code.
 bool write_ns(av2::Encoder& enc, std::uint32_t n, std::uint32_t value,
-              std::string* error) {
+              std::string& error) {
   if (n < 2) {
-    if (error != nullptr) *error = "ns(n) requires n >= 2";
+    error = "ns(n) requires n >= 2";
     return false;
   }
   unsigned width = 0;
@@ -94,9 +94,9 @@ bool write_ns(av2::Encoder& enc, std::uint32_t n, std::uint32_t value,
 }
 
 bool read_ns(av2::Decoder& dec, std::uint32_t n, std::uint32_t* value,
-             std::string* error) {
+             std::string& error) {
   if (n < 2) {
-    if (error != nullptr) *error = "ns(n) requires n >= 2";
+    error = "ns(n) requires n >= 2";
     return false;
   }
   unsigned width = 0;
@@ -127,15 +127,15 @@ int shell_class_symbol_count(int precision, int shell_set) {
 // Shell MVD in precision units.  `mag[0]` is row, `mag[1]` is column.
 bool write_shell(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
                  std::int32_t mag_y, std::int32_t mag_x, int precision,
-                 std::string* error) {
+                 std::string& error) {
   if (!me2::me2_precision_valid(precision) ||
       precision == me2::kMvPrecisionTwoPel) {
-    if (error != nullptr) *error = "invalid MvPrecision (no shell CDF)";
+    error = "invalid MvPrecision (no shell CDF)";
     return false;
   }
   const std::int32_t shell = mag_y + mag_x;
   if (shell < 0 || shell >= (1 << 17)) {
-    if (error != nullptr) *error = "shell index out of range";
+    error = "shell index out of range";
     return false;
   }
   const int cls = shell == 0 ? 0 : floor_log2(shell);
@@ -225,10 +225,10 @@ bool write_shell(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
 }
 
 bool read_shell(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int precision,
-                std::int32_t* mag_y, std::int32_t* mag_x, std::string* error) {
+                std::int32_t* mag_y, std::int32_t* mag_x, std::string& error) {
   if (!me2::me2_precision_valid(precision) ||
       precision == me2::kMvPrecisionTwoPel) {
-    if (error != nullptr) *error = "invalid MvPrecision (no shell CDF)";
+    error = "invalid MvPrecision (no shell CDF)";
     return false;
   }
   int shell_set = 0;
@@ -338,25 +338,21 @@ bool read_shell(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int precision,
 
 bool write_sequence_motion_modes(BitWriter& writer,
                                  const SequenceMotionModeSyntax& syntax,
-                                 std::string* error) {
+                                 std::string& error) {
   bool any = false;
   for (int mode = kMotionInterIntra; mode < kMotionModes; ++mode) {
     writer.put_bit(syntax.seq_enabled.enabled[mode]);
     any = any || syntax.seq_enabled.enabled[mode];
   }
   if (any != syntax.seq_frame_motion_modes_present_flag) {
-    if (error != nullptr) {
-      *error = "seq_frame_motion_modes_present_flag must equal any(seq modes)";
-    }
+error = "seq_frame_motion_modes_present_flag must equal any(seq modes)";
     return false;
   }
   if (any) writer.put_bit(true);
   if (syntax.seq_enabled.enabled[kMotionDeltaWarp]) {
     writer.put_bit(syntax.enable_six_param_warp_delta);
   } else if (syntax.enable_six_param_warp_delta) {
-    if (error != nullptr) {
-      *error = "enable_six_param_warp_delta requires DELTAWARP";
-    }
+error = "enable_six_param_warp_delta requires DELTAWARP";
     return false;
   }
   return true;
@@ -364,9 +360,9 @@ bool write_sequence_motion_modes(BitWriter& writer,
 
 bool read_sequence_motion_modes(BitReader& reader,
                                 SequenceMotionModeSyntax* syntax,
-                                std::string* error) {
+                                std::string& error) {
   if (syntax == nullptr) {
-    if (error != nullptr) *error = "null syntax";
+    error = "null syntax";
     return false;
   }
   SequenceMotionModeSyntax out;
@@ -374,7 +370,7 @@ bool read_sequence_motion_modes(BitReader& reader,
   for (int mode = kMotionInterIntra; mode < kMotionModes; ++mode) {
     bool bit = false;
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "truncated seq_enabled_motion_modes";
+      error = "truncated seq_enabled_motion_modes";
       return false;
     }
     out.seq_enabled.enabled[mode] = bit;
@@ -383,7 +379,7 @@ bool read_sequence_motion_modes(BitReader& reader,
   if (any) {
     bool bit = false;
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "truncated seq_frame_motion_modes_present";
+      error = "truncated seq_frame_motion_modes_present";
       return false;
     }
     out.seq_frame_motion_modes_present_flag = bit;
@@ -391,7 +387,7 @@ bool read_sequence_motion_modes(BitReader& reader,
   if (out.seq_enabled.enabled[kMotionDeltaWarp]) {
     bool bit = false;
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "truncated enable_six_param_warp_delta";
+      error = "truncated enable_six_param_warp_delta";
       return false;
     }
     out.enable_six_param_warp_delta = bit;
@@ -403,27 +399,23 @@ bool read_sequence_motion_modes(BitReader& reader,
 bool write_frame_motion_modes(BitWriter& writer,
                               const SequenceMotionModeSyntax& sequence,
                               const MotionModeSet& frame,
-                              std::string* error) {
+                              std::string& error) {
   for (int mode = kMotionInterIntra; mode < kMotionModes; ++mode) {
     if (!sequence.seq_frame_motion_modes_present_flag) {
       if (frame.enabled[mode] != sequence.seq_enabled.enabled[mode]) {
-        if (error != nullptr) {
-          *error = "frame motion mode must equal the sequence value when "
-                   "seq_frame_motion_modes_present_flag == 0";
-        }
+error = "frame motion mode must equal the sequence value when "
+         "seq_frame_motion_modes_present_flag == 0";
         return false;
       }
     } else if (sequence.seq_enabled.enabled[mode]) {
       writer.put_bit(frame.enabled[mode]);
     } else if (frame.enabled[mode]) {
-      if (error != nullptr) {
-        *error = "frame enables a motion mode the sequence disabled";
-      }
+error = "frame enables a motion mode the sequence disabled";
       return false;
     }
   }
   if (frame.enabled[kMotionSimple]) {
-    if (error != nullptr) *error = "frame_enabled_motion_modes[SIMPLE] is not coded";
+    error = "frame_enabled_motion_modes[SIMPLE] is not coded";
     return false;
   }
   return true;
@@ -431,9 +423,9 @@ bool write_frame_motion_modes(BitWriter& writer,
 
 bool read_frame_motion_modes(BitReader& reader,
                              const SequenceMotionModeSyntax& sequence,
-                             MotionModeSet* frame, std::string* error) {
+                             MotionModeSet* frame, std::string& error) {
   if (frame == nullptr) {
-    if (error != nullptr) *error = "null frame modes";
+    error = "null frame modes";
     return false;
   }
   MotionModeSet out;
@@ -443,7 +435,7 @@ bool read_frame_motion_modes(BitReader& reader,
     } else if (sequence.seq_enabled.enabled[mode]) {
       bool bit = false;
       if (!reader.read_bit(&bit)) {
-        if (error != nullptr) *error = "truncated frame_enabled_motion_modes";
+        error = "truncated frame_enabled_motion_modes";
         return false;
       }
       out.enabled[mode] = bit;
@@ -457,7 +449,7 @@ bool read_frame_motion_modes(BitReader& reader,
 
 bool write_sequence_mv_res(BitWriter& writer,
                            const SequenceMvResSyntax& syntax,
-                           std::string* error) {
+                           std::string& error) {
   (void)error;
   writer.put_bit(syntax.enable_adaptive_mvd);
   writer.put_bit(syntax.enable_mvd_sign_derive);
@@ -466,16 +458,16 @@ bool write_sequence_mv_res(BitWriter& writer,
 }
 
 bool read_sequence_mv_res(BitReader& reader, SequenceMvResSyntax* syntax,
-                          std::string* error) {
+                          std::string& error) {
   if (syntax == nullptr) {
-    if (error != nullptr) *error = "null syntax";
+    error = "null syntax";
     return false;
   }
   SequenceMvResSyntax out;
   if (!reader.read_bit(&out.enable_adaptive_mvd) ||
       !reader.read_bit(&out.enable_mvd_sign_derive) ||
       !reader.read_bit(&out.enable_flex_mvres)) {
-    if (error != nullptr) *error = "truncated sequence mv-res flags";
+    error = "truncated sequence mv-res flags";
     return false;
   }
   *syntax = out;
@@ -484,15 +476,15 @@ bool read_sequence_mv_res(BitReader& reader, SequenceMvResSyntax* syntax,
 
 bool write_frame_mv_precision(BitWriter& writer,
                               const me2::FramePrecisionSyntax& syntax,
-                              int force_integer_mv, std::string* error) {
+                              int force_integer_mv, std::string& error) {
   if (syntax.valid == false) {
-    if (error != nullptr) *error = "invalid FramePrecisionSyntax";
+    error = "invalid FramePrecisionSyntax";
     return false;
   }
   if (force_integer_mv != 0) {
     if (syntax.frame_precision != me2::kMvPrecisionOnePel ||
         syntax.coded_bits != 0 || syntax.use_per_block_mv_precision != 0) {
-      if (error != nullptr) *error = "force_integer_mv pins MV_PRECISION_ONE_PEL";
+      error = "force_integer_mv pins MV_PRECISION_ONE_PEL";
       return false;
     }
     return true;
@@ -505,7 +497,7 @@ bool write_frame_mv_precision(BitWriter& writer,
       0, syntax.use_qtr_precision_mv, syntax.allow_high_precision_mv,
       syntax.use_per_block_mv_precision);
   if (check.frame_precision != syntax.frame_precision) {
-    if (error != nullptr) *error = "frame precision bits disagree with target";
+    error = "frame precision bits disagree with target";
     return false;
   }
   return true;
@@ -514,9 +506,9 @@ bool write_frame_mv_precision(BitWriter& writer,
 bool read_frame_mv_precision(BitReader& reader, int force_integer_mv,
                              int enable_flex_mvres,
                              me2::FramePrecisionSyntax* syntax,
-                             std::string* error) {
+                             std::string& error) {
   if (syntax == nullptr) {
-    if (error != nullptr) *error = "null syntax";
+    error = "null syntax";
     return false;
   }
   if (force_integer_mv != 0) {
@@ -525,12 +517,12 @@ bool read_frame_mv_precision(BitReader& reader, int force_integer_mv,
   }
   bool use_qtr = false;
   if (!reader.read_bit(&use_qtr)) {
-    if (error != nullptr) *error = "truncated use_qtr_precision_mv";
+    error = "truncated use_qtr_precision_mv";
     return false;
   }
   bool allow_high = false;
   if (!use_qtr && !reader.read_bit(&allow_high)) {
-    if (error != nullptr) *error = "truncated allow_high_precision_mv";
+    error = "truncated allow_high_precision_mv";
     return false;
   }
   *syntax = me2::me2_frame_precision_from_bits(0, use_qtr ? 1 : 0,
@@ -540,9 +532,9 @@ bool read_frame_mv_precision(BitReader& reader, int force_integer_mv,
 }
 
 bool write_frame_interp_filter(BitWriter& writer, bool is_switchable,
-                               int filter, std::string* error) {
+                               int filter, std::string& error) {
   if (!frame_interp_filter_legal(filter, is_switchable)) {
-    if (error != nullptr) *error = "illegal frame interpolation_filter";
+    error = "illegal frame interpolation_filter";
     return false;
   }
   writer.put_bit(is_switchable);
@@ -551,14 +543,14 @@ bool write_frame_interp_filter(BitWriter& writer, bool is_switchable,
 }
 
 bool read_frame_interp_filter(BitReader& reader, bool* is_switchable,
-                              int* filter, std::string* error) {
+                              int* filter, std::string& error) {
   if (is_switchable == nullptr || filter == nullptr) {
-    if (error != nullptr) *error = "null output";
+    error = "null output";
     return false;
   }
   bool switchable = false;
   if (!reader.read_bit(&switchable)) {
-    if (error != nullptr) *error = "truncated is_filter_switchable";
+    error = "truncated is_filter_switchable";
     return false;
   }
   if (switchable) {
@@ -568,7 +560,7 @@ bool read_frame_interp_filter(BitReader& reader, bool* is_switchable,
   }
   std::uint32_t value = 0;
   if (!reader.read_bits(2, &value)) {
-    if (error != nullptr) *error = "truncated interpolation_filter";
+    error = "truncated interpolation_filter";
     return false;
   }
   *is_switchable = false;
@@ -793,7 +785,7 @@ bool frame_interp_filter_legal(int filter, bool is_switchable) {
 // Precision plan
 // ---------------------------------------------------------------------------
 
-bool validate_mv_res_config(const MvResConfig& config, std::string* error) {
+bool validate_mv_res_config(const MvResConfig& config, std::string& error) {
   (void)config;
   (void)error;
   // Every combination of the three sequence flags is legal AV2.  The
@@ -811,10 +803,10 @@ bool validate_mv_res_config(const MvResConfig& config, std::string* error) {
 bool plan_block_precision(const MvResConfig& config,
                           const me2::FramePrecisionSyntax& frame,
                           int y_mode, bool use_amvd, int target_precision,
-                          BlockPrecisionSyntax* plan, std::string* error) {
+                          BlockPrecisionSyntax* plan, std::string& error) {
   if (plan == nullptr || !frame.valid ||
       !me2::me2_precision_valid(target_precision)) {
-    if (error != nullptr) *error = "invalid precision plan input";
+    error = "invalid precision plan input";
     return false;
   }
   BlockPrecisionSyntax out;
@@ -842,9 +834,7 @@ bool plan_block_precision(const MvResConfig& config,
         }
       }
       if (!found) {
-        if (error != nullptr) {
-          *error = "target precision is not signallable for this frame/block";
-        }
+error = "target precision is not signallable for this frame/block";
         return false;
       }
     }
@@ -856,7 +846,7 @@ bool plan_block_precision(const MvResConfig& config,
       out.pb_mv_precision = pb;
       out.pb_cdf_row = me2::me2_pb_precision_cdf_row(frame.frame_precision);
       if (out.pb_cdf_row < 0 || out.pb_cdf_row > 2) {
-        if (error != nullptr) *error = "FrameMvPrecision cannot code pb precision";
+        error = "FrameMvPrecision cannot code pb precision";
         return false;
       }
     }
@@ -864,9 +854,7 @@ bool plan_block_precision(const MvResConfig& config,
     return true;
   }
   if (target_precision != frame.frame_precision) {
-    if (error != nullptr) {
-      *error = "per-block precision is not signalled for this block";
-    }
+error = "per-block precision is not signalled for this block";
     return false;
   }
   out.use_most_probable_precision = true;
@@ -878,10 +866,10 @@ bool plan_block_precision(const MvResConfig& config,
 bool write_block_precision(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
                            int most_probable_ctx, int pb_ctx,
                            const BlockPrecisionSyntax& plan,
-                           std::string* error) {
+                           std::string& error) {
   if (most_probable_ctx < 0 || most_probable_ctx > 2 || pb_ctx < 0 ||
       pb_ctx > 1) {
-    if (error != nullptr) *error = "precision ctx out of range";
+    error = "precision ctx out of range";
     return false;
   }
   if (plan.code_use_most_probable_precision) {
@@ -893,7 +881,7 @@ bool write_block_precision(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
   if (plan.code_pb_mv_precision) {
     if (plan.pb_mv_precision < 0 || plan.pb_mv_precision > 2 ||
         plan.pb_cdf_row < 0 || plan.pb_cdf_row > 2) {
-      if (error != nullptr) *error = "pb_mv_precision symbol out of range";
+      error = "pb_mv_precision symbol out of range";
       return false;
     }
     if (!sym(enc, &cdfs.pb_mv_precision[pb_ctx][plan.pb_cdf_row][0], 3,
@@ -909,14 +897,14 @@ bool read_block_precision(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
                           const me2::FramePrecisionSyntax& frame,
                           int y_mode, bool use_amvd,
                           bool enable_adaptive_mvd, bool enable_flex_mvres,
-                          BlockPrecisionSyntax* plan, std::string* error) {
+                          BlockPrecisionSyntax* plan, std::string& error) {
   if (plan == nullptr || !frame.valid) {
-    if (error != nullptr) *error = "invalid precision reader input";
+    error = "invalid precision reader input";
     return false;
   }
   if (most_probable_ctx < 0 || most_probable_ctx > 2 || pb_ctx < 0 ||
       pb_ctx > 1) {
-    if (error != nullptr) *error = "precision ctx out of range";
+    error = "precision ctx out of range";
     return false;
   }
   BlockPrecisionSyntax out;
@@ -938,7 +926,7 @@ bool read_block_precision(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
     } else {
       const int row = me2::me2_pb_precision_cdf_row(frame.frame_precision);
       if (row < 0 || row > 2) {
-        if (error != nullptr) *error = "FrameMvPrecision cannot code pb precision";
+        error = "FrameMvPrecision cannot code pb precision";
         return false;
       }
       int pb = 0;
@@ -962,18 +950,18 @@ bool read_block_precision(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
 // ---------------------------------------------------------------------------
 
 bool write_use_amvd(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int index,
-                    int ctx, bool value, std::string* error) {
+                    int ctx, bool value, std::string& error) {
   if (index < 0 || index > 8 || ctx < 0 || ctx > 2) {
-    if (error != nullptr) *error = "use_amvd index/ctx out of range";
+    error = "use_amvd index/ctx out of range";
     return false;
   }
   return sym(enc, &cdfs.use_amvd[index][ctx][0], 2, value ? 1 : 0, error);
 }
 
 bool read_use_amvd(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int index,
-                   int ctx, bool* value, std::string* error) {
+                   int ctx, bool* value, std::string& error) {
   if (value == nullptr || index < 0 || index > 8 || ctx < 0 || ctx > 2) {
-    if (error != nullptr) *error = "use_amvd index/ctx out of range";
+    error = "use_amvd index/ctx out of range";
     return false;
   }
   int symbol = 0;
@@ -983,36 +971,36 @@ bool read_use_amvd(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int index,
 }
 
 bool write_mv_joint(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int joint,
-                    std::string* error) {
+                    std::string& error) {
   if (joint < 0 || joint >= kMvJoints) {
-    if (error != nullptr) *error = "mv_joint out of range";
+    error = "mv_joint out of range";
     return false;
   }
   return sym(enc, &cdfs.mv_joint[0], kMvJoints, joint, error);
 }
 
 bool read_mv_joint(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int* joint,
-                   std::string* error) {
+                   std::string& error) {
   if (joint == nullptr) {
-    if (error != nullptr) *error = "null mv_joint";
+    error = "null mv_joint";
     return false;
   }
   return sym(dec, &cdfs.mv_joint[0], kMvJoints, joint, error);
 }
 
 bool write_amvd_index(av2::Encoder& enc, MvPrecisionCdfState& cdfs, int comp,
-                      int index, std::string* error) {
+                      int index, std::string& error) {
   if (comp < 0 || comp > 1 || index < 0 || index >= kMaxAmvdIndex) {
-    if (error != nullptr) *error = "amvd_index out of range";
+    error = "amvd_index out of range";
     return false;
   }
   return sym(enc, &cdfs.amvd_index[comp][0], kMaxAmvdIndex, index, error);
 }
 
 bool read_amvd_index(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int comp,
-                     int* index, std::string* error) {
+                     int* index, std::string& error) {
   if (index == nullptr || comp < 0 || comp > 1) {
-    if (error != nullptr) *error = "amvd_index out of range";
+    error = "amvd_index out of range";
     return false;
   }
   return sym(dec, &cdfs.amvd_index[comp][0], kMaxAmvdIndex, index, error);
@@ -1029,9 +1017,9 @@ bool amvd_index_for_magnitude(std::int32_t value, int* index) {
   return false;
 }
 
-bool amvd_mv_from_mv(mc::Mv mvd, AmvdMvSyntax* syntax, std::string* error) {
+bool amvd_mv_from_mv(mc::Mv mvd, AmvdMvSyntax* syntax, std::string& error) {
   if (syntax == nullptr) {
-    if (error != nullptr) *error = "null syntax";
+    error = "null syntax";
     return false;
   }
   AmvdMvSyntax out;
@@ -1049,7 +1037,7 @@ bool amvd_mv_from_mv(mc::Mv mvd, AmvdMvSyntax* syntax, std::string* error) {
     }
     int index = 0;
     if (!amvd_index_for_magnitude(magnitudes[comp], &index)) {
-      if (error != nullptr) *error = "MVD is not representable by AMVD";
+      error = "MVD is not representable by AMVD";
       return false;
     }
     out.index[comp] = index;
@@ -1060,7 +1048,7 @@ bool amvd_mv_from_mv(mc::Mv mvd, AmvdMvSyntax* syntax, std::string* error) {
 }
 
 bool write_amvd_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
-                   const AmvdMvSyntax& syntax, std::string* error) {
+                   const AmvdMvSyntax& syntax, std::string& error) {
   if (!write_mv_joint(enc, cdfs, syntax.joint, error)) return false;
   const bool row = syntax.joint == kMvJointHzvnz ||
                    syntax.joint == kMvJointHnzvnz;
@@ -1072,7 +1060,7 @@ bool write_amvd_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
     int expected = 0;
     if (!amvd_index_for_magnitude(syntax.magnitude[comp], &expected) ||
         expected != syntax.index[comp]) {
-      if (error != nullptr) *error = "AMVD magnitude/index mismatch";
+      error = "AMVD magnitude/index mismatch";
       return false;
     }
     if (!write_amvd_index(enc, cdfs, comp, syntax.index[comp], error)) {
@@ -1083,9 +1071,9 @@ bool write_amvd_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
 }
 
 bool read_amvd_mv(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
-                  AmvdMvSyntax* syntax, std::string* error) {
+                  AmvdMvSyntax* syntax, std::string& error) {
   if (syntax == nullptr) {
-    if (error != nullptr) *error = "null syntax";
+    error = "null syntax";
     return false;
   }
   AmvdMvSyntax out;
@@ -1099,7 +1087,7 @@ bool read_amvd_mv(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
     if (!nonzero) continue;
     if (!read_amvd_index(dec, cdfs, comp, &out.index[comp], error)) return false;
     if (out.index[comp] < 0 || out.index[comp] >= kMaxAmvdIndex) {
-      if (error != nullptr) *error = "amvd_index out of range";
+      error = "amvd_index out of range";
       return false;
     }
     out.magnitude[comp] = kAmvdIndexToMvd[out.index[comp]];
@@ -1109,17 +1097,17 @@ bool read_amvd_mv(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
 }
 
 bool write_jmvd_scale_mode(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
-                           bool use_amvd, int mode, std::string* error) {
+                           bool use_amvd, int mode, std::string& error) {
   if (use_amvd) {
     if (mode < 0 || mode >= kJointAmvdScaleFactorCnt) {
-      if (error != nullptr) *error = "jmvd_scale_mode out of range (AMVD)";
+      error = "jmvd_scale_mode out of range (AMVD)";
       return false;
     }
     return sym(enc, &cdfs.jmvd_adaptive_scale_mode[0],
                kJointAmvdScaleFactorCnt, mode, error);
   }
   if (mode < 0 || mode >= kJointNewMvScaleFactorCnt) {
-    if (error != nullptr) *error = "jmvd_scale_mode out of range";
+    error = "jmvd_scale_mode out of range";
     return false;
   }
   return sym(enc, &cdfs.jmvd_scale_mode[0], kJointNewMvScaleFactorCnt, mode,
@@ -1127,9 +1115,9 @@ bool write_jmvd_scale_mode(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
 }
 
 bool read_jmvd_scale_mode(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
-                          bool use_amvd, int* mode, std::string* error) {
+                          bool use_amvd, int* mode, std::string& error) {
   if (mode == nullptr) {
-    if (error != nullptr) *error = "null mode";
+    error = "null mode";
     return false;
   }
   return use_amvd
@@ -1285,10 +1273,10 @@ int mvd_sign_symbol_count(const MvdSignConfig& config, const mc::Mv mvd[2],
 }
 
 bool write_mvd_signs(av2::Encoder& enc, const MvdSignConfig& config,
-                     const mc::Mv mvd[2], int lists, std::string* error) {
+                     const mc::Mv mvd[2], int lists, std::string& error) {
   if ((lists != 1 && lists != 2) ||
       !me2::me2_precision_valid(config.mv_precision)) {
-    if (error != nullptr) *error = "invalid sign writer input";
+    error = "invalid sign writer input";
     return false;
   }
   const int shift = me2::kMvPrecisionEighthPel - config.mv_precision;
@@ -1303,9 +1291,7 @@ bool write_mvd_signs(av2::Encoder& enc, const MvdSignConfig& config,
       const bool sign = values[comp] < 0;
       if (allowed && list == scan.last_ref && comp == scan.last_comp) {
         if (sign != derived_sign) {
-          if (error != nullptr) {
-            *error = "target MVD sign contradicts derived last sign";
-          }
+error = "target MVD sign contradicts derived last sign";
           return false;
         }
         continue;
@@ -1317,10 +1303,10 @@ bool write_mvd_signs(av2::Encoder& enc, const MvdSignConfig& config,
 }
 
 bool read_mvd_signs(av2::Decoder& dec, const MvdSignConfig& config,
-                    mc::Mv mvd[2], int lists, std::string* error) {
+                    mc::Mv mvd[2], int lists, std::string& error) {
   if ((lists != 1 && lists != 2) ||
       !me2::me2_precision_valid(config.mv_precision)) {
-    if (error != nullptr) *error = "invalid sign reader input";
+    error = "invalid sign reader input";
     return false;
   }
   const int shift = me2::kMvPrecisionEighthPel - config.mv_precision;
@@ -1353,18 +1339,18 @@ bool read_mvd_signs(av2::Decoder& dec, const MvdSignConfig& config,
 // ---------------------------------------------------------------------------
 
 bool write_block_interp_filter(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
-                               int ctx, int filter, std::string* error) {
+                               int ctx, int filter, std::string& error) {
   if (ctx < 0 || ctx > 15 || !block_interp_filter_legal(filter)) {
-    if (error != nullptr) *error = "illegal block interp_filter/ctx";
+    error = "illegal block interp_filter/ctx";
     return false;
   }
   return sym(enc, &cdfs.interp_filter[ctx][0], 3, filter, error);
 }
 
 bool read_block_interp_filter(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
-                              int ctx, int* filter, std::string* error) {
+                              int ctx, int* filter, std::string& error) {
   if (filter == nullptr || ctx < 0 || ctx > 15) {
-    if (error != nullptr) *error = "illegal block interp_filter/ctx";
+    error = "illegal block interp_filter/ctx";
     return false;
   }
   return sym(dec, &cdfs.interp_filter[ctx][0], 3, filter, error);
@@ -1376,9 +1362,9 @@ bool read_block_interp_filter(av2::Decoder& dec, MvPrecisionCdfState& cdfs,
 
 bool write_shell_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
                     std::int32_t dy, std::int32_t dx, int precision,
-                    std::string* error) {
+                    std::string& error) {
   if (!me2::me2_precision_valid(precision)) {
-    if (error != nullptr) *error = "invalid precision";
+    error = "invalid precision";
     return false;
   }
   const int shift = me2::kMvPrecisionEighthPel - precision;
@@ -1386,16 +1372,16 @@ bool write_shell_mv(av2::Encoder& enc, MvPrecisionCdfState& cdfs,
   const std::int32_t ay = dy < 0 ? -dy : dy;
   const std::int32_t ax = dx < 0 ? -dx : dx;
   if ((ay % radix) != 0 || (ax % radix) != 0) {
-    if (error != nullptr) *error = "MVD is not aligned to MvPrecision";
+    error = "MVD is not aligned to MvPrecision";
     return false;
   }
   return write_shell(enc, cdfs, ay / radix, ax / radix, precision, error);
 }
 
 bool read_shell_mv(av2::Decoder& dec, MvPrecisionCdfState& cdfs, int precision,
-                   mc::Mv* mvd, std::string* error) {
+                   mc::Mv* mvd, std::string& error) {
   if (mvd == nullptr) {
-    if (error != nullptr) *error = "null mvd";
+    error = "null mvd";
     return false;
   }
   std::int32_t y = 0;

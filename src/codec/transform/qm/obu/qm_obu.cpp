@@ -8,8 +8,8 @@
 namespace av2enc::qm::obu {
 namespace {
 
-bool fail(std::string* error, std::string message) {
-  if (error != nullptr) *error = std::move(message);
+bool fail(std::string& error, std::string message) {
+  error = std::move(message);
   return false;
 }
 
@@ -77,7 +77,7 @@ class BitSpanReader {
 
   // §5.2.3 trailing_bits(): one trailing one bit, then zero bits to the end of
   // the payload.
-  bool read_trailing_bits(std::string* error) {
+  bool read_trailing_bits(std::string& error) {
     bool one = false;
     if (!read_bit(&one) || !one) {
       return fail(error, "missing trailing_one_bit");
@@ -174,7 +174,7 @@ bool matrix_is_transpose(const std::uint8_t a[8][8],
 }
 
 bool write_user_defined_qm(BitWriter& writer, const UserQmLevel& user,
-                           int level, int t, int plane, std::string* error) {
+                           int level, int t, int plane, std::string& error) {
   auto set_error = [&](const char* message) {
     return fail(error, level_prefix(level) + "t=" + std::to_string(t) +
                            " plane=" + std::to_string(plane) + ": " +
@@ -249,7 +249,7 @@ bool write_user_defined_qm(BitWriter& writer, const UserQmLevel& user,
 }
 
 bool read_user_defined_qm(BitSpanReader& reader, UserQmLevel* user, int level,
-                          int t, int plane, std::string* error) {
+                          int t, int plane, std::string& error) {
   auto set_error = [&](const char* message) {
     return fail(error, level_prefix(level) + "t=" + std::to_string(t) +
                            " plane=" + std::to_string(plane) + ": " +
@@ -342,7 +342,7 @@ bool level_in_range(int level) { return level >= 0 && level < kNumCustomQms; }
 // ---------------------------------------------------------------------------
 
 bool write_obu_header(const ObuHeader& header, std::vector<std::uint8_t>* out,
-                      std::string* error) {
+                      std::string& error) {
   if (out == nullptr) return fail(error, "null OBU header output");
   out->clear();
   if (header.type > 31U) return fail(error, "obu_type is outside f(5)");
@@ -382,7 +382,7 @@ bool write_obu_header(const ObuHeader& header, std::vector<std::uint8_t>* out,
 }
 
 bool read_obu_header(std::span<const std::uint8_t> bytes, ObuHeader* header,
-                     std::size_t* consumed, std::string* error) {
+                     std::size_t* consumed, std::string& error) {
   if (header == nullptr || consumed == nullptr) {
     return fail(error, "null OBU header output");
   }
@@ -409,7 +409,7 @@ bool read_obu_header(std::span<const std::uint8_t> bytes, ObuHeader* header,
 }
 
 bool frame_obu(const ObuHeader& header, std::span<const std::uint8_t> payload,
-               std::vector<std::uint8_t>* out, std::string* error) {
+               std::vector<std::uint8_t>* out, std::string& error) {
   if (out == nullptr) return fail(error, "null OBU output");
   std::vector<std::uint8_t> header_bytes;
   if (!write_obu_header(header, &header_bytes, error)) return false;
@@ -431,7 +431,7 @@ bool frame_obu(const ObuHeader& header, std::span<const std::uint8_t> payload,
 }
 
 bool parse_obu_sequence(std::span<const std::uint8_t> bytes,
-                        std::vector<ParsedObu>* obus, std::string* error) {
+                        std::vector<ParsedObu>* obus, std::string& error) {
   if (obus == nullptr) return fail(error, "null OBU sequence output");
   obus->clear();
   std::size_t offset = 0;
@@ -484,7 +484,7 @@ bool parse_obu_sequence(std::span<const std::uint8_t> bytes,
 
 bool write_quantizer_matrix_payload(BitWriter& writer,
                                     const QuantizerMatrixObu& obu,
-                                    std::string* error) {
+                                    std::string& error) {
   if ((obu.bit_map & 0x8000U) != 0U) {
     return fail(error, "qm_bit_map is f(15); bit 15 is not an OBU level");
   }
@@ -520,7 +520,7 @@ bool write_quantizer_matrix_payload(BitWriter& writer,
 
 bool read_quantizer_matrix_payload(std::span<const std::uint8_t> payload,
                                    QuantizerMatrixObu* obu,
-                                   std::string* error) {
+                                   std::string& error) {
   if (obu == nullptr) return fail(error, "null QM OBU output");
   *obu = QuantizerMatrixObu{};
   BitSpanReader reader(payload);
@@ -560,7 +560,7 @@ bool read_quantizer_matrix_payload(std::span<const std::uint8_t> payload,
 bool make_quantizer_matrix_obu(const QuantizerMatrixObu& obu,
                                const ObuHeader* header,
                                std::vector<std::uint8_t>* out,
-                               std::string* error) {
+                               std::string& error) {
   if (out == nullptr) return fail(error, "null OBU output");
   out->clear();
   BitWriter writer;
@@ -578,7 +578,7 @@ bool make_quantizer_matrix_obu(const QuantizerMatrixObu& obu,
 bool make_constant_user_qm_obu(int level, std::uint8_t value,
                                bool chroma_info_present,
                                std::vector<std::uint8_t>* out,
-                               std::string* error) {
+                               std::string& error) {
   if (!level_in_range(level)) return fail(error, "level is outside 0..14");
   if (value == 0) return fail(error, "coefficient 0 is forbidden by §6.4.11");
   QuantizerMatrixObu obu;
@@ -596,7 +596,7 @@ bool make_constant_user_qm_obu(int level, std::uint8_t value,
 
 bool write_frame_qm_params(BitWriter& writer, const FrameQm& qm,
                            int num_planes, bool segmentation_enabled,
-                           std::string* error) {
+                           std::string& error) {
   if (num_planes < 1 || num_planes > 3) {
     return fail(error, "NumPlanes is outside 1..3");
   }
@@ -643,7 +643,7 @@ bool write_frame_qm_params(BitWriter& writer, const FrameQm& qm,
 bool read_frame_qm_params(std::span<const std::uint8_t> bytes, int num_planes,
                           bool segmentation_enabled, bool separate_uv_delta_q,
                           FrameQm* qm, std::size_t* bits_consumed,
-                          std::string* error) {
+                          std::string& error) {
   if (qm == nullptr) return fail(error, "null FrameQm output");
   if (num_planes < 1 || num_planes > 3) {
     return fail(error, "NumPlanes is outside 1..3");
@@ -767,7 +767,7 @@ void QmState::on_key_frame(bool first_picture_in_tu, int num_planes) {
 
 bool QmState::apply_obu(const ObuHeader& header,
                         const QuantizerMatrixObu& obu,
-                        std::string* error) {
+                        std::string& error) {
   if (header.type != kObuTypeQuantizationMatrix) {
     return fail(error, "OBU type is not OBU_QUANTIZATION_MATRIX");
   }
@@ -842,7 +842,7 @@ bool QmState::apply_obu(const ObuHeader& header,
 }
 
 bool QmState::apply_obu_bytes(std::span<const std::uint8_t> bytes,
-                              std::string* error) {
+                              std::string& error) {
   std::vector<ParsedObu> obus;
   if (!parse_obu_sequence(bytes, &obus, error)) return false;
   if (obus.size() != 1) {

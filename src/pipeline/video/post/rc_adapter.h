@@ -83,7 +83,7 @@ struct VideoRcConfig {
 };
 
 [[nodiscard]] bool video_rc_config_valid(const VideoRcConfig& config,
-                        std::string* error = nullptr);
+                        std::string& error);
 
 // Stateful per-frame controller: one instance per encode.  One begin_frame()
 // must be followed by exactly one end_frame() carrying the actual payload
@@ -92,12 +92,12 @@ class VideoRateControl {
  public:
   VideoRateControl() = default;
 
-  bool configure(const VideoRcConfig& config, std::string* error = nullptr);
+  bool configure(const VideoRcConfig& config, std::string& error);
 
   bool begin_frame(const rc::FrameComplexity& complexity, VideoFrameQp& qp,
-                   std::string* error = nullptr);
+                   std::string& error);
 
-  bool end_frame(std::int64_t actual_bits, std::string* error = nullptr);
+  bool end_frame(std::int64_t actual_bits, std::string& error);
 
   void reset() noexcept;
 

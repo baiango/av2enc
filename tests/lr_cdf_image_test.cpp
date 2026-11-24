@@ -47,7 +47,7 @@ void TestImageCarriesLrRows() {
   std::string error;
   std::vector<std::uint16_t> image;
   CHECK(av2enc::video::syntax::cdf_image_defaults_for_base_q_idx(
-      90, image, &error));
+      90, image, error));
   CHECK(error.empty());
   CHECK(!image.empty());
 
@@ -93,7 +93,7 @@ void TestFiltersStreamSeedStore() {
   av2enc::still::filters_stream::LrState state;
   CHECK(av2enc::still::filters_stream::lr_state_init(
       &state, params, /*mi_cols=*/120, /*mi_rows=*/60, /*sub_x=*/1,
-      /*sub_y=*/1, /*sb_size=*/64, &error));
+      /*sub_y=*/1, /*sb_size=*/64, error));
   CHECK(error.empty());
 
   Image image;
@@ -123,7 +123,7 @@ void TestPcWienerSeedStore() {
   av2enc::filters::pc_wiener_stream::TileState state;
   CHECK(av2enc::filters::pc_wiener_stream::InitTileState(
       &state, params, /*mi_cols=*/120, /*mi_rows=*/60, /*sub_x=*/1,
-      /*sub_y=*/1, &error));
+      /*sub_y=*/1, error));
   CHECK(error.empty());
 
   Image image;

@@ -7,19 +7,19 @@
 namespace av2enc::deltaq {
 namespace {
 
-void set_error(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+void set_error(std::string& error, const char* message) {
+  error = message;
 }
 
-void set_error(std::string* error, const std::string& message) {
-  if (error != nullptr) *error = message;
+void set_error(std::string& error, const std::string& message) {
+  error = message;
 }
 
 int clip3(int lo, int hi, int value) noexcept {
   return std::max(lo, std::min(hi, value));
 }
 
-bool entropy_ok(std::string* error, av2::Status status, const char* what) {
+bool entropy_ok(std::string& error, av2::Status status, const char* what) {
   if (status == av2::Status::kOk) return true;
   set_error(error, std::string(what) + ": " + av2::status_name(status));
   return false;
@@ -27,7 +27,7 @@ bool entropy_ok(std::string* error, av2::Status status, const char* what) {
 
 // f(n) / L(n) on the range coder's raw-bit path (§8.2.3/§8.2.5).
 bool write_literal(av2::Encoder& encoder, unsigned bits, std::uint32_t value,
-                   std::string* error) {
+                   std::string& error) {
   for (unsigned i = bits; i-- > 0;) {
     const bool bit = ((value >> i) & 1U) != 0U;
     if (!entropy_ok(error, encoder.encode_bool(bit), "encode_bool")) {
@@ -38,7 +38,7 @@ bool write_literal(av2::Encoder& encoder, unsigned bits, std::uint32_t value,
 }
 
 bool read_literal(av2::Decoder& decoder, unsigned bits, std::uint32_t& value,
-                  std::string* error) {
+                  std::string& error) {
   std::uint32_t out = 0;
   for (unsigned i = 0; i < bits; ++i) {
     bool bit = false;
@@ -50,13 +50,13 @@ bool read_literal(av2::Decoder& decoder, unsigned bits, std::uint32_t& value,
 }
 
 bool symbol(av2::Encoder& encoder, std::uint16_t* cdf, int n, int value,
-            std::string* error) {
+            std::string& error) {
   return entropy_ok(error, encoder.encode_symbol(cdf, n, value),
                     "encode_symbol");
 }
 
 bool symbol(av2::Decoder& decoder, std::uint16_t* cdf, int n, int& value,
-            std::string* error) {
+            std::string& error) {
   return entropy_ok(error, decoder.decode_symbol(cdf, n, &value),
                     "decode_symbol");
 }
@@ -72,7 +72,7 @@ bool features_empty(const rc::SegmentFeatures& features) noexcept {
 }
 
 bool validate_seg_info(const rc::SegmentationParams& params, int num_segments,
-                       std::string* error) {
+                       std::string& error) {
   if (num_segments != kMaxSegmentsBase && num_segments != kMaxSegmentsSpec) {
     set_error(error, "segmentation: MaxSegments must be 8 or 16");
     return false;
@@ -128,7 +128,7 @@ void write_seg_info(BitWriter& writer, const rc::SegmentationParams& params,
 }
 
 bool read_seg_info(BitReader& reader, int num_segments,
-                   rc::SegmentationParams& params, std::string* error) {
+                   rc::SegmentationParams& params, std::string& error) {
   params.segments = {};
   for (int i = 0; i < num_segments; ++i) {
     rc::SegmentFeatures& features =
@@ -215,7 +215,7 @@ bool write_segment_id_core(av2::Encoder& encoder, BlockCdfs& cdfs,
                            const FrameSegmentation& seg,
                            const SegmentGrid& grid, const SegmentBlock& block,
                            int segment_id, bool skip_flag,
-                           std::string* error) {
+                           std::string& error) {
   int prev_ul = -1;
   int prev_u = -1;
   int prev_l = -1;
@@ -259,7 +259,7 @@ bool read_segment_id_core(av2::Decoder& decoder, BlockCdfs& cdfs,
                           const FrameSegmentation& seg,
                           const SegmentGrid& grid, const SegmentBlock& block,
                           bool skip_flag, int& segment_id,
-                          std::string* error) {
+                          std::string& error) {
   int prev_ul = -1;
   int prev_u = -1;
   int prev_l = -1;
@@ -307,7 +307,7 @@ int max_segments(bool enable_ext_seg) noexcept {
 // §5.4.9 seg_info() shared by sequence_segment_config() and
 // segmentation_params().
 bool validate_segment_table(const rc::SegmentationParams& params,
-                            int num_segments, std::string* error) {
+                            int num_segments, std::string& error) {
   return validate_seg_info(params, num_segments, error);
 }
 
@@ -318,7 +318,7 @@ void write_segment_table(BitWriter& writer,
 }
 
 bool read_segment_table(BitReader& reader, int num_segments,
-                        rc::SegmentationParams& params, std::string* error) {
+                        rc::SegmentationParams& params, std::string& error) {
   return read_seg_info(reader, num_segments, params, error);
 }
 
@@ -377,9 +377,9 @@ CoeffCdfSlice coeff_cdf_slice(int base_q_idx) noexcept {
 std::size_t write_segmentation_params(BitWriter& writer,
                                       const rc::SegmentationParams& params,
                                       const FrameQpHeader& header,
-                                      std::string* error) {
+                                      std::string& error) {
   std::string local;
-  std::string* err = &local;
+  std::string& err = local;
   if (!rc::segmentation_params_valid(params, err)) {
     set_error(error, local);
     return 0;
@@ -438,9 +438,9 @@ std::size_t write_segmentation_params(BitWriter& writer,
 
 std::size_t write_delta_q_params(BitWriter& writer,
                                  const rc::DeltaQParams& params,
-                                 int base_q_idx, std::string* error) {
+                                 int base_q_idx, std::string& error) {
   std::string local;
-  std::string* err = &local;
+  std::string& err = local;
   if (base_q_idx < 0 || base_q_idx > 255) {
     set_error(error, "delta_q: base_q_idx must be in [0, 255]");
     return 0;
@@ -468,20 +468,20 @@ std::size_t write_segmentation_and_delta_q(BitWriter& writer,
                                            const rc::DeltaQParams& delta_q,
                                            int base_q_idx,
                                            const FrameQpHeader& header,
-                                           std::string* error) {
+                                           std::string& error) {
   if (header.using_qmatrix) {
     set_error(error, "using_qmatrix = 1 is not supported by this module");
     return 0;
   }
   std::string local;
   const std::size_t start = writer.bit_size();
-  write_segmentation_params(writer, seg, header, &local);
+  write_segmentation_params(writer, seg, header, local);
   if (!local.empty()) {
     set_error(error, local);
     return 0;
   }
   writer.put_bit(false);  // using_qmatrix (setup_qm_params)
-  write_delta_q_params(writer, delta_q, base_q_idx, &local);
+  write_delta_q_params(writer, delta_q, base_q_idx, local);
   if (!local.empty()) {
     set_error(error, local);
     return 0;
@@ -491,7 +491,7 @@ std::size_t write_segmentation_and_delta_q(BitWriter& writer,
 
 bool read_segmentation_params(BitReader& reader, const FrameQpHeader& header,
                               rc::SegmentationParams& params,
-                              std::string* error) {
+                              std::string& error) {
   params = rc::SegmentationParams{};
   bool enabled = false;
   if (!reader.read_bit(enabled)) {
@@ -529,7 +529,7 @@ bool read_segmentation_params(BitReader& reader, const FrameQpHeader& header,
 }
 
 bool read_delta_q_params(BitReader& reader, int base_q_idx,
-                         rc::DeltaQParams& params, std::string* error) {
+                         rc::DeltaQParams& params, std::string& error) {
   params = rc::DeltaQParams{};
   if (base_q_idx < 0 || base_q_idx > 255) {
     set_error(error, "delta_q: base_q_idx must be in [0, 255]");
@@ -557,7 +557,7 @@ bool read_segmentation_and_delta_q(BitReader& reader, int base_q_idx,
                                    rc::SegmentationParams& seg,
                                    rc::DeltaQParams& delta_q,
                                    bool& using_qmatrix,
-                                   std::string* error) {
+                                   std::string& error) {
   if (!read_segmentation_params(reader, header, seg, error)) return false;
   bool qmatrix = false;
   if (!reader.read_bit(qmatrix)) {
@@ -580,7 +580,7 @@ bool derive_frame_segmentation(const rc::SegmentationParams& params,
                                const rc::DeltaQParams& delta_q,
                                int base_q_idx,
                                const FrameQpHeader& header,
-                               FrameSegmentation& out, std::string* error) {
+                               FrameSegmentation& out, std::string& error) {
   out = FrameSegmentation{};
   out.enable_ext_seg = header.enable_ext_seg;
   out.num_segments = max_segments(header.enable_ext_seg);
@@ -636,7 +636,7 @@ bool derive_frame_segmentation(const rc::SegmentationParams& params,
 bool effective_qindex(const FrameSegmentation& seg, int base_q_idx,
                       int current_q_index, bool delta_q_present,
                       int segment_id, bool ignore_delta_q, int& qindex,
-                      std::string* error) {
+                      std::string& error) {
   if (base_q_idx < 0 || base_q_idx > 255 || current_q_index < 0 ||
       current_q_index > 255) {
     set_error(error, "get_qindex: qindex out of range");
@@ -670,7 +670,7 @@ bool effective_qindex(const FrameSegmentation& seg, int base_q_idx,
 // ---------------------------------------------------------------------------
 
 bool begin_tile(TileQp& state, int base_q_idx, const rc::DeltaQParams& delta_q,
-                std::string* error) {
+                std::string& error) {
   if (base_q_idx < 0 || base_q_idx > 255) {
     set_error(error, "delta_q: base_q_idx must be in [0, 255]");
     return false;
@@ -708,7 +708,7 @@ int reduced_delta_for_target(int current_q_index, int target_q_index,
 }
 
 bool apply_reduced_delta(TileQp& state, int reduced_delta,
-                         std::string* error) {
+                         std::string& error) {
   if (!state.initialized) {
     set_error(error, "delta_q: tile state is not initialized");
     return false;
@@ -727,7 +727,7 @@ bool apply_reduced_delta(TileQp& state, int reduced_delta,
 }
 
 bool write_delta_q_abs(av2::Encoder& encoder, std::uint16_t cdf[9], int value,
-                       std::string* error) {
+                       std::string& error) {
   if (value < -kDeltaQMaxAbs || value > kDeltaQMaxAbs) {
     set_error(error, "delta_q: reduced delta magnitude is not codeable");
     return false;
@@ -772,7 +772,7 @@ bool write_delta_q_abs(av2::Encoder& encoder, std::uint16_t cdf[9], int value,
 }
 
 bool read_delta_q_abs(av2::Decoder& decoder, std::uint16_t cdf[9], int& value,
-                      std::string* error) {
+                      std::string& error) {
   int head = 0;
   if (!symbol(decoder, cdf, kDeltaQAlphabet, head, error)) return false;
   int magnitude = head;
@@ -798,7 +798,7 @@ bool read_delta_q_abs(av2::Decoder& decoder, std::uint16_t cdf[9], int& value,
 
 bool write_delta_qindex(av2::Encoder& encoder, std::uint16_t cdf[9],
                         TileQp& state, bool mi_size_is_sb, bool skip_flag,
-                        int reduced_delta, std::string* error) {
+                        int reduced_delta, std::string& error) {
   if (!state.initialized) {
     set_error(error, "delta_q: tile state is not initialized");
     return false;
@@ -818,7 +818,7 @@ bool write_delta_qindex(av2::Encoder& encoder, std::uint16_t cdf[9],
 
 bool read_delta_qindex(av2::Decoder& decoder, std::uint16_t cdf[9],
                        TileQp& state, bool mi_size_is_sb, bool skip_flag,
-                       int& reduced_delta, std::string* error) {
+                       int& reduced_delta, std::string& error) {
   reduced_delta = 0;
   if (!state.initialized) {
     set_error(error, "delta_q: tile state is not initialized");
@@ -846,7 +846,7 @@ bool init_segment_grid(SegmentGrid& grid, int mi_cols, int mi_rows,
                        int tile_mi_row_start, int tile_mi_row_end,
                        bool enable_ext_seg, int num_segments,
                        std::span<const std::uint8_t> previous_ids,
-                       std::string* error) {
+                       std::string& error) {
   if (mi_cols <= 0 || mi_rows <= 0) {
     set_error(error, "segmentation grid: dimensions must be positive");
     return false;
@@ -889,7 +889,7 @@ void clear_left_context(SegmentGrid& grid) noexcept {
 }
 
 bool set_previous_ids(SegmentGrid& grid, std::span<const std::uint8_t> ids,
-                      std::string* error) {
+                      std::string& error) {
   const std::size_t cells =
       static_cast<std::size_t>(grid.mi_cols) * static_cast<std::size_t>(grid.mi_rows);
   if (ids.empty()) {
@@ -972,7 +972,7 @@ bool neg_interleave(int target, int ref, int max, int& coded) noexcept {
 }
 
 bool commit_segment_block(SegmentGrid& grid, const SegmentBlock& block,
-                          int segment_id, std::string* error) {
+                          int segment_id, std::string& error) {
   if (segment_id < 0 || segment_id >= grid.num_segments) {
     set_error(error, "segmentation: segment id out of range");
     return false;
@@ -993,7 +993,7 @@ bool commit_segment_block(SegmentGrid& grid, const SegmentBlock& block,
 bool write_intra_segment_id(av2::Encoder& encoder, BlockCdfs& cdfs,
                             const FrameSegmentation& seg, SegmentGrid& grid,
                             const SegmentBlock& block, int segment_id,
-                            bool skip_flag, std::string* error) {
+                            bool skip_flag, std::string& error) {
   if (!seg.enabled) {
     if (segment_id != 0) {
       set_error(error, "segmentation: disabled frame forces segment id 0");
@@ -1008,7 +1008,7 @@ bool write_intra_segment_id(av2::Encoder& encoder, BlockCdfs& cdfs,
 bool read_intra_segment_id(av2::Decoder& decoder, BlockCdfs& cdfs,
                            const FrameSegmentation& seg, SegmentGrid& grid,
                            const SegmentBlock& block, bool skip_flag,
-                           int& segment_id, std::string* error) {
+                           int& segment_id, std::string& error) {
   if (!seg.enabled) {
     segment_id = 0;
     return true;
@@ -1021,7 +1021,7 @@ bool write_inter_segment_id(av2::Encoder& encoder, BlockCdfs& cdfs,
                             const FrameSegmentation& seg, SegmentGrid& grid,
                             const SegmentBlock& block, bool pre_skip,
                             int segment_id, bool skip_flag,
-                            bool& coded_symbols, std::string* error) {
+                            bool& coded_symbols, std::string& error) {
   coded_symbols = false;
   if (!seg.enabled) {
     if (segment_id != 0) {
@@ -1095,7 +1095,7 @@ bool read_inter_segment_id(av2::Decoder& decoder, BlockCdfs& cdfs,
                            const FrameSegmentation& seg, SegmentGrid& grid,
                            const SegmentBlock& block, bool pre_skip,
                            bool skip_flag, int& segment_id,
-                           bool& coded_symbols, std::string* error) {
+                           bool& coded_symbols, std::string& error) {
   coded_symbols = false;
   segment_id = 0;
   if (!seg.enabled) return true;
@@ -1159,7 +1159,7 @@ bool read_inter_segment_id(av2::Decoder& decoder, BlockCdfs& cdfs,
 
 bool make_delta_q_plan_view(const rc::DeltaQPlan& plan, int sb_cols,
                             int sb_rows, DeltaQPlanView& view,
-                            std::string* error) {
+                            std::string& error) {
   view = DeltaQPlanView{};
   if (sb_cols <= 0 || sb_rows <= 0) {
     set_error(error, "delta_q plan: tile dimensions must be positive");
@@ -1210,7 +1210,7 @@ const rc::DeltaQPlanStep* delta_q_plan_step(const DeltaQPlanView& view, int sb_x
 }
 
 bool check_plan_step(const TileQp& state, const rc::DeltaQPlanStep& step,
-                     std::string* error) {
+                     std::string& error) {
   if (state.current_q_index != step.qindex_before) {
     set_error(error, "delta_q plan: qindex_before does not match tile state");
     return false;
@@ -1225,7 +1225,7 @@ bool check_plan_step(const TileQp& state, const rc::DeltaQPlanStep& step,
 }
 
 bool load_segmentation_map(const rc::SegmentationMap& map, SegmentGrid& grid,
-                           std::string* error) {
+                           std::string& error) {
   if (!rc::segmentation_map_valid(map, error)) return false;
   if (map.mi_cols != grid.mi_cols || map.mi_rows != grid.mi_rows) {
     set_error(error, "segmentation grid: rc map dimensions do not match");
@@ -1238,9 +1238,10 @@ bool load_segmentation_map(const rc::SegmentationMap& map, SegmentGrid& grid,
 int block_qindex(const FrameSegmentation& seg, const TileQp& qp,
                  int segment_id) noexcept {
   int qindex = qp.base_q_idx;
+  std::string ignored;
   if (!effective_qindex(seg, qp.base_q_idx, qp.current_q_index,
                         qp.delta_q.present, segment_id,
-                        /*ignore_delta_q=*/false, qindex, nullptr)) {
+                        /*ignore_delta_q=*/false, qindex, ignored)) {
     return qp.base_q_idx;
   }
   return qindex;

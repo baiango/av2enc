@@ -18,8 +18,8 @@ namespace spec = av2enc::filters::spec;
 namespace st = av2enc::filters::spec_tables;
 namespace rcls = av2enc::restoration::classes;
 
-bool fail(std::string* error, std::string message) {
-  if (error != nullptr && error->empty()) *error = std::move(message);
+bool fail(std::string& error, std::string message) {
+  if (error.empty()) error = std::move(message);
   return false;
 }
 
@@ -62,7 +62,7 @@ int UnsignedSubexpValue(int mx, int r, int v) {
 
 // §5.18.9.5 decode_subexp() inverse.
 bool EncodeSubexp(BitWriter& writer, int num_syms, int k, int value,
-                  std::string* error) {
+                  std::string& error) {
   if (num_syms <= 0 || value < 0 || value >= num_syms) {
     return fail(error, "subexp value out of range");
   }
@@ -91,7 +91,7 @@ bool EncodeSubexp(BitWriter& writer, int num_syms, int k, int value,
 }
 
 bool DecodeSubexp(Reader& reader, int num_syms, int k, int* value,
-                  std::string* error) {
+                  std::string& error) {
   if (value == nullptr || num_syms <= 0) {
     return fail(error, "invalid subexp argument");
   }
@@ -126,7 +126,7 @@ bool DecodeSubexp(Reader& reader, int num_syms, int k, int* value,
 }
 
 bool EncodeSignedSubexpWithRef(BitWriter& writer, int low, int high, int r,
-                               int k, int target, std::string* error) {
+                               int k, int target, std::string& error) {
   if (high <= low || target < low || target >= high) {
     return fail(error, "signed subexp target out of range");
   }
@@ -142,7 +142,7 @@ bool EncodeSignedSubexpWithRef(BitWriter& writer, int low, int high, int r,
 }
 
 bool DecodeSignedSubexpWithRef(Reader& reader, int low, int high, int r, int k,
-                               int* target, std::string* error) {
+                               int* target, std::string& error) {
   if (target == nullptr || high <= low) {
     return fail(error, "invalid signed subexp argument");
   }
@@ -179,7 +179,7 @@ int Unsigned4PartValue(int k, int r, int v) {
   return mx - 1 - InverseRecenter(mx - 1 - r, v);
 }
 
-bool RawBit(av2::Encoder& encoder, bool bit, std::string* error) {
+bool RawBit(av2::Encoder& encoder, bool bit, std::string& error) {
   const av2::Status status = encoder.encode_bool(bit);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("raw bit encode failed: ") +
@@ -188,7 +188,7 @@ bool RawBit(av2::Encoder& encoder, bool bit, std::string* error) {
   return true;
 }
 
-bool RawBit(av2::Decoder& decoder, bool* bit, std::string* error) {
+bool RawBit(av2::Decoder& decoder, bool* bit, std::string& error) {
   const av2::Status status = decoder.read_bool(bit);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("raw bit decode failed: ") +
@@ -198,7 +198,7 @@ bool RawBit(av2::Decoder& decoder, bool* bit, std::string* error) {
 }
 
 bool Symbol(av2::Encoder& encoder, std::uint16_t* cdf, int n, int symbol,
-            const char* name, std::string* error) {
+            const char* name, std::string& error) {
   const av2::Status status = encoder.encode_symbol(cdf, n, symbol);
   if (status != av2::Status::kOk) {
     return fail(error, std::string(name) + " encode failed: " +
@@ -208,7 +208,7 @@ bool Symbol(av2::Encoder& encoder, std::uint16_t* cdf, int n, int symbol,
 }
 
 bool Symbol(av2::Decoder& decoder, std::uint16_t* cdf, int n, int* symbol,
-            const char* name, std::string* error) {
+            const char* name, std::string& error) {
   const av2::Status status = decoder.decode_symbol(cdf, n, symbol);
   if (status != av2::Status::kOk) {
     return fail(error, std::string(name) + " decode failed: " +
@@ -218,7 +218,7 @@ bool Symbol(av2::Decoder& decoder, std::uint16_t* cdf, int n, int* symbol,
 }
 
 bool EncodeSigned4Part(av2::Encoder& encoder, std::uint16_t* base_cdf, int low,
-                       int k, int r, int target, std::string* error) {
+                       int k, int r, int target, std::string& error) {
   const int r_off = r - low;
   const int x_off = target - low;
   FourPart found;
@@ -246,7 +246,7 @@ bool EncodeSigned4Part(av2::Encoder& encoder, std::uint16_t* base_cdf, int low,
 }
 
 bool DecodeSigned4Part(av2::Decoder& decoder, std::uint16_t* base_cdf, int low,
-                       int k, int r, int* target, std::string* error) {
+                       int k, int r, int* target, std::string& error) {
   int base = 0;
   if (!Symbol(decoder, base_cdf, 4, &base, "wiener_ns_base", error)) {
     return false;
@@ -304,7 +304,7 @@ void ResolveFrameFilterMatch(const LrParams& params, int plane, int num_classes,
 }
 
 bool WriteFrameFilters(BitWriter& writer, const LrHeaderContext& context,
-                       LrParams* params, int plane, std::string* error) {
+                       LrParams* params, int plane, std::string& error) {
   const bool nopcw = context.lr_tools_disable[0][kRestorePcWiener];
   const int num_classes = plane == 0 ? params->num_filter_classes : 1;
   const int num_ref_filters = 0;
@@ -469,7 +469,7 @@ bool WriteFrameFilters(BitWriter& writer, const LrHeaderContext& context,
 }
 
 bool ReadFrameFilters(Reader& reader, const LrHeaderContext& context,
-                      LrParams* params, int plane, std::string* error) {
+                      LrParams* params, int plane, std::string& error) {
   const bool nopcw = context.lr_tools_disable[0][kRestorePcWiener];
   const int num_classes = plane == 0 ? params->num_filter_classes : 1;
   const int num_ref_filters = 0;
@@ -608,7 +608,7 @@ bool ReadFrameFilters(Reader& reader, const LrHeaderContext& context,
 }
 
 bool WriteLrSizeFlags(BitWriter& writer, int shift, int sb_size,
-                      std::string* error) {
+                      std::string& error) {
   if (shift < 0 || shift > 3) {
     return fail(error, "LoopRestorationSize shift outside 0..3");
   }
@@ -634,7 +634,7 @@ bool WriteLrSizeFlags(BitWriter& writer, int shift, int sb_size,
 }
 
 bool ReadLrSizeFlags(Reader& reader, int sb_size, int* shift,
-                     std::string* error) {
+                     std::string& error) {
   bool half = false;
   if (!reader.ReadBit(&half)) return fail(error, "truncated lr size flag");
   if (half) {
@@ -771,7 +771,7 @@ void PutNs(BitWriter& writer, unsigned n, std::uint32_t value) {
 std::size_t WriteSequenceFilterConfig(BitWriter& writer,
                                       const SequenceFilterConfig& config,
                                       bool single_picture_header_flag,
-                                      std::string* error) {
+                                      std::string& error) {
   if (config.enable_gdf) {
     return fail(error, "PC-Wiener stream module does not implement GDF"), 0;
   }
@@ -815,7 +815,7 @@ std::size_t WriteSequenceFilterConfig(BitWriter& writer,
 
 bool ReadSequenceFilterConfig(Reader& reader, bool single_picture_header_flag,
                               SequenceFilterConfig* config,
-                              std::string* error) {
+                              std::string& error) {
   if (config == nullptr) return fail(error, "null sequence filter config");
   SequenceFilterConfig out;
   if (!reader.ReadBit(&out.disable_loopfilters_across_tiles) ||
@@ -877,7 +877,7 @@ bool ReadSequenceFilterConfig(Reader& reader, bool single_picture_header_flag,
 
 std::size_t SequenceFilterConfigBits(const SequenceFilterConfig& config,
                                      bool single_picture_header_flag,
-                                     std::string* error) {
+                                     std::string& error) {
   BitWriter writer;
   return WriteSequenceFilterConfig(writer, config, single_picture_header_flag,
                                    error);
@@ -894,7 +894,7 @@ int CountUnits(int unit_size, int frame_size) {
 }
 
 std::size_t WriteLrParams(BitWriter& writer, LrParams* params,
-                          const LrHeaderContext& context, std::string* error) {
+                          const LrHeaderContext& context, std::string& error) {
   if (params == nullptr) return fail(error, "null LrParams"), 0;
   if (context.coded_lossless || !context.enable_restoration) {
     for (int p = 0; p < 3; ++p) {
@@ -1023,7 +1023,7 @@ std::size_t WriteLrParams(BitWriter& writer, LrParams* params,
 }
 
 bool ReadLrParams(Reader& reader, const LrHeaderContext& context,
-                  LrParams* params, std::string* error) {
+                  LrParams* params, std::string& error) {
   if (params == nullptr) return fail(error, "null LrParams");
   *params = LrParams{};
   if (context.coded_lossless || !context.enable_restoration) {
@@ -1132,7 +1132,7 @@ bool ReadLrParams(Reader& reader, const LrHeaderContext& context,
 }
 
 std::size_t LrParamsBits(LrParams* params, const LrHeaderContext& context,
-                         std::string* error) {
+                         std::string& error) {
   BitWriter writer;
   return WriteLrParams(writer, params, context, error);
 }
@@ -1142,7 +1142,7 @@ std::size_t LrParamsBits(LrParams* params, const LrHeaderContext& context,
 // ---------------------------------------------------------------------------
 
 bool InitTileState(TileState* state, const LrParams& params, int mi_cols,
-                   int mi_rows, int sub_x, int sub_y, std::string* error) {
+                   int mi_rows, int sub_x, int sub_y, std::string& error) {
   if (state == nullptr || mi_cols <= 0 || mi_rows <= 0) {
     return fail(error, "invalid LR tile geometry");
   }
@@ -1237,7 +1237,7 @@ namespace {
 
 bool WriteUnitFilter(av2::Encoder& encoder, TileState& state, int plane,
                      int unit_row, int unit_col, const UnitDecision& unit,
-                     std::string* error) {
+                     std::string& error) {
   const bool chroma = plane > 0;
   const int n_coeffs = NumCoeffs(plane);
   const int num_subsets = NumSubsets(plane);
@@ -1347,7 +1347,7 @@ bool WriteUnitFilter(av2::Encoder& encoder, TileState& state, int plane,
 
 bool ReadUnitFilter(av2::Decoder& decoder, TileState& state, int plane,
                     int unit_row, int unit_col, UnitDecision* unit,
-                    std::string* error) {
+                    std::string& error) {
   const bool chroma = plane > 0;
   const int n_coeffs = NumCoeffs(plane);
   const int num_subsets = NumSubsets(plane);
@@ -1458,7 +1458,7 @@ bool ReadUnitFilter(av2::Decoder& decoder, TileState& state, int plane,
 
 bool WriteUnit(av2::Encoder& encoder, TileState& state, int plane,
                int unit_row, int unit_col, const UnitDecision& decision,
-               std::string* error) {
+               std::string& error) {
   if (plane < 0 || plane > 2 || unit_row < 0 || unit_col < 0 ||
       unit_row >= state.unit_rows[plane] ||
       unit_col >= state.unit_cols[plane]) {
@@ -1535,7 +1535,7 @@ bool WriteUnit(av2::Encoder& encoder, TileState& state, int plane,
 
 bool ReadUnit(av2::Decoder& decoder, TileState& state, int plane,
               int unit_row, int unit_col, UnitDecision* decision,
-              std::string* error) {
+              std::string& error) {
   if (plane < 0 || plane > 2 || unit_row < 0 || unit_col < 0 ||
       unit_row >= state.unit_rows[plane] ||
       unit_col >= state.unit_cols[plane]) {
@@ -1601,7 +1601,7 @@ bool ReadUnit(av2::Decoder& decoder, TileState& state, int plane,
 
 bool UnitRangeFor(TileState& state, int plane, int mi_row, int mi_col, int w4,
                   int h4, int tile_mi_row_start, int tile_mi_col_start,
-                  UnitRange* range, std::string* error) {
+                  UnitRange* range, std::string& error) {
   if (range == nullptr || plane < 0 || plane > 2) {
     return fail(error, "invalid read_lr argument");
   }
@@ -1642,7 +1642,7 @@ bool WriteBlock(av2::Encoder& encoder, TileState& state, int mi_row,
                 int mi_col, int w4, int h4, int tile_mi_row_start,
                 int tile_mi_col_start,
                 const std::vector<UnitDecision>& decisions,
-                std::string* error) {
+                std::string& error) {
   int cursor = 0;
   for (int plane = 0; plane < 3; ++plane) {
     UnitRange range;
@@ -1671,7 +1671,7 @@ bool WriteBlock(av2::Encoder& encoder, TileState& state, int mi_row,
 
 bool ReadBlock(av2::Decoder& decoder, TileState& state, int mi_row, int mi_col,
                int w4, int h4, int tile_mi_row_start, int tile_mi_col_start,
-               std::vector<UnitDecision>* decisions, std::string* error) {
+               std::vector<UnitDecision>* decisions, std::string& error) {
   if (decisions != nullptr) decisions->clear();
   for (int plane = 0; plane < 3; ++plane) {
     UnitRange range;
@@ -1716,7 +1716,7 @@ struct PcLumaBuffers {
 };
 
 bool MakePcLuma(const DecisionPlanes& planes, PcLumaBuffers* out,
-                std::string* error) {
+                std::string& error) {
   if (out == nullptr || planes.width <= 0 || planes.height <= 0) {
     return fail(error, "invalid decision planes");
   }
@@ -1886,7 +1886,7 @@ void BuildFilterClassGrid(const DecisionPlanes& planes,
   if (filter_class == nullptr) return;
   PcLumaBuffers luma;
   std::string error;
-  if (!MakePcLuma(planes, &luma, &error)) {
+  if (!MakePcLuma(planes, &luma, error)) {
     filter_class->clear();
     return;
   }
@@ -1920,7 +1920,7 @@ int ApplyPerUnitPcWiener(const DecisionPlanes& planes,
   if (dst == nullptr || unit_size <= 0) return 0;
   PcLumaBuffers luma;
   std::string error;
-  if (!MakePcLuma(planes, &luma, &error)) return 0;
+  if (!MakePcLuma(planes, &luma, error)) return 0;
   const int mi_cols = (planes.width + kMiSize - 1) / kMiSize;
   const int mi_rows = (planes.height + kMiSize - 1) / kMiSize;
   const int unit_cols = CountUnits(unit_size, planes.width);
@@ -2021,7 +2021,7 @@ double LumaSse(const std::uint8_t* a, int stride_a, const std::uint8_t* b,
 }  // namespace
 
 bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
-                           DecisionResult* result, std::string* error) {
+                           DecisionResult* result, std::string& error) {
   if (result == nullptr) return fail(error, "null decision result");
   *result = DecisionResult{};
   if (planes.width <= 0 || planes.height <= 0 || planes.curr[0] == nullptr ||
@@ -2142,7 +2142,7 @@ bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
   LrParams params = result->params;
   result->header_bits = static_cast<int>(
       LrParamsBits(&params, context, error));
-  if (result->header_bits == 0 && error != nullptr && !error->empty()) {
+  if (result->header_bits == 0 && !error.empty()) {
     return false;
   }
   result->params = params;
@@ -2177,7 +2177,7 @@ bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
 
 bool DecideFrameClassPcWiener(const DecisionPlanes& planes, int num_classes,
                               double lambda, DecisionResult* result,
-                              std::string* error) {
+                              std::string& error) {
   if (result == nullptr) return fail(error, "null decision result");
   *result = DecisionResult{};
   if (planes.width <= 0 || planes.height <= 0 || planes.curr[0] == nullptr ||
@@ -2295,7 +2295,7 @@ bool DecideFrameClassPcWiener(const DecisionPlanes& planes, int num_classes,
   LrParams written = params;
   result->header_bits = static_cast<int>(
       LrParamsBits(&written, context, error));
-  if (result->header_bits == 0 && error != nullptr && !error->empty()) {
+  if (result->header_bits == 0 && !error.empty()) {
     return false;
   }
   params = written;

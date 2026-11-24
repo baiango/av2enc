@@ -132,27 +132,27 @@ std::string y4m_colorspace_tag(ChromaFormat chroma, BitDepth depth) {
 
 bool read_y4m_sequence(const std::filesystem::path& path,
                        std::vector<Picture>* pictures, Y4mFormatInfo* info,
-                       std::uint64_t max_frames, std::string* error) {
-  if (error != nullptr) error->clear();
+                       std::uint64_t max_frames, std::string& error) {
+  error.clear();
   if (pictures == nullptr) {
-    if (error != nullptr) *error = "null picture list";
+    error = "null picture list";
     return false;
   }
   pictures->clear();
   std::ifstream file(path, std::ios::binary);
   if (!file) {
-    if (error != nullptr) *error = "cannot open " + path.string();
+    error = "cannot open " + path.string();
     return false;
   }
   std::string header;
   if (!read_line(file, &header)) {
-    if (error != nullptr) *error = "truncated Y4M header";
+    error = "truncated Y4M header";
     return false;
   }
   std::istringstream tokens(header);
   std::string token;
   if (!(tokens >> token) || token != "YUV4MPEG2") {
-    if (error != nullptr) *error = "not a Y4M file (expected YUV4MPEG2)";
+    error = "not a Y4M file (expected YUV4MPEG2)";
     return false;
   }
   bool have_width = false;
@@ -169,13 +169,13 @@ bool read_y4m_sequence(const std::filesystem::path& path,
     const std::string_view rest(token.data() + 1, token.size() - 1);
     if (key == 'W') {
       if (!parse_uint(rest, &width)) {
-        if (error != nullptr) *error = "invalid Y4M width";
+        error = "invalid Y4M width";
         return false;
       }
       have_width = true;
     } else if (key == 'H') {
       if (!parse_uint(rest, &height)) {
-        if (error != nullptr) *error = "invalid Y4M height";
+        error = "invalid Y4M height";
         return false;
       }
       have_height = true;
@@ -185,29 +185,27 @@ bool read_y4m_sequence(const std::filesystem::path& path,
           !parse_uint(rest.substr(0, colon), &fps_num) ||
           !parse_uint(rest.substr(colon + 1), &fps_den) || fps_num == 0 ||
           fps_den == 0) {
-        if (error != nullptr) *error = "invalid Y4M frame rate";
+        error = "invalid Y4M frame rate";
         return false;
       }
       have_fps = true;
     } else if (key == 'C') {
       if (!parse_colorspace(rest, &colorspace)) {
-        if (error != nullptr) {
-          *error = "unsupported Y4M colorspace C" + std::string(rest);
-        }
+error = "unsupported Y4M colorspace C" + std::string(rest);
         return false;
       }
     }
   }
   if (!have_width || !have_height || width == 0 || height == 0) {
-    if (error != nullptr) *error = "Y4M header is missing W/H";
+    error = "Y4M header is missing W/H";
     return false;
   }
   if (!have_fps) {
-    if (error != nullptr) *error = "Y4M header is missing F";
+    error = "Y4M header is missing F";
     return false;
   }
   if (width > kMaxDimension || height > kMaxDimension) {
-    if (error != nullptr) *error = "Y4M dimensions exceed the implementation limit";
+    error = "Y4M dimensions exceed the implementation limit";
     return false;
   }
 
@@ -237,17 +235,17 @@ bool read_y4m_sequence(const std::filesystem::path& path,
     if (!read_line(file, &frame_tag)) break;
     if (frame_tag.empty()) break;
     if (frame_tag.rfind("FRAME", 0) != 0) {
-      if (error != nullptr) *error = "Y4M is missing the FRAME tag";
+      error = "Y4M is missing the FRAME tag";
       return false;
     }
     file.read(reinterpret_cast<char*>(raw.data()),
               static_cast<std::streamsize>(raw.size()));
     if (static_cast<std::size_t>(file.gcount()) != raw.size()) {
-      if (error != nullptr) *error = "truncated Y4M frame";
+      error = "truncated Y4M frame";
       return false;
     }
     Picture picture;
-    if (!allocate_picture(format, picture, *error)) return false;
+    if (!allocate_picture(format, picture, error)) return false;
     std::size_t cursor = 0;
     for (int plane = 0; plane < plane_count; ++plane) {
       PlaneBuffer& dst = picture.planes[plane];
@@ -263,7 +261,7 @@ bool read_y4m_sequence(const std::filesystem::path& path,
             cursor += 2;
           }
           if (colorspace.depth == BitDepth::k10 && sample > 1023) {
-            if (error != nullptr) *error = "10-bit Y4M sample exceeds 1023";
+            error = "10-bit Y4M sample exceeds 1023";
             return false;
           }
           dst.at(x, y) = sample;
@@ -276,7 +274,7 @@ bool read_y4m_sequence(const std::filesystem::path& path,
     pictures->push_back(std::move(picture));
   }
   if (pictures->empty()) {
-    if (error != nullptr) *error = "Y4M file has no frames";
+    error = "Y4M file has no frames";
     return false;
   }
   if (info != nullptr) {
@@ -293,37 +291,27 @@ bool read_y4m_sequence(const std::filesystem::path& path,
 }
 
 bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
-                      Y4mFormatInfo* info, std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
+                      Y4mFormatInfo* info, std::string& error) {
+error.clear();
   if (picture == nullptr) {
-    if (error != nullptr) {
-      *error = "null picture";
-    }
+error = "null picture";
     return false;
   }
   std::ifstream file(path, std::ios::binary);
   if (!file) {
-    if (error != nullptr) {
-      *error = "cannot open " + path.string();
-    }
+error = "cannot open " + path.string();
     return false;
   }
 
   std::string header;
   if (!read_line(file, &header)) {
-    if (error != nullptr) {
-      *error = "truncated Y4M header";
-    }
+error = "truncated Y4M header";
     return false;
   }
   std::istringstream tokens(header);
   std::string token;
   if (!(tokens >> token) || token != "YUV4MPEG2") {
-    if (error != nullptr) {
-      *error = "not a Y4M file (expected YUV4MPEG2)";
-    }
+error = "not a Y4M file (expected YUV4MPEG2)";
     return false;
   }
 
@@ -344,17 +332,13 @@ bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
     const std::string_view rest(token.data() + 1, token.size() - 1);
     if (key == 'W') {
       if (!parse_uint(rest, &width)) {
-        if (error != nullptr) {
-          *error = "invalid Y4M width";
-        }
+error = "invalid Y4M width";
         return false;
       }
       have_width = true;
     } else if (key == 'H') {
       if (!parse_uint(rest, &height)) {
-        if (error != nullptr) {
-          *error = "invalid Y4M height";
-        }
+error = "invalid Y4M height";
         return false;
       }
       have_height = true;
@@ -364,54 +348,40 @@ bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
           !parse_uint(rest.substr(0, colon), &fps_num) ||
           !parse_uint(rest.substr(colon + 1), &fps_den) || fps_num == 0 ||
           fps_den == 0) {
-        if (error != nullptr) {
-          *error = "invalid Y4M frame rate";
-        }
+error = "invalid Y4M frame rate";
         return false;
       }
       have_fps = true;
     } else if (key == 'C') {
       if (!parse_colorspace(rest, &colorspace)) {
-        if (error != nullptr) {
-          *error = "unsupported Y4M colorspace C" + std::string(rest) +
-                   " (supported: C420, C420p10, C422, C422p10, C444, "
-                   "C444p10, Cmono, Cmono10)";
-        }
+error = "unsupported Y4M colorspace C" + std::string(rest) +
+         " (supported: C420, C420p10, C422, C422p10, C444, "
+         "C444p10, Cmono, Cmono10)";
         return false;
       }
     }
   }
 
   if (!have_width || !have_height || width == 0 || height == 0) {
-    if (error != nullptr) {
-      *error = "Y4M header is missing W/H";
-    }
+error = "Y4M header is missing W/H";
     return false;
   }
   if (!have_fps) {
-    if (error != nullptr) {
-      *error = "Y4M header is missing F";
-    }
+error = "Y4M header is missing F";
     return false;
   }
   if (width > kMaxDimension || height > kMaxDimension) {
-    if (error != nullptr) {
-      *error = "Y4M dimensions exceed the implementation limit";
-    }
+error = "Y4M dimensions exceed the implementation limit";
     return false;
   }
 
   std::string frame_tag;
   if (!read_line(file, &frame_tag)) {
-    if (error != nullptr) {
-      *error = "Y4M file has no frame";
-    }
+error = "Y4M file has no frame";
     return false;
   }
   if (frame_tag.rfind("FRAME", 0) != 0) {
-    if (error != nullptr) {
-      *error = "Y4M is missing the FRAME tag";
-    }
+error = "Y4M is missing the FRAME tag";
     return false;
   }
 
@@ -420,7 +390,7 @@ bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
   format.height = height;
   format.chroma = colorspace.chroma;
   format.depth = colorspace.depth;
-  if (!allocate_picture(format, *picture, *error)) {
+  if (!allocate_picture(format, *picture, error)) {
     return false;
   }
 
@@ -443,9 +413,7 @@ bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
   file.read(reinterpret_cast<char*>(raw.data()),
             static_cast<std::streamsize>(raw.size()));
   if (static_cast<std::size_t>(file.gcount()) != raw.size()) {
-    if (error != nullptr) {
-      *error = "truncated Y4M frame";
-    }
+error = "truncated Y4M frame";
     return false;
   }
 
@@ -463,14 +431,12 @@ bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
         file_bytes > static_cast<std::uintmax_t>(body_end)
             ? file_bytes - static_cast<std::uintmax_t>(body_end)
             : 0;
-    if (error != nullptr) {
-      *error = "oversized Y4M frame: " + std::to_string(trailing) +
-               " trailing byte(s) after the " + std::to_string(width) + "x" +
-               std::to_string(height) + " " +
-               y4m_colorspace_tag(colorspace.chroma, colorspace.depth) +
-               " frame body (the format paths read exactly one frame; check "
-               "for a mismatched C tag or a multi-frame input)";
-    }
+error = "oversized Y4M frame: " + std::to_string(trailing) +
+         " trailing byte(s) after the " + std::to_string(width) + "x" +
+         std::to_string(height) + " " +
+         y4m_colorspace_tag(colorspace.chroma, colorspace.depth) +
+         " frame body (the format paths read exactly one frame; check "
+         "for a mismatched C tag or a multi-frame input)";
     return false;
   }
 
@@ -488,9 +454,7 @@ bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
           cursor += 2;
         }
         if (colorspace.depth == BitDepth::k10 && sample > 1023) {
-          if (error != nullptr) {
-            *error = "10-bit Y4M sample exceeds 1023";
-          }
+error = "10-bit Y4M sample exceeds 1023";
           return false;
         }
         dst.at(x, y) = sample;
@@ -515,15 +479,11 @@ bool read_y4m_picture(const std::filesystem::path& path, Picture* picture,
 }
 
 bool write_y4m_picture(const std::filesystem::path& path, const Picture& picture,
-                       std::string* error) {
-  if (error != nullptr) {
-    error->clear();
-  }
+                       std::string& error) {
+error.clear();
   std::ofstream file(path, std::ios::binary);
   if (!file) {
-    if (error != nullptr) {
-      *error = "cannot write " + path.string();
-    }
+error = "cannot write " + path.string();
     return false;
   }
   const Format& format = picture.format;
@@ -555,9 +515,7 @@ bool write_y4m_picture(const std::filesystem::path& path, const Picture& picture
     }
   }
   if (!file) {
-    if (error != nullptr) {
-      *error = "write failed: " + path.string();
-    }
+error = "write failed: " + path.string();
     return false;
   }
   return true;

@@ -294,14 +294,14 @@ struct Obus {
 };
 
 bool parse_obus(std::span<const std::uint8_t> data, Obus* out,
-                std::string* error) {
+                std::string& error) {
   std::size_t off = 0;
   while (off < data.size()) {
     std::uint32_t size = 0;
     unsigned shift = 0;
     while (true) {
       if (off >= data.size() || shift > 28) {
-        *error = "truncated OBU size";
+        error = "truncated OBU size";
         return false;
       }
       const std::uint8_t byte = data[off++];
@@ -310,7 +310,7 @@ bool parse_obus(std::span<const std::uint8_t> data, Obus* out,
       if ((byte & 0x80U) == 0) break;
     }
     if (off + size > data.size() || size < 1) {
-      *error = "truncated OBU payload";
+      error = "truncated OBU payload";
       return false;
     }
     const std::uint8_t header = data[off];
@@ -328,16 +328,16 @@ bool parse_obus(std::span<const std::uint8_t> data, Obus* out,
 
 bool write_ivf(const std::string& path, int width, int height,
                std::span<const std::uint8_t> frame, std::uint32_t fps_num,
-               std::uint32_t fps_den, std::string* error) {
+               std::uint32_t fps_den, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
   header.height = static_cast<std::uint16_t>(height);
   header.fps_num = fps_num;
   header.fps_den = fps_den;
-  if (!writer.open(path, header, *error)) return false;
-  if (!writer.write_frame(frame, 0, *error)) return false;
-  return writer.close(*error);
+  if (!writer.open(path, header, error)) return false;
+  if (!writer.write_frame(frame, 0, error)) return false;
+  return writer.close(error);
 }
 
 struct Planes {
@@ -348,13 +348,13 @@ struct Planes {
   std::vector<std::uint8_t> v;
 };
 
-bool load_first_frame(const std::string& path, Planes* out, std::string* error) {
+bool load_first_frame(const std::string& path, Planes* out, std::string& error) {
   av2enc::Y4mReader reader(path);
-  if (!reader.open(*error)) return false;
+  if (!reader.open(error)) return false;
   av2enc::Y4mFrame frame;
-  const av2enc::Y4mReadResult result = reader.read_frame(frame, *error);
+  const av2enc::Y4mReadResult result = reader.read_frame(frame, error);
   if (result != av2enc::Y4mReadResult::kFrame) {
-    if (error->empty()) *error = "no frame in " + path;
+    if (error.empty()) error = "no frame in " + path;
     return false;
   }
   out->width = static_cast<int>(frame.width());
@@ -366,12 +366,12 @@ bool load_first_frame(const std::string& path, Planes* out, std::string* error) 
 }
 
 bool run_decoder(const std::string& dav2d, const std::string& ivf,
-                 const std::string& y4m, std::string* error) {
+                 const std::string& y4m, std::string& error) {
   const std::string command = "'" + dav2d + "' -i '" + ivf + "' -o '" + y4m +
                               "' >/dev/null 2>&1";
   const int rc = std::system(command.c_str());
   if (rc != 0) {
-    *error = "dav2d failed on " + ivf;
+    error = "dav2d failed on " + ivf;
     return false;
   }
   return true;
@@ -415,10 +415,10 @@ double combined_psnr(const Planes& a, const Planes& b) {
 //   "CDEFPL01", u32 width, u32 height,
 //   recon Y, U, V (tightly packed), source Y, U, V.
 bool write_plane_dump(const std::string& path, const Planes& recon,
-                      const Planes& source, std::string* error) {
+                      const Planes& source, std::string& error) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   if (!out) {
-    *error = "cannot open " + path;
+    error = "cannot open " + path;
     return false;
   }
   const char magic[8] = {'C', 'D', 'E', 'F', 'P', 'L', '0', '1'};
@@ -440,7 +440,7 @@ bool write_plane_dump(const std::string& path, const Planes& recon,
   out.write(reinterpret_cast<const char*>(source.v.data()),
             static_cast<std::streamsize>(source.v.size()));
   if (!out) {
-    *error = "write failed: " + path;
+    error = "write failed: " + path;
     return false;
   }
   return true;
@@ -448,10 +448,10 @@ bool write_plane_dump(const std::string& path, const Planes& recon,
 
 // Writes one 4:2:0 frame as Y4M so tools/quality.py can score it.
 bool write_y4m(const std::string& path, const Planes& planes,
-               std::string* error) {
+               std::string& error) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   if (!out) {
-    *error = "cannot open " + path;
+    error = "cannot open " + path;
     return false;
   }
   out << "YUV4MPEG2 W" << planes.width << " H" << planes.height
@@ -463,7 +463,7 @@ bool write_y4m(const std::string& path, const Planes& planes,
   out.write(reinterpret_cast<const char*>(planes.v.data()),
             static_cast<std::streamsize>(planes.v.size()));
   if (!out) {
-    *error = "write failed: " + path;
+    error = "write failed: " + path;
     return false;
   }
   return true;

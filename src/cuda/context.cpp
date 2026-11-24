@@ -8,14 +8,11 @@
 namespace av2enc::cuda {
 namespace {
 
-void set_error(std::string* error, const char* context, Status status,
+void set_error(std::string& error, const char* context, Status status,
                cudaError_t cuda_error = cudaSuccess) {
-  if (error == nullptr) {
-    return;
-  }
   char detail[256];
   format_status(status, cuda_error, detail, sizeof(detail));
-  *error = std::string(context) + ": " + detail;
+  error = std::string(context) + ": " + detail;
 }
 
 }  // namespace
@@ -114,7 +111,7 @@ Context::~Context() {
   shutdown();
 }
 
-Status Context::init(int device_index, std::string* error) {
+Status Context::init(int device_index, std::string& error) {
   if (initialized_) {
     set_error(error, "Context::init", Status::kAlreadyInitialized);
     return Status::kAlreadyInitialized;
@@ -248,7 +245,7 @@ StagingBuffer::~StagingBuffer() {
   release();
 }
 
-Status StagingBuffer::init(std::size_t capacity_bytes, std::string* error) {
+Status StagingBuffer::init(std::size_t capacity_bytes, std::string& error) {
   if (data_ != nullptr) {
     set_error(error, "StagingBuffer::init", Status::kAlreadyInitialized);
     return Status::kAlreadyInitialized;

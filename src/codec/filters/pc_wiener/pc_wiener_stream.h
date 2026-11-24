@@ -138,12 +138,12 @@ struct SequenceFilterConfig {
 std::size_t WriteSequenceFilterConfig(BitWriter& writer,
                                       const SequenceFilterConfig& config,
                                       bool single_picture_header_flag,
-                                      std::string* error);
+                                      std::string& error);
 [[nodiscard]] bool ReadSequenceFilterConfig(Reader& reader, bool single_picture_header_flag,
-                              SequenceFilterConfig* config, std::string* error);
+                              SequenceFilterConfig* config, std::string& error);
 std::size_t SequenceFilterConfigBits(const SequenceFilterConfig& config,
                                      bool single_picture_header_flag,
-                                     std::string* error);
+                                     std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.18.7.11 lr_params()
@@ -200,11 +200,11 @@ struct LrHeaderContext {
 // frame_filter decisions are written; frame_coeffs/subclass_lookup are filled
 // with what a decoder will reconstruct.  Returns exact bits or 0 on error.
 std::size_t WriteLrParams(BitWriter& writer, LrParams* params,
-                          const LrHeaderContext& context, std::string* error);
+                          const LrHeaderContext& context, std::string& error);
 [[nodiscard]] bool ReadLrParams(Reader& reader, const LrHeaderContext& context,
-                  LrParams* params, std::string* error);
+                  LrParams* params, std::string& error);
 std::size_t LrParamsBits(LrParams* params, const LrHeaderContext& context,
-                         std::string* error);
+                         std::string& error);
 
 int CountUnits(int unit_size, int frame_size);
 
@@ -248,7 +248,7 @@ struct TileState {
 };
 
 [[nodiscard]] bool InitTileState(TileState* state, const LrParams& params, int mi_cols,
-                   int mi_rows, int sub_x, int sub_y, std::string* error);
+                   int mi_rows, int sub_x, int sub_y, std::string& error);
 
 // §8.2.2: seed the tile LR CDFs from the §8.2 frame image and store the
 // adapted values back after the tile.  Same contract as
@@ -259,10 +259,10 @@ void TileStateStoreCdfs(const TileState& state, lr_cdf::Image* image);
 
 [[nodiscard]] bool WriteUnit(av2::Encoder& encoder, TileState& state, int plane,
                int unit_row, int unit_col, const UnitDecision& decision,
-               std::string* error);
+               std::string& error);
 [[nodiscard]] bool ReadUnit(av2::Decoder& decoder, TileState& state, int plane,
               int unit_row, int unit_col, UnitDecision* decision,
-              std::string* error);
+              std::string& error);
 
 struct UnitRange {
   int row_begin = 0;
@@ -273,16 +273,16 @@ struct UnitRange {
 
 [[nodiscard]] bool UnitRangeFor(TileState& state, int plane, int mi_row, int mi_col, int w4,
                   int h4, int tile_mi_row_start, int tile_mi_col_start,
-                  UnitRange* range, std::string* error);
+                  UnitRange* range, std::string& error);
 
 [[nodiscard]] bool WriteBlock(av2::Encoder& encoder, TileState& state, int mi_row,
                 int mi_col, int w4, int h4, int tile_mi_row_start,
                 int tile_mi_col_start,
                 const std::vector<UnitDecision>& decisions,
-                std::string* error);
+                std::string& error);
 [[nodiscard]] bool ReadBlock(av2::Decoder& decoder, TileState& state, int mi_row, int mi_col,
                int w4, int h4, int tile_mi_row_start, int tile_mi_col_start,
-               std::vector<UnitDecision>* decisions, std::string* error);
+               std::vector<UnitDecision>* decisions, std::string& error);
 
 // ---------------------------------------------------------------------------
 // §7.20.4 encoder decision
@@ -331,14 +331,14 @@ struct DecisionResult {
 // Mode A: FrameRestorationType[0] = RESTORE_PC_WIENER; per-unit on/off.
 // `lambda` is in SSE units per syntax bit (0 = turn on any SSE reduction).
 [[nodiscard]] bool DecidePerUnitPcWiener(const DecisionPlanes& planes, double lambda,
-                           DecisionResult* result, std::string* error);
+                           DecisionResult* result, std::string& error);
 
 // Mode B: frame_filters_on[0] = 1 and NumFilterClasses = num_classes > 1;
 // each class selects a translated PC-Wiener filter with match + merged bits.
 // The frame type is RESTORE_WIENER_NONSEP.
 [[nodiscard]] bool DecideFrameClassPcWiener(const DecisionPlanes& planes, int num_classes,
                               double lambda, DecisionResult* result,
-                              std::string* error);
+                              std::string& error);
 
 // Applies the §7.20.4 PC-Wiener filter for the units whose `unit_type` is
 // RESTORE_PC_WIENER.  `dst` is a full luma plane; samples outside active units

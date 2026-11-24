@@ -101,7 +101,7 @@ struct IbcBufferState {
 // §6.19.7.12.  `reason` receives a short diagnostic on failure.
 [[nodiscard]] bool is_bv_valid(const FrameView& frame, const IbcConfig& config,
                  const IbcBufferState& state, int mi_row, int mi_col,
-                 int bsize, BlockVector bv, std::string* reason = nullptr);
+                 int bsize, BlockVector bv, std::string& reason);
 
 // ---------------------------------------------------------------------------
 // Candidate stack (find_mv_stack for IBC, integer-pel NEARMV path)
@@ -164,7 +164,7 @@ struct CopyResult {
 };
 [[nodiscard]] bool predict_copy(const FrameView& frame, int mi_row, int mi_col, int bsize,
                   BlockVector bv, int visible_w, int visible_h,
-                  CopyResult& out, std::string* error = nullptr);
+                  CopyResult& out, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Encoder search

@@ -14,10 +14,8 @@ const char* const kNames[kTxSizesAll] = {
     "TX_8X32",  "TX_32X8",  "TX_16X64", "TX_64X16", "TX_4X32",
     "TX_32X4",  "TX_8X64",  "TX_64X8",  "TX_4X64",  "TX_64X4"};
 
-bool fail(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
+bool fail(std::string& error, const char* message) {
+error = message;
   return false;
 }
 
@@ -75,7 +73,7 @@ const std::int32_t& SubPuGrid::row_base_at(int plane, int row,
 
 bool save_subpu(int plane, int x, int y, int w, int h, int subsampling_x,
                 int subsampling_y, int pu_width, int pu_height,
-                SubPuGrid& grid, std::string* error) noexcept {
+                SubPuGrid& grid, std::string& error) noexcept {
   if (plane < 0 || plane > 2) {
     return fail(error, "plane out of range");
   }

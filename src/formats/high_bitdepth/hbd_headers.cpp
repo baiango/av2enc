@@ -288,7 +288,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const HbdConfig& c) {
     params.pic_scale_idx = c.gdf->pic_scale_idx;
     std::string gdf_error;
     const std::size_t bits =
-        gdf::WriteFrameGdfParams(writer, context, &params, &gdf_error);
+        gdf::WriteFrameGdfParams(writer, context, &params, gdf_error);
     assert(gdf_error.empty());
     assert(!params.per_block);
     (void)bits;
@@ -340,7 +340,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const HbdConfig& c) {
                            static_cast<int>(c.base_q_idx), &context);
     std::string lr_error;
     const std::size_t bits =
-        lr_syntax::WriteLrParams(writer, &params, context, &lr_error);
+        lr_syntax::WriteLrParams(writer, &params, context, lr_error);
     assert(lr_error.empty());
     assert(bits > 0);
     (void)bits;
@@ -396,9 +396,9 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const HbdConfig& c) {
 
 }  // namespace
 
-bool validate_config(const HbdConfig& config, std::string* error) {
-  const auto fail = [error](const std::string& text) {
-    if (error != nullptr) *error = text;
+bool validate_config(const HbdConfig& config, std::string& error) {
+  const auto fail = [&error](const std::string& text) {
+    error = text;
     return false;
   };
   if (config.depth != fmt::BitDepth::k10) {

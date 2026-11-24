@@ -512,10 +512,10 @@ struct Y4mFrame {
   std::vector<std::uint8_t> y, u, v;
 };
 
-bool read_first_y4m(const std::string& path, Y4mFrame* out, std::string* err) {
+bool read_first_y4m(const std::string& path, Y4mFrame* out, std::string& err) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
-    *err = "cannot open " + path;
+    err = "cannot open " + path;
     return false;
   }
   std::string header;
@@ -530,13 +530,13 @@ bool read_first_y4m(const std::string& path, Y4mFrame* out, std::string* err) {
     while (*p != '\0' && *p != ' ') ++p;
   }
   if (w <= 0 || h <= 0) {
-    *err = "bad Y4M header: " + header;
+    err = "bad Y4M header: " + header;
     return false;
   }
   std::string frame_tag;
   std::getline(in, frame_tag);
   if (frame_tag.rfind("FRAME", 0) != 0) {
-    *err = "missing FRAME tag";
+    err = "missing FRAME tag";
     return false;
   }
   const std::size_t cw = static_cast<std::size_t>((w + 1) / 2);
@@ -553,18 +553,18 @@ bool read_first_y4m(const std::string& path, Y4mFrame* out, std::string* err) {
   in.read(reinterpret_cast<char*>(out->v.data()),
           static_cast<std::streamsize>(out->v.size()));
   if (!in) {
-    *err = "truncated Y4M frame";
+    err = "truncated Y4M frame";
     return false;
   }
   return true;
 }
 
 bool decode_ivf(const std::string& ivf, const std::string& dav2d,
-                const std::string& out_y4m, std::string* err) {
+                const std::string& out_y4m, std::string& err) {
   const std::string cmd = "\"" + dav2d + "\" -i \"" + ivf + "\" -o \"" +
                           out_y4m + "\" -q --threads 1 >/dev/null 2>&1";
   if (std::system(cmd.c_str()) != 0) {
-    *err = "dav2d failed: " + cmd;
+    err = "dav2d failed: " + cmd;
     return false;
   }
   return true;
@@ -595,13 +595,13 @@ void fill_real_frame(const Y4mFrame& src, TestFrame* f) {
 // loop restoration reads curr=post-deblock outside the stripe and cdef=post-
 // CCSO inside it.
 void fill_real_chain(const Y4mFrame& pre, const Y4mFrame& post, TestFrame* f,
-                     std::string* err) {
+                     std::string& err) {
   if (pre.width != post.width || pre.height != post.height) {
-    *err = "pre/post recon dimensions differ";
+    err = "pre/post recon dimensions differ";
     return;
   }
   if (pre.width % 4 != 0 || pre.height % 4 != 0) {
-    *err = "recon is not MI-aligned";
+    err = "recon is not MI-aligned";
     return;
   }
   f->mi_cols = pre.width / 4;

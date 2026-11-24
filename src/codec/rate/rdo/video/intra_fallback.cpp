@@ -9,14 +9,14 @@
 namespace av2enc::video::rdo {
 
 bool intra_coefficient_bits(std::span<const IntraPlaneRateInput> planes,
-                            double* bits, std::string* error) {
+                            double* bits, std::string& error) {
   if (bits == nullptr) {
-    if (error != nullptr) *error = "null bit output";
+    error = "null bit output";
     return false;
   }
   *bits = 0.0;
   if (planes.empty()) {
-    if (error != nullptr) *error = "no intra planes";
+    error = "no intra planes";
     return false;
   }
 
@@ -28,16 +28,16 @@ bool intra_coefficient_bits(std::span<const IntraPlaneRateInput> planes,
   for (const IntraPlaneRateInput& plane : planes) {
     const int area = plane.adj_w * plane.adj_h;
     if (area <= 0 || area > kMaxArea) {
-      if (error != nullptr) *error = "intra plane transform area is invalid";
+      error = "intra plane transform area is invalid";
       return false;
     }
     if (plane.levels_raster.size() <
         static_cast<std::size_t>(area)) {
-      if (error != nullptr) *error = "intra plane level span is truncated";
+      error = "intra plane level span is truncated";
       return false;
     }
     if (plane.eob < 0 || plane.eob > area) {
-      if (error != nullptr) *error = "intra plane EOB is invalid";
+      error = "intra plane EOB is invalid";
       return false;
     }
     av2enc::video::syntax::build_scan(

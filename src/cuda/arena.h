@@ -46,10 +46,10 @@ class Arena {
   // device-derived capacity (see the pipeline) or an explicit cap. `alignment`
   // must be a power of two >= kAlignment.
   Status init(std::uint64_t capacity_bytes,
-              std::size_t alignment = kAlignment, std::string* error = nullptr);
+              std::size_t alignment, std::string& error);
 
-  Status init_mb(std::uint32_t capacity_mb, std::size_t alignment = kAlignment,
-                 std::string* error = nullptr);
+  Status init_mb(std::uint32_t capacity_mb, std::size_t alignment,
+                 std::string& error);
 
   // cudaFree() the block and release its cap reservation. Device VRAM
   // statistics stay readable. Safe to call twice. Any pointers previously

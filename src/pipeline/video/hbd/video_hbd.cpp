@@ -1333,13 +1333,13 @@ bool insert_grain(const grain::GrainFramePlan& plan,
   if (!plan.emit_model) return true;
   std::string grain_error;
   const std::vector<std::uint8_t> obu =
-      grain::MakeFilmGrainObu(plan.obu, &grain_error);
+      grain::MakeFilmGrainObu(plan.obu, grain_error);
   if (obu.empty()) {
     error = "film grain OBU: " + grain_error;
     return false;
   }
   std::vector<std::uint8_t> with_grain;
-  if (!grain::InsertFilmGrainObu(unit, obu, &with_grain, &grain_error)) {
+  if (!grain::InsertFilmGrainObu(unit, obu, &with_grain, grain_error)) {
     error = "film grain OBU: " + grain_error;
     return false;
   }
@@ -1567,7 +1567,7 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     grain::GrainFramePlan key_grain;
     if (options.film_grain &&
         !grain_planner.PlanFrame(grain_view_of(frames[0]), 0, 0, 0, &key_grain,
-                                 &error)) {
+                                 error)) {
       error = "keyframe film grain: " + error;
       return false;
     }
@@ -1697,7 +1697,7 @@ bool encode_sequence(std::span<const VideoInputFrame> frames,
     if (options.film_grain &&
         !grain_planner.PlanFrame(grain_view_of(frames[i]),
                                  static_cast<std::uint32_t>(i), 0, 0,
-                                 &grain_plan, &error)) {
+                                 &grain_plan, error)) {
       error = "P-frame " + std::to_string(i) + " film grain: " + error;
       return false;
     }

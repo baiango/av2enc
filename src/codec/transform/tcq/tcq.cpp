@@ -106,23 +106,21 @@ bool config_valid(const Config& config) noexcept {
          config.level_cap >= 0 && config.max_coefficients >= 0;
 }
 
-bool validate_config(const Config& config, std::string* error) {
+bool validate_config(const Config& config, std::string& error) {
   if (!std::isfinite(config.lambda) || config.lambda < 0.0) {
-    if (error != nullptr) *error = "tcq::Config.lambda must be finite and >= 0";
+    error = "tcq::Config.lambda must be finite and >= 0";
     return false;
   }
   if (!std::isfinite(config.quant_step) || config.quant_step <= 0.0) {
-    if (error != nullptr) {
-      *error = "tcq::Config.quant_step must be finite and > 0";
-    }
+error = "tcq::Config.quant_step must be finite and > 0";
     return false;
   }
   if (config.level_cap < 0) {
-    if (error != nullptr) *error = "tcq::Config.level_cap must be >= 0";
+    error = "tcq::Config.level_cap must be >= 0";
     return false;
   }
   if (config.max_coefficients < 0) {
-    if (error != nullptr) *error = "tcq::Config.max_coefficients must be >= 0";
+    error = "tcq::Config.max_coefficients must be >= 0";
     return false;
   }
   return true;
@@ -177,19 +175,19 @@ std::int32_t level_bound(const Coefficient& coefficient,
 bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
                             double quant_step,
                             std::span<std::int32_t> levels,
-                            std::int32_t* eob, std::string* error) {
+                            std::int32_t* eob, std::string& error) {
   if (!std::isfinite(quant_step) || quant_step <= 0.0) {
-    if (error != nullptr) *error = "quant_step must be finite and > 0";
+    error = "quant_step must be finite and > 0";
     return false;
   }
   if (levels.size() != coefficients.size()) {
-    if (error != nullptr) *error = "levels span size must match the block";
+    error = "levels span size must match the block";
     return false;
   }
   std::int32_t last = 0;
   for (std::size_t i = 0; i < coefficients.size(); ++i) {
     if (!std::isfinite(coefficients[i].original)) {
-      if (error != nullptr) *error = "Coefficient.original must be finite";
+      error = "Coefficient.original must be finite";
       return false;
     }
     const std::int32_t level = scalar_level_for(coefficients[i], quant_step);
@@ -202,16 +200,16 @@ bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
 
 bool quantize(std::span<const Coefficient> coefficients, const Config& config,
               const RateModel& rate_model, Result& result,
-              std::string* error) {
+              std::string& error) {
   result.clear();
   if (!validate_config(config, error)) return false;
   if (rate_model.coefficient_rate == nullptr || rate_model.eob_rate == nullptr) {
-    if (error != nullptr) *error = "TCQ rate model callbacks must be set";
+    error = "TCQ rate model callbacks must be set";
     return false;
   }
   const std::int32_t n = static_cast<std::int32_t>(coefficients.size());
   if (n < 0 || n > config.max_coefficients) {
-    if (error != nullptr) *error = "block exceeds max_coefficients";
+    error = "block exceeds max_coefficients";
     return false;
   }
   result.base_levels.assign(static_cast<std::size_t>(n), 0);
@@ -224,13 +222,13 @@ bool quantize(std::span<const Coefficient> coefficients, const Config& config,
   for (std::int32_t c = 0; c < n; ++c) {
     const Coefficient& coefficient = coefficients[static_cast<std::size_t>(c)];
     if (!std::isfinite(coefficient.original)) {
-      if (error != nullptr) *error = "Coefficient.original must be finite";
+      error = "Coefficient.original must be finite";
       return false;
     }
     bool clipped = false;
     if (!bound_for(coefficient, config, &bounds[static_cast<std::size_t>(c)],
                    &clipped)) {
-      if (error != nullptr) *error = "coefficient level bound is not finite";
+      error = "coefficient level bound is not finite";
       return false;
     }
     truncated = truncated || clipped;
@@ -280,7 +278,7 @@ bool quantize(std::span<const Coefficient> coefficients, const Config& config,
             rate_model.context, c, s, base, next, quant,
             coefficient.level_context, /*is_eob=*/0);
         if (!valid_rate(local_rate)) {
-          if (error != nullptr) *error = "coefficient rate must be finite and >= 0";
+          error = "coefficient rate must be finite and >= 0";
           return false;
         }
         const Choice& suffix = c > 0 ? dp_at(c - 1, next) : empty_suffix;
@@ -301,7 +299,7 @@ bool quantize(std::span<const Coefficient> coefficients, const Config& config,
   const double all_zero_rate =
       rate_model.eob_rate(rate_model.context, 0, n);
   if (!valid_rate(all_zero_rate)) {
-    if (error != nullptr) *error = "EOB rate must be finite and >= 0";
+    error = "EOB rate must be finite and >= 0";
     return false;
   }
   // Positions above the start (EOB) are coded as zero, so their original
@@ -345,13 +343,13 @@ bool quantize(std::span<const Coefficient> coefficients, const Config& config,
           rate_model.context, c, 0, base, next, quant,
           coefficient.level_context, /*is_eob=*/1);
       if (!valid_rate(local_rate)) {
-        if (error != nullptr) *error = "coefficient rate must be finite and >= 0";
+        error = "coefficient rate must be finite and >= 0";
         return false;
       }
       const double eob_rate =
           rate_model.eob_rate(rate_model.context, c + 1, n);
       if (!valid_rate(eob_rate)) {
-        if (error != nullptr) *error = "EOB rate must be finite and >= 0";
+        error = "EOB rate must be finite and >= 0";
         return false;
       }
       const Choice& suffix = c > 0 ? dp_at(c - 1, next) : empty_suffix;
@@ -407,10 +405,10 @@ bool quantize(std::span<const Coefficient> coefficients, const Config& config,
 
 bool decode_levels(std::span<const std::int32_t> base_levels_scan,
                    bool allow_tcq, bool lossless, DecodeResult* result,
-                   std::string* error,
+                   std::string& error,
                    std::span<const std::int32_t> pre_max_scan) {
   if (result == nullptr) {
-    if (error != nullptr) *error = "decode result must not be null";
+    error = "decode result must not be null";
     return false;
   }
   *result = DecodeResult{};
@@ -420,7 +418,7 @@ bool decode_levels(std::span<const std::int32_t> base_levels_scan,
   if (n == 0) return true;
   if (!pre_max_scan.empty() &&
       pre_max_scan.size() != static_cast<std::size_t>(n)) {
-    if (error != nullptr) *error = "pre_max span size must match the block";
+    error = "pre_max span size must match the block";
     return false;
   }
   std::int32_t eob = 0;

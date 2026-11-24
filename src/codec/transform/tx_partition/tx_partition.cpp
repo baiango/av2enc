@@ -174,7 +174,7 @@ bool write_one_partition(SymbolSink& sink, TxPartitionCdfs& cdfs,
 
   if (geometry != nullptr) {
     if (!tx_partition_geometry(ctx.mi_size, mi_row, mi_col, decision, geometry,
-                               &error)) {
+                               error)) {
       return false;
     }
   }
@@ -307,19 +307,19 @@ bool tx_partition_signallable(int mi_size, TxPartition part) {
 
 bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
                            TxPartition part, SplitGeometry* out,
-                           std::string* error) {
+                           std::string& error) {
   if (out == nullptr) {
-    if (error) *error = "null geometry output";
+error = "null geometry output";
     return false;
   }
   *out = SplitGeometry{};
   if (!valid_mi_size(mi_size)) {
-    if (error) *error = "invalid MiSize";
+error = "invalid MiSize";
     return false;
   }
   const int tx = max_tx_size_rect(mi_size);
   if (tx < 0) {
-    if (error) *error = "invalid max transform size";
+error = "invalid max transform size";
     return false;
   }
   // §5.20.6.3: a BLOCK_4X4 coding block (and a >64 chunk) codes no partition
@@ -327,8 +327,8 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
   // write_tx_partition()/read_tx_partition() instead of rejecting NONE here.
   if (!legal_splits(mi_size, /*reduced_tx_part_set=*/false).applicable) {
     if (part != TxPartition::kNone) {
-      if (error) {
-        *error = std::string("tx partition ") + tx_partition_name(part) +
+      {
+        error = std::string("tx partition ") + tx_partition_name(part) +
                  " is not signallable for MiSize " + std::to_string(mi_size);
       }
       return false;
@@ -338,8 +338,8 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
     return true;
   }
   if (!tx_partition_signallable(mi_size, part)) {
-    if (error) {
-      *error = std::string("tx partition ") + tx_partition_name(part) +
+    {
+      error = std::string("tx partition ") + tx_partition_name(part) +
                " is not signallable for MiSize " + std::to_string(mi_size);
     }
     return false;
@@ -359,7 +359,7 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
     case TxPartition::kSplit: {
       const int sub = find_tx_size(tx_width(tx) / 2, tx_height(tx) / 2);
       if (sub < 0) {
-        if (error) *error = "SPLIT produces an invalid transform size";
+error = "SPLIT produces an invalid transform size";
         return false;
       }
       const int hw = w4 / 2;
@@ -374,7 +374,7 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
     case TxPartition::kHorz: {
       const int sub = find_tx_size(tx_width(tx), tx_height(tx) / 2);
       if (sub < 0) {
-        if (error) *error = "HORZ produces an invalid transform size";
+error = "HORZ produces an invalid transform size";
         return false;
       }
       const int hh = h4 / 2;
@@ -385,7 +385,7 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
     case TxPartition::kVert: {
       const int sub = find_tx_size(tx_width(tx) / 2, tx_height(tx));
       if (sub < 0) {
-        if (error) *error = "VERT produces an invalid transform size";
+error = "VERT produces an invalid transform size";
         return false;
       }
       const int hw = w4 / 2;
@@ -396,7 +396,7 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
     case TxPartition::kHorz4: {
       const int sub = find_tx_size(tx_width(tx), tx_height(tx) / 4);
       if (sub < 0) {
-        if (error) *error = "HORZ4 produces an invalid transform size";
+error = "HORZ4 produces an invalid transform size";
         return false;
       }
       const int q = h4 / 4;
@@ -406,7 +406,7 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
     case TxPartition::kVert4: {
       const int sub = find_tx_size(tx_width(tx) / 4, tx_height(tx));
       if (sub < 0) {
-        if (error) *error = "VERT4 produces an invalid transform size";
+error = "VERT4 produces an invalid transform size";
         return false;
       }
       const int q = w4 / 4;
@@ -415,8 +415,8 @@ bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
     }
     case TxPartition::kHorz5:
     case TxPartition::kVert5:
-      if (error) {
-        *error = std::string(tx_partition_name(part)) +
+      {
+        error = std::string(tx_partition_name(part)) +
                  " cannot be signalled by tx_do_partition / "
                  "tx_partition_type / tx_2or3_partition_type";
       }
@@ -612,7 +612,7 @@ bool read_tx_partition(SymbolSource& source, TxPartitionCdfs& cdfs,
 
   SplitGeometry geom;
   if (!tx_partition_geometry(ctx.mi_size, mi_row, mi_col, part, &geom,
-                             &error)) {
+                             error)) {
     return false;
   }
   *decision = part;

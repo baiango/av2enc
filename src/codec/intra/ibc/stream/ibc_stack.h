@@ -90,20 +90,20 @@ int find_bv_index(const BvStack& stack, BlockVector bv) noexcept;
 [[nodiscard]] bool is_bv_offset_valid(const FrameView& frame, const IbcConfig& config,
                         const IbcBufferState& state, int mi_row, int mi_col,
                         int bsize, BlockVector bv, int dx, int dy,
-                        std::string* reason = nullptr);
+                        std::string& reason);
 
 // The ±1 reference border conformance rule: a source block whose extra
 // top-left reference pixel lies outside the tile is rejected.  Integer BVs are
 // not exempt (dav2d --strict 1 enforces this even without morph_pred).
 [[nodiscard]] bool is_bv_border_valid(const FrameView& frame, const IbcConfig& config,
                         const IbcBufferState& state, int mi_row, int mi_col,
-                        int bsize, BlockVector bv, std::string* reason = nullptr);
+                        int bsize, BlockVector bv, std::string& reason);
 
 // Full encoder-side gate: range, §6.19.7.12 geometry/local/global, and ±1
 // reference border.
 [[nodiscard]] bool is_bv_encodable(const FrameView& frame, const IbcConfig& config,
                      const IbcBufferState& state, int mi_row, int mi_col,
-                     int bsize, BlockVector bv, std::string* reason = nullptr);
+                     int bsize, BlockVector bv, std::string& reason);
 
 // Maintain the IBC ring and the neighbour map from one decoded block.  Call
 // update_buffers() before mode info (§5.20.5.1) and mark_coded()/mark_block()

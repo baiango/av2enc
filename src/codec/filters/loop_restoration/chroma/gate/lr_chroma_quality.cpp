@@ -42,7 +42,7 @@ struct Frame {
 };
 
 bool read_all(const std::string& path, std::vector<Frame>* frames,
-              std::string* error) {
+              std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
@@ -64,10 +64,10 @@ bool read_all(const std::string& path, std::vector<Frame>* frames,
 }
 
 bool write_all(const std::string& path, const std::vector<Frame>& frames,
-               const std::vector<Frame>& chroma, std::string* error) {
+               const std::vector<Frame>& chroma, std::string& error) {
   std::ofstream out(path, std::ios::binary);
   if (!out) {
-    *error = "cannot open " + path;
+    error = "cannot open " + path;
     return false;
   }
   out << "YUV4MPEG2 W" << frames[0].width << " H" << frames[0].height

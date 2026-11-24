@@ -3,7 +3,7 @@
 namespace av2enc::tcq {
 
 bool derive_header_flags(const HeaderInput& input, HeaderFlags* flags,
-                         std::string* error) {
+                         std::string& error) {
   (void)error;
   if (flags == nullptr) return false;
   HeaderFlags out;

@@ -183,7 +183,7 @@ class Writer {
                                           options_.base_q_idx, &context);
       std::string lr_error;
       lr_ready_ = lrs::InitTileState(&lr_state_, params, mi_cols_, mi_rows_,
-                                     sub_x_, sub_y_, &lr_error);
+                                     sub_x_, sub_y_, lr_error);
       if (!lr_ready_) error_ = "LR tile init failed: " + lr_error;
     }
     if (options_.cdef_idx != nullptr && options_.cdef_num_strengths > 1) {
@@ -218,7 +218,7 @@ class Writer {
     clear_above_context();
   }
 
-  bool run(std::uint32_t* tile_bytes, std::string* error) {
+  bool run(std::uint32_t* tile_bytes, std::string& error) {
     if (!error_.empty()) return fail(error, error_);
     std::size_t block_index = 0;
 
@@ -285,8 +285,8 @@ class Writer {
   const std::vector<std::uint8_t>& payload() const { return payload_; }
 
  private:
-  static bool fail(std::string* error, const std::string& text) {
-    if (error != nullptr) *error = text;
+  static bool fail(std::string& error, const std::string& text) {
+    error = text;
     return false;
   }
 
@@ -369,18 +369,18 @@ class Writer {
     return sym(&cdfs_.rect_type[0][ctx][0], 2, vertical ? 1 : 0);
   }
 
-  bool code_partition_64_vert(int r, int c, std::string* error) {
+  bool code_partition_64_vert(int r, int c, std::string& error) {
     if (!code_do_split(r, c, kBlock64, true) ||
         !code_rect_type(r, c, kBlock64, true)) {
       return fail(error, error_);
     }
     return true;
   }
-  bool code_partition_64_none(int r, int c, std::string* error) {
+  bool code_partition_64_none(int r, int c, std::string& error) {
     if (!code_do_split(r, c, kBlock64, false)) return fail(error, error_);
     return true;
   }
-  bool code_partition_32x64(int r, int c, std::string* error) {
+  bool code_partition_32x64(int r, int c, std::string& error) {
     if (!code_do_split(r, c, 0 /*32x64 marker*/, true)) {
       return fail(error, error_);
     }
@@ -531,7 +531,7 @@ class Writer {
   bool encode_residual_plane(const HighBitDepthBlock& block, int plane, int coded_w,
                              int coded_h, int tx_sz_ctx, int bsize_w,
                              int bsize_h, std::size_t level_base,
-                             std::string* error) {
+                             std::string& error) {
     const int w4 = coded_w >> 2;
     const int h4 = coded_h >> 2;
     const int sx = plane > 0 ? sub_x_ : 0;
@@ -822,7 +822,7 @@ class Writer {
     return true;
   }
 
-  bool write_lr_sb(int r, int c, std::string* error) {
+  bool write_lr_sb(int r, int c, std::string& error) {
     if (!lr_ready_) return true;
     namespace lrs = av2enc::hbd::lr_syntax;
     const av2enc::hbd::HbdLrConfig& cfg = *options_.lr;
@@ -876,7 +876,7 @@ class Writer {
     return true;
   }
 
-  bool write_ccso(int r, int c, std::string* error) {
+  bool write_ccso(int r, int c, std::string& error) {
     bool any = false;
     for (int plane = 0; plane < 3; ++plane) {
       any = any || options_.ccso_plane_enabled[plane];
@@ -919,7 +919,7 @@ class Writer {
     return true;
   }
 
-  bool write_block(const HighBitDepthBlock& block, std::string* error) {
+  bool write_block(const HighBitDepthBlock& block, std::string& error) {
     const int r = block.mi_row;
     const int c = block.mi_col;
     const int luma = block.luma_size;
@@ -1033,24 +1033,24 @@ bool assemble_high_bitdepth_tile_payload(
     const HighBitDepthBlock* blocks, std::size_t block_count,
     const std::int32_t* levels, std::size_t level_count,
     std::vector<std::uint8_t>* payload, std::uint32_t* tile_bytes,
-    std::string* error) {
-  if (error != nullptr) error->clear();
+    std::string& error) {
+  error.clear();
   if (payload == nullptr || blocks == nullptr ||
       (levels == nullptr && level_count != 0)) {
-    if (error != nullptr) *error = "null stream argument";
+    error = "null stream argument";
     return false;
   }
   payload->clear();
   if (picture.format.depth != fmt::BitDepth::k10) {
-    if (error != nullptr) *error = "high bit depth requires 10-bit samples";
+    error = "high bit depth requires 10-bit samples";
     return false;
   }
   if (fmt::chroma_format_idc(picture.format.chroma) < 0) {
-    if (error != nullptr) *error = "invalid chroma format";
+    error = "invalid chroma format";
     return false;
   }
   if (picture.geometry.mi_cols == 0 || picture.geometry.mi_rows == 0) {
-    if (error != nullptr) *error = "empty picture geometry";
+    error = "empty picture geometry";
     return false;
   }
   if (!high_bitdepth_geometry_supported(picture.format.width,
@@ -1071,15 +1071,15 @@ bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDep
                          const HighBitDepthBlock* blocks, std::size_t block_count,
                          const std::int32_t* levels, std::size_t level_count,
                          std::vector<std::uint8_t>* out,
-                         std::uint32_t* tile_bytes, std::string* error) {
-  if (error != nullptr) error->clear();
+                         std::uint32_t* tile_bytes, std::string& error) {
+  error.clear();
   if (out == nullptr) {
-    if (error != nullptr) *error = "null stream argument";
+    error = "null stream argument";
     return false;
   }
   out->clear();
   if (picture.format.chroma != fmt::ChromaFormat::k420) {
-    if (error != nullptr) *error = "M10 header is 4:2:0 only; use hbd_headers";
+    error = "M10 header is 4:2:0 only; use hbd_headers";
     return false;
   }
 
@@ -1090,8 +1090,8 @@ bool assemble_high_bitdepth_stream(const fmt::Picture& picture, const HighBitDep
   config.base_q_idx = options.base_q_idx;
   config.disable_cdf_update = options.disable_cdf_update;
   std::string config_error;
-  if (!validate_config(config, &config_error)) {
-    if (error != nullptr) *error = config_error;
+  if (!validate_config(config, config_error)) {
+    error = config_error;
     return false;
   }
 

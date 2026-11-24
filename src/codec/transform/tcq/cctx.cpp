@@ -127,9 +127,9 @@ bool cctx_enumerate_scalar(std::span<const double> u_coeff,
                            std::span<const double> v_coeff, int w, int h,
                            const CctxConfig& config,
                            std::vector<CctxResult>* candidates,
-                           std::string* error) {
+                           std::string& error) {
   if (candidates == nullptr) {
-    if (error != nullptr) *error = "CCTX candidate vector must not be null";
+    error = "CCTX candidate vector must not be null";
     return false;
   }
   candidates->clear();
@@ -137,27 +137,27 @@ bool cctx_enumerate_scalar(std::span<const double> u_coeff,
       u_coeff.size() !=
           static_cast<std::size_t>(w) * static_cast<std::size_t>(h) ||
       v_coeff.size() != u_coeff.size()) {
-    if (error != nullptr) *error = "CCTX coefficient spans do not match w*h";
+    error = "CCTX coefficient spans do not match w*h";
     return false;
   }
   if (!std::isfinite(config.quant_step_u) || config.quant_step_u <= 0.0 ||
       !std::isfinite(config.quant_step_v) || config.quant_step_v <= 0.0) {
-    if (error != nullptr) *error = "CCTX quant steps must be finite and > 0";
+    error = "CCTX quant steps must be finite and > 0";
     return false;
   }
   if (config.bitdepth < 8 || config.bitdepth > 16) {
-    if (error != nullptr) *error = "CCTX bitdepth must be in [8, 16]";
+    error = "CCTX bitdepth must be in [8, 16]";
     return false;
   }
   for (double value : u_coeff) {
     if (!std::isfinite(value)) {
-      if (error != nullptr) *error = "CCTX U coefficients must be finite";
+      error = "CCTX U coefficients must be finite";
       return false;
     }
   }
   for (double value : v_coeff) {
     if (!std::isfinite(value)) {
-      if (error != nullptr) *error = "CCTX V coefficients must be finite";
+      error = "CCTX V coefficients must be finite";
       return false;
     }
   }
@@ -219,9 +219,9 @@ bool cctx_enumerate_scalar(std::span<const double> u_coeff,
 bool cctx_quantize_scalar(std::span<const double> u_coeff,
                           std::span<const double> v_coeff, int w, int h,
                           const CctxConfig& config, CctxResult* result,
-                          std::string* error) {
+                          std::string& error) {
   if (result == nullptr) {
-    if (error != nullptr) *error = "CCTX result must not be null";
+    error = "CCTX result must not be null";
     return false;
   }
   *result = CctxResult{};
@@ -231,7 +231,7 @@ bool cctx_quantize_scalar(std::span<const double> u_coeff,
     return false;
   }
   if (candidates.empty()) {
-    if (error != nullptr) *error = "CCTX search produced no candidate";
+    error = "CCTX search produced no candidate";
     return false;
   }
   std::size_t best = 0;

@@ -135,7 +135,7 @@ struct GateCase {
 
 bool check_case(const GateCase& c, const std::string& dav2d,
                 const std::filesystem::path& work, bool keep, int* checks,
-                std::string* error) {
+                std::string& error) {
   const int frame_count = c.temporal_layers > 0 ? c.temporal_layers : 2;
   std::vector<Picture> frames;
   for (int f = 0; f < frame_count; ++f) {
@@ -150,12 +150,12 @@ bool check_case(const GateCase& c, const std::string& dav2d,
   opt.b_schedule = c.b_schedule;
   av2enc::lossless::inter::EncodeResult enc;
   if (!av2enc::lossless::inter::encode_video(frames, opt, &enc, error)) {
-    *error = "encode: " + *error;
+    error = "encode: " + *error;
     return false;
   }
   if (!enc.exact ||
       enc.units.size() != static_cast<std::size_t>(frame_count)) {
-    *error = "encoder did not produce every exact frame";
+    error = "encoder did not produce every exact frame";
     return false;
   }
 
@@ -165,22 +165,22 @@ bool check_case(const GateCase& c, const std::string& dav2d,
   {
     av2enc::lossless::inter::DecodeResult dec;
     if (!av2enc::lossless::inter::decode_video(enc.units, &dec, error)) {
-      *error = "reader: " + *error;
+      error = "reader: " + *error;
       return false;
     }
     if (dec.frames.size() != static_cast<std::size_t>(frame_count)) {
-      *error = "reader produced the wrong frame count";
+      error = "reader produced the wrong frame count";
       return false;
     }
     for (int i = 0; i < frame_count; ++i) {
       if (dec.frames[i].y != frames[i].y) {
-        *error = "reader reconstruction differs at frame " + std::to_string(i);
+        error = "reader reconstruction differs at frame " + std::to_string(i);
         return false;
       }
       if (c.format != ChromaFormat::k400 &&
           (dec.frames[i].u != frames[i].u ||
            dec.frames[i].v != frames[i].v)) {
-        *error = "reader chroma differs at frame " + std::to_string(i);
+        error = "reader chroma differs at frame " + std::to_string(i);
         return false;
       }
     }
@@ -218,7 +218,7 @@ bool check_case(const GateCase& c, const std::string& dav2d,
   std::vector<std::uint8_t> actual;
   if (!read_file(decoded, actual, *error)) return false;
   if (actual.size() != expected.size()) {
-    *error = "dav2d output size " + std::to_string(actual.size()) +
+    error = "dav2d output size " + std::to_string(actual.size()) +
              " != expected " + std::to_string(expected.size());
     return false;
   }
@@ -227,7 +227,7 @@ bool check_case(const GateCase& c, const std::string& dav2d,
     for (std::size_t i = 0; i < expected.size(); ++i) {
       if (actual[i] != expected[i]) ++diff;
     }
-    *error = "dav2d output differs (" + std::to_string(diff) + "/" +
+    error = "dav2d output differs (" + std::to_string(diff) + "/" +
              std::to_string(expected.size()) + " samples)";
     return false;
   }

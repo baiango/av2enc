@@ -20,8 +20,8 @@
 namespace av2enc::dcdeltaq {
 namespace {
 
-void set_error(std::string* error, const char* what) {
-  if (error != nullptr) *error = what;
+void set_error(std::string& error, const char* what) {
+  error = what;
 }
 
 int clip3(int lo, int hi, int v) {
@@ -378,11 +378,11 @@ class CostModel {
     qb.q = quant.plane[plane];
     qb.coefficient_scale = params.quant_factor;
     std::string error;
-    if (!quantize_block(coeff.data(), qb, levels.data(), &error)) return 0.0;
+    if (!quantize_block(coeff.data(), qb, levels.data(), error)) return 0.0;
     *bits += level_bits(levels, w * h);
 
     std::vector<std::int32_t> dequant(static_cast<std::size_t>(w * h));
-    if (!dequantize_block(levels.data(), qb, dequant.data(), &error)) {
+    if (!dequantize_block(levels.data(), qb, dequant.data(), error)) {
       return 0.0;
     }
     std::vector<std::int16_t> rec_residual(static_cast<std::size_t>(w * h));
@@ -445,7 +445,7 @@ std::vector<int> make_candidates(const DeltaQSearchConfig& config) {
 }
 
 bool to_frame(const DeltaVector& d, const SequenceDeltaQ& seq,
-              FrameDeltaQ* frame, std::string* error) {
+              FrameDeltaQ* frame, std::string& error) {
   FrameDeltaQ f;
   f.delta_q_y_dc = d.y_dc;
   f.delta_q_u_dc = d.u_dc;
@@ -462,7 +462,7 @@ bool to_frame(const DeltaVector& d, const SequenceDeltaQ& seq,
 bool search_frame_delta_q(const FramePlanesView& planes,
                           const DeltaQSearchConfig& config,
                           DeltaQSearchResult* result,
-                          std::string* error) {
+                          std::string& error) {
   if (result == nullptr) {
     set_error(error, "search_frame_delta_q: null result");
     return false;

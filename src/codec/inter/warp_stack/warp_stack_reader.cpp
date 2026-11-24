@@ -63,18 +63,18 @@ class Scanner {
   std::size_t pos_ = 0;
 };
 
-bool expect(Scanner& scanner, const char* literal, std::string* error) {
+bool expect(Scanner& scanner, const char* literal, std::string& error) {
   std::string t;
   if (!scanner.token(&t) || t != literal) {
-    *error = std::string("expected '") + literal + "', got '" + t + "'";
+    error = std::string("expected '") + literal + "', got '" + t + "'";
     return false;
   }
   return true;
 }
 
-bool expect_int(Scanner& scanner, int* value, std::string* error) {
+bool expect_int(Scanner& scanner, int* value, std::string& error) {
   if (!scanner.integer(value)) {
-    *error = "expected integer";
+    error = "expected integer";
     return false;
   }
   return true;
@@ -83,42 +83,42 @@ bool expect_int(Scanner& scanner, int* value, std::string* error) {
 }  // namespace
 
 bool read_snapshot(const std::string& text, WarpStack* stack,
-                   std::string* error) {
-  if (stack == nullptr || error == nullptr) return false;
-  error->clear();
+                   std::string& error) {
+  if (stack == nullptr) return false;
+  error.clear();
   *stack = WarpStack{};
   Scanner scanner(text);
 
   if (!expect(scanner, "WARPSTACK", error)) return false;
   int version = 0;
   if (!expect_int(scanner, &version, error) || version != 1) {
-    *error = "unsupported snapshot version";
+    error = "unsupported snapshot version";
     return false;
   }
   if (!expect(scanner, "COUNT", error)) return false;
   int count = 0;
   if (!expect_int(scanner, &count, error) || count < 0 ||
       count > kMaxRefMvStackSize) {
-    *error = "COUNT out of range";
+    error = "COUNT out of range";
     return false;
   }
   if (!expect(scanner, "NEAREST", error)) return false;
   int nearest = 0;
   if (!expect_int(scanner, &nearest, error) || nearest < 0 || nearest > count) {
-    *error = "NEAREST out of range";
+    error = "NEAREST out of range";
     return false;
   }
   if (!expect(scanner, "WARP", error)) return false;
   int warp = 0;
   if (!expect_int(scanner, &warp, error) || warp < 0 ||
       warp > kMaxWarpRefCandidates) {
-    *error = "WARP out of range";
+    error = "WARP out of range";
     return false;
   }
   if (!expect(scanner, "SORTED", error)) return false;
   int sorted = 0;
   if (!expect_int(scanner, &sorted, error) || (sorted != 0 && sorted != 1)) {
-    *error = "SORTED out of range";
+    error = "SORTED out of range";
     return false;
   }
 
@@ -142,7 +142,7 @@ bool read_snapshot(const std::string& text, WarpStack* stack,
     c.row_offset = v[5];
     c.col_offset = v[6];
     if (v[7] < -128 || v[7] > 127) {
-      *error = "cwp out of range";
+      error = "cwp out of range";
       return false;
     }
     c.cwp = static_cast<std::int8_t>(v[7]);
@@ -155,7 +155,7 @@ bool read_snapshot(const std::string& text, WarpStack* stack,
   }
   if (!expect(scanner, "END", error)) return false;
   if (!scanner.at_end()) {
-    *error = "trailing tokens after END";
+    error = "trailing tokens after END";
     return false;
   }
   return true;

@@ -31,7 +31,7 @@ namespace av2enc::inter::warp {
 
 std::string write_snapshot(const WarpStack& stack);
 
-[[nodiscard]] bool read_snapshot(const std::string& text, WarpStack* stack, std::string* error);
+[[nodiscard]] bool read_snapshot(const std::string& text, WarpStack* stack, std::string& error);
 
 }  // namespace av2enc::inter::warp
 

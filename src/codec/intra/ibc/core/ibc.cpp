@@ -81,7 +81,7 @@ void IbcBufferState::mark_coded(int mi_row, int mi_col, int bw,
 
 bool is_bv_valid(const FrameView& frame, const IbcConfig& config,
                  const IbcBufferState& state, int mi_row, int mi_col,
-                 int bsize, BlockVector bv, std::string* reason) {
+                 int bsize, BlockVector bv, std::string& reason) {
   const auto size = static_cast<BlockSize>(bsize);
   const int bw = block_w(size);
   const int bh = block_h(size);
@@ -89,7 +89,7 @@ bool is_bv_valid(const FrameView& frame, const IbcConfig& config,
       (!state.coded.empty() &&
        (mi_row < 0 || mi_col < 0 || mi_row >= state.mi_rows ||
         mi_col >= state.mi_cols))) {
-    if (reason != nullptr) *reason = "invalid IBC block position";
+    reason = "invalid IBC block position";
     return false;
   }
   const int mi_cols = state.mi_cols > 0 ? state.mi_cols : 1;
@@ -120,7 +120,7 @@ bool is_bv_valid(const FrameView& frame, const IbcConfig& config,
     local_ok = check(left, top) && check(right, bottom);
   }
   if (config.allow_local && state.coded.empty()) {
-    if (reason != nullptr) *reason = "local IBC state is not initialized";
+    reason = "local IBC state is not initialized";
     return false;
   }
   int code = 0;
@@ -129,24 +129,24 @@ bool is_bv_valid(const FrameView& frame, const IbcConfig& config,
       frame.has_chroma, mi_row, mi_col, config.allow_local,
       config.allow_global, config.allow_extra_ibc_range, local_ok,
       config.sb_size, total_sb64_per_row, mi_rows, mi_cols, &code);
-  if (!ok && reason != nullptr) {
+  if (!ok) {
     switch (code) {
       case 1:
-        *reason = "source outside the tile";
+        reason = "source outside the tile";
         break;
       case 2:
-        *reason = "source not in a valid local IBC buffer";
+        reason = "source not in a valid local IBC buffer";
         break;
       case 3:
-        *reason = config.allow_global
+        reason = config.allow_global
                       ? "source inside the INTRABC delay window"
                       : "global IBC is disabled";
         break;
       case 4:
-        *reason = "source violates the global wavefront constraint";
+        reason = "source violates the global wavefront constraint";
         break;
       default:
-        *reason = "invalid block vector";
+        reason = "invalid block vector";
         break;
     }
   }
@@ -190,9 +190,10 @@ BvStack build_stack(const FrameView& frame, const IbcConfig& config,
   push_candidate(stack, capacity, BlockVector{0, -bw * 8}, false, false);
 
   for (int i = 0; i < stack.count; ++i) {
+    std::string ignored;
     stack.candidates[static_cast<std::size_t>(i)].valid =
         is_bv_valid(frame, config, state, mi_row, mi_col, bsize,
-                    stack.candidates[static_cast<std::size_t>(i)].bv, nullptr);
+                    stack.candidates[static_cast<std::size_t>(i)].bv, ignored);
   }
   return stack;
 }
@@ -328,7 +329,7 @@ void copy_then_residual(const FrameView& frame, int mi_row, int mi_col,
 
 bool predict_copy(const FrameView& frame, int mi_row, int mi_col, int bsize,
                   BlockVector bv, int visible_w, int visible_h,
-                  CopyResult& out, std::string* error) {
+                  CopyResult& out, std::string& error) {
   const auto size = static_cast<BlockSize>(bsize);
   const int bw = block_w(size);
   const int bh = block_h(size);
@@ -349,7 +350,7 @@ bool predict_copy(const FrameView& frame, int mi_row, int mi_col, int bsize,
   }
   if (!copy_block(frame, mi_row, mi_col, bsize, bv, out.y.data(), bw, u, us, v,
                   vs, visible_w, visible_h)) {
-    if (error != nullptr) *error = "IBC source block is outside the plane";
+    error = "IBC source block is outside the plane";
     return false;
   }
   return true;
@@ -369,7 +370,8 @@ Match search_block(const FrameView& frame, const IbcConfig& config,
       build_stack(frame, config, state, mi_row, mi_col, bsize,
                   neighbours != nullptr ? *neighbours : NeighbourBvs{});
   const auto evaluate = [&](BlockVector bv) {
-    if (!is_bv_valid(frame, config, state, mi_row, mi_col, bsize, bv, nullptr)) {
+    std::string ignored;
+    if (!is_bv_valid(frame, config, state, mi_row, mi_col, bsize, bv, ignored)) {
       return;
     }
     const int dx = plane_offset(bv.col, 0);

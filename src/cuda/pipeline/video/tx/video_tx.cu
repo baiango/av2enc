@@ -830,7 +830,7 @@ constexpr std::int32_t kInterInvLong[2][2][4] = {
 
 bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
                       const VideoTxSearchOptions& options,
-                      std::vector<TypeEntry>* out, std::string* error) {
+                      std::vector<TypeEntry>* out, std::string& error) {
   using residual::InterTxCandidate;
   using residual::InterTxSet;
   using av2enc::txv::TxSize;
@@ -844,7 +844,7 @@ bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
     if (!residual::inter_tx_symbol(ts, options.reduced_tx_set,
                                    options.enable_inter_ddt != 0,
                                    av2enc::txv::TxType::kDctDct, &c)) {
-      if (error != nullptr) *error = "DCT_DCT missing from a DCTONLY set";
+      error = "DCT_DCT missing from a DCTONLY set";
       return false;
     }
     TypeEntry e;
@@ -909,7 +909,7 @@ bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
     out->push_back(e);
   }
   if (out->empty()) {
-    if (error != nullptr) *error = "empty inter TX-type set";
+    error = "empty inter TX-type set";
     return false;
   }
   return true;
@@ -917,7 +917,7 @@ bool inter_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
 
 bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
                       const VideoTxSearchOptions& options,
-                      std::vector<TypeEntry>* out, std::string* error) {
+                      std::vector<TypeEntry>* out, std::string& error) {
   txtype::TxTypeQuery q;
   q.coded_w = coded_w;
   q.coded_h = coded_h;
@@ -926,7 +926,7 @@ bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
   q.dct_only = options.dct_only != 0;
   txtype::TxTypeSet set;
   if (!txtype::intra_tx_candidates(q, &set)) {
-    if (error != nullptr) *error = "intra TX-type candidate enumeration failed";
+    error = "intra TX-type candidate enumeration failed";
     return false;
   }
   out->clear();
@@ -945,7 +945,7 @@ bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
     out->push_back(e);
   }
   if (out->empty()) {
-    if (error != nullptr) *error = "empty intra TX-type set";
+    error = "empty intra TX-type set";
     return false;
   }
   return true;
@@ -953,7 +953,7 @@ bool intra_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
 
 bool build_leaf_types(std::int32_t coded_w, std::int32_t coded_h,
                       VideoTxMode mode, const VideoTxSearchOptions& options,
-                      std::vector<TypeEntry>* out, std::string* error) {
+                      std::vector<TypeEntry>* out, std::string& error) {
   if (mode == VideoTxMode::kIntra) {
     return intra_leaf_types(coded_w, coded_h, options, out, error);
   }
@@ -1028,16 +1028,16 @@ double partition_bits_for(int mi_size, bool is_inter, bool reduced_tx_part_set,
 bool append_candidate(const VideoTxLeafDesc& leaf,
                       std::int32_t tx_size, std::int32_t tx_type,
                       const TypeEntry& entry, VideoTxPlanData* plan,
-                      std::string* error) {
+                      std::string& error) {
   const auto params = av2enc::txv::make_tx_params(
       static_cast<av2enc::txv::TxSize>(tx_size),
       static_cast<av2enc::txv::TxType>(tx_type));
   if (!params.has_value()) {
-    if (error != nullptr) *error = "unsupported transform size/type";
+    error = "unsupported transform size/type";
     return false;
   }
   if (params->coded_w != leaf.coded_w || params->coded_h != leaf.coded_h) {
-    if (error != nullptr) *error = "candidate size does not match leaf";
+    error = "candidate size does not match leaf";
     return false;
   }
   VideoTxCandDesc cand{};
@@ -1060,10 +1060,10 @@ bool append_plan(const VideoTxJobRequest& request,
                  const VideoTxSearchOptions& options, int job_index,
                  int partition, double partition_bits,
                  const txpart::SplitGeometry& geometry, VideoTxPlanData* plan,
-                 std::string* error) {
+                 std::string& error) {
   (void)request;
   if (geometry.count <= 0 || geometry.count > kMaxLeavesPerPlan) {
-    if (error != nullptr) *error = "partition leaf count out of range";
+    error = "partition leaf count out of range";
     return false;
   }
   VideoTxPlanDesc plan_desc{};
@@ -1074,17 +1074,17 @@ bool append_plan(const VideoTxJobRequest& request,
   for (int k = 0; k < geometry.count; ++k) {
     const int tx_size = geometry.parts[k].tx_size;
     if (tx_size < 0 || tx_size >= 25) {
-      if (error != nullptr) *error = "partition produced an invalid TX size";
+      error = "partition produced an invalid TX size";
       return false;
     }
     const int coded_w = txpart::tx_width(tx_size);
     const int coded_h = txpart::tx_height(tx_size);
     if (coded_w > options.max_tx_size || coded_h > options.max_tx_size) {
-      if (error != nullptr) *error = "partition leaf exceeds max_tx_size";
+      error = "partition leaf exceeds max_tx_size";
       return false;
     }
     if (!av2enc::txv::tx_size_supported(coded_w, coded_h)) {
-      if (error != nullptr) *error = "leaf size is not an AV2 TX size";
+      error = "leaf size is not an AV2 TX size";
       return false;
     }
 
@@ -1123,7 +1123,7 @@ bool append_plan(const VideoTxJobRequest& request,
     }
     leaf.cand_count = static_cast<int>(plan->candidates.size()) - leaf.cand_begin;
     if (leaf.cand_count > kMaxCandidatesPerLeaf) {
-      if (error != nullptr) *error = "too many candidates for one leaf";
+      error = "too many candidates for one leaf";
       return false;
     }
     plan->leaves.push_back(leaf);
@@ -1155,12 +1155,12 @@ std::uint64_t scratch_device_bytes(const VideoTxConfig& config) {
 
 Status VideoTxWorkspace::init(Arena& arena, const VideoTxConfig& config_in,
                               std::uint64_t* required_bytes,
-                              std::string* error) {
+                              std::string& error) {
   if (config_in.max_jobs <= 0 || config_in.max_plans_per_job <= 0 ||
       config_in.max_plans_per_job > kMaxPlansPerJob ||
       config_in.max_candidates_per_leaf <= 0 ||
       config_in.max_candidates_per_leaf > kMaxCandidatesPerLeaf) {
-    if (error != nullptr) *error = "invalid VideoTxConfig";
+    error = "invalid VideoTxConfig";
     if (required_bytes != nullptr) *required_bytes = 0;
     return Status::kInvalidArgument;
   }
@@ -1200,7 +1200,7 @@ Status VideoTxWorkspace::init(Arena& arena, const VideoTxConfig& config_in,
     const std::uint64_t required = bytes;
     reset();
     if (required_bytes != nullptr) *required_bytes = required;
-    if (error != nullptr) *error = "VideoTxWorkspace arena exhausted";
+    error = "VideoTxWorkspace arena exhausted";
     return Status::kArenaExhausted;
   }
 
@@ -1217,7 +1217,7 @@ Status VideoTxWorkspace::init(Arena& arena, const VideoTxConfig& config_in,
                             span)) {
         arena.rewind(mark);
         reset();
-        if (error != nullptr) *error = "scan table generation failed";
+        error = "scan table generation failed";
         return Status::kInvalidArgument;
       }
     }
@@ -1229,7 +1229,7 @@ Status VideoTxWorkspace::init(Arena& arena, const VideoTxConfig& config_in,
   if (copy != cudaSuccess) {
     arena.rewind(mark);
     reset();
-    if (error != nullptr) *error = "scan table upload failed";
+    error = "scan table upload failed";
     return status_from_cuda(copy);
   }
   last_error_count = 0;
@@ -1260,15 +1260,15 @@ bool VideoTxWorkspace::valid() const noexcept {
 }
 
 bool video_tx_build_plan(const VideoTxJobRequest* requests, int count,
-                         VideoTxPlanData* plan, std::string* error) {
-  if (error != nullptr) error->clear();
+                         VideoTxPlanData* plan, std::string& error) {
+  error.clear();
   if (plan == nullptr) {
-    if (error != nullptr) *error = "null plan";
+    error = "null plan";
     return false;
   }
   plan->clear();
   if (requests == nullptr || count <= 0) {
-    if (error != nullptr) *error = "no requests";
+    error = "no requests";
     return false;
   }
 
@@ -1276,26 +1276,24 @@ bool video_tx_build_plan(const VideoTxJobRequest* requests, int count,
     const VideoTxJobRequest& r = requests[i];
     if (r.coded_w < 4 || r.coded_w > kMaxCodedDim || r.coded_h < 4 ||
         r.coded_h > kMaxCodedDim) {
-      if (error != nullptr) *error = "block size out of range";
+      error = "block size out of range";
       return false;
     }
     if (r.plane < 0 || r.plane > 2 || r.qindex < 0 || r.qindex > 303) {
-      if (error != nullptr) *error = "bad plane/qindex";
+      error = "bad plane/qindex";
       return false;
     }
     if (av2enc::txv::tx_size_index(r.coded_w, r.coded_h) < 0) {
-      if (error != nullptr) {
-        *error = "block size is not one of the 25 AV2 transform sizes";
-      }
+error = "block size is not one of the 25 AV2 transform sizes";
       return false;
     }
     if (r.search.max_tx_size < 4) {
-      if (error != nullptr) *error = "bad max_tx_size";
+      error = "bad max_tx_size";
       return false;
     }
     if (r.residual_offset < 0 && r.src_packed == 0 &&
         (r.src_visible_w <= 0 || r.src_visible_h <= 0)) {
-      if (error != nullptr) *error = "plane source needs visible bounds";
+      error = "plane source needs visible bounds";
       return false;
     }
 
@@ -1369,9 +1367,7 @@ bool video_tx_build_plan(const VideoTxJobRequest* requests, int count,
         if (!txpart::tx_partition_geometry(mi_size, 0, 0,
                                            legal.options[oi], &geometry,
                                            &geom_error)) {
-          if (error != nullptr) {
-            *error = "legal partition did not resolve: " + geom_error;
-          }
+error = "legal partition did not resolve: " + geom_error;
           return false;
         }
         const double bits = partition_bits_for(
@@ -1386,12 +1382,12 @@ bool video_tx_build_plan(const VideoTxJobRequest* requests, int count,
     }
 
     if (!any_plan) {
-      if (error != nullptr) *error = "no candidate plan selected";
+      error = "no candidate plan selected";
       return false;
     }
     job.plan_count = static_cast<int>(plan->plans.size()) - job.plan_begin;
     if (job.plan_count > kMaxPlansPerJob) {
-      if (error != nullptr) *error = "too many plans for one block";
+      error = "too many plans for one block";
       return false;
     }
     plan->jobs.push_back(job);

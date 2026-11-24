@@ -453,17 +453,17 @@ std::int32_t dequantize_level(std::int32_t level, std::int32_t dq,
 }
 
 bool make_geometry(std::int32_t tx_size, TxClass tx_class, std::int32_t plane,
-                   Geometry* geometry, std::string* error) {
+                   Geometry* geometry, std::string& error) {
   if (geometry == nullptr) {
-    if (error != nullptr) *error = "null geometry";
+    error = "null geometry";
     return false;
   }
   if (tx_size < 0 || tx_size >= kTxSizesAll) {
-    if (error != nullptr) *error = "tx_size must be in [0, 24]";
+    error = "tx_size must be in [0, 24]";
     return false;
   }
   if (plane < 0 || plane > 2) {
-    if (error != nullptr) *error = "plane must be in [0, 2]";
+    error = "plane must be in [0, 2]";
     return false;
   }
   geometry->tx_size = tx_size;
@@ -553,11 +553,11 @@ void build_scan(std::int32_t w, std::int32_t h, TxClass tx_class,
 }
 
 bool build_scan(const Geometry& geometry, std::span<std::int32_t> scan,
-                std::string* error) {
+                std::string& error) {
   const std::size_t area = static_cast<std::size_t>(geometry.w) *
                            static_cast<std::size_t>(geometry.h);
   if (scan.size() < area) {
-    if (error != nullptr) *error = "scan span is smaller than w*h";
+    error = "scan span is smaller than w*h";
     return false;
   }
   build_scan(geometry.w, geometry.h, geometry.tx_class, scan);
@@ -598,17 +598,15 @@ std::int32_t escape_bit_count(std::int32_t x, std::int32_t predictor) noexcept {
 
 bool derive_syntax(std::span<const std::int32_t> levels_scan,
                    const Geometry& geometry, const Eligibility& eligibility,
-                   BlockSyntax* syntax, std::string* error) {
+                   BlockSyntax* syntax, std::string& error) {
   if (syntax == nullptr) {
-    if (error != nullptr) *error = "null syntax";
+    error = "null syntax";
     return false;
   }
   const std::size_t area = static_cast<std::size_t>(geometry.w) *
                            static_cast<std::size_t>(geometry.h);
   if (levels_scan.size() != area) {
-    if (error != nullptr) {
-      *error = "levels span size does not match the adjusted block";
-    }
+error = "levels span size does not match the adjusted block";
     return false;
   }
 
@@ -695,9 +693,7 @@ bool derive_syntax(std::span<const std::int32_t> levels_scan,
     const std::int32_t dc_parity = abs_level & 1;
 
     if (is_hidden && dc_parity != sum_abs1) {
-      if (error != nullptr) {
-        *error = "hidden DC parity does not match sumAbs1";
-      }
+error = "hidden DC parity does not match sumAbs1";
       return false;
     }
 
@@ -761,11 +757,11 @@ bool derive_syntax(std::span<const std::int32_t> levels_scan,
       p.hr_predictor = hr_level_avg >> lvl_shift;
       p.escape_bits = escape_bit_count(p.escape_x, p.hr_predictor);
       if (p.escape_bits < 0) {
-        if (error != nullptr) *error = "escape value is not codable";
+        error = "escape value is not codable";
         return false;
       }
       if (p.escape_x > (1 << 20)) {
-        if (error != nullptr) *error = "escape value is too large";
+        error = "escape value is too large";
         return false;
       }
       hr_level_avg =
@@ -780,20 +776,20 @@ bool derive_syntax(std::span<const std::int32_t> levels_scan,
 // ---------------------------------------------------------------------------
 
 bool decode_syntax(const BlockSyntax& syntax, const Geometry& geometry,
-                   DecodedBlock* decoded, std::string* error) {
+                   DecodedBlock* decoded, std::string& error) {
   if (decoded == nullptr) {
-    if (error != nullptr) *error = "null decoded block";
+    error = "null decoded block";
     return false;
   }
   const std::size_t area = static_cast<std::size_t>(geometry.w) *
                            static_cast<std::size_t>(geometry.h);
   if (syntax.eob < 0 || static_cast<std::size_t>(syntax.eob) > area) {
-    if (error != nullptr) *error = "eob outside the block";
+    error = "eob outside the block";
     return false;
   }
   if (syntax.positions.size() !=
       static_cast<std::size_t>(syntax.eob)) {
-    if (error != nullptr) *error = "syntax position count does not match eob";
+    error = "syntax position count does not match eob";
     return false;
   }
   if (syntax.eob == 0) {
@@ -825,20 +821,20 @@ bool decode_syntax(const BlockSyntax& syntax, const Geometry& geometry,
     if (level > limits.base_levels &&
         !(limits.is_lf && limits.br_max == 0)) {
       if (!p.br_present) {
-        if (error != nullptr) *error = "coeff_br expected but not present";
+        error = "coeff_br expected but not present";
         return false;
       }
       level += p.br_symbol;
       if (p.br_symbol < 0 || p.br_symbol > limits.br_max) {
-        if (error != nullptr) *error = "coeff_br symbol outside [0, 3]";
+        error = "coeff_br symbol outside [0, 3]";
         return false;
       }
     } else if (p.br_present) {
-      if (error != nullptr) *error = "unexpected coeff_br";
+      error = "unexpected coeff_br";
       return false;
     }
     if (limits.is_lf && limits.br_max == 0 && level > limits.base_max) {
-      if (error != nullptr) *error = "LF chroma level exceeds base_max";
+      error = "LF chroma level exceeds base_max";
       return false;
     }
     level_pre[static_cast<std::size_t>(p.pos)] = level;
@@ -850,9 +846,7 @@ bool decode_syntax(const BlockSyntax& syntax, const Geometry& geometry,
   }
 
   if (is_hidden != syntax.is_hidden || sum_abs1 != syntax.sum_abs1) {
-    if (error != nullptr) {
-      *error = "decoded hidden state disagrees with the syntax record";
-    }
+error = "decoded hidden state disagrees with the syntax record";
     return false;
   }
 
@@ -872,25 +866,25 @@ bool decode_syntax(const BlockSyntax& syntax, const Geometry& geometry,
     const bool sign_present =
         (level != 0) || (hidden_dc && sum_abs1 > 0);
     if (sign_present != p.sign_present) {
-      if (error != nullptr) *error = "sign presence disagrees with the syntax";
+      error = "sign presence disagrees with the syntax";
       return false;
     }
 
     std::int32_t quant = level;
     const bool escape_expected = level >= max_level;
     if (escape_expected != p.escape_present) {
-      if (error != nullptr) *error = "escape presence disagrees with the syntax";
+      error = "escape presence disagrees with the syntax";
       return false;
     }
     if (p.escape_present) {
       const std::int32_t lvl_shift = hidden_dc ? 1 : 0;
       const std::int32_t predictor = hr_level_avg >> lvl_shift;
       if (predictor != p.hr_predictor) {
-        if (error != nullptr) *error = "escape predictor disagrees";
+        error = "escape predictor disagrees";
         return false;
       }
       if (escape_bit_count(p.escape_x, predictor) != p.escape_bits) {
-        if (error != nullptr) *error = "escape bit count disagrees";
+        error = "escape bit count disagrees";
         return false;
       }
       quant += p.escape_x;  // allowTcq == 0 for parity hiding
@@ -913,17 +907,17 @@ bool decode_syntax(const BlockSyntax& syntax, const Geometry& geometry,
 }
 
 bool decoded_levels(const BlockSyntax& syntax, const Geometry& geometry,
-                    std::span<std::int32_t> levels_scan, std::string* error) {
+                    std::span<std::int32_t> levels_scan, std::string& error) {
   const std::size_t area = static_cast<std::size_t>(geometry.w) *
                            static_cast<std::size_t>(geometry.h);
   if (levels_scan.size() < area) {
-    if (error != nullptr) *error = "levels span is smaller than w*h";
+    error = "levels span is smaller than w*h";
     return false;
   }
   DecodedBlock decoded;
   if (!decode_syntax(syntax, geometry, &decoded, error)) return false;
   if (decoded.quant_levels.size() != area) {
-    if (error != nullptr) *error = "decoded block size mismatch";
+    error = "decoded block size mismatch";
     return false;
   }
   std::vector<std::int32_t> scan(area, 0);
@@ -1211,7 +1205,7 @@ bool evaluate_candidate(std::span<const double> original,
                         const Candidate& candidate, const Geometry& geometry,
                         const Eligibility& eligibility,
                         const QuantizeConfig& config, Evaluation* out,
-                        std::string* error) {
+                        std::string& error) {
   out->syntax = BlockSyntax{};
   if (!derive_syntax(candidate.levels, geometry, eligibility, &out->syntax,
                      error)) {
@@ -1226,7 +1220,7 @@ bool evaluate_candidate(std::span<const double> original,
     const std::int32_t actual =
         decoded.quant_levels[static_cast<std::size_t>(scan[c])];
     if (expected != actual) {
-      if (error != nullptr) *error = "encoder/decoder level mismatch";
+      error = "encoder/decoder level mismatch";
       return false;
     }
   }
@@ -1243,7 +1237,7 @@ bool evaluate_candidate(std::span<const double> original,
   }
   const double bits = block_rate_bits(out->syntax, geometry, config.rate);
   if (bits < 0.0) {
-    if (error != nullptr) *error = "rate model rejected the block";
+    error = "rate model rejected the block";
     return false;
   }
   out->distortion = distortion;
@@ -1273,25 +1267,23 @@ bool quantize_config_valid(const QuantizeConfig& config) noexcept {
 bool quantize(std::span<const double> original,
               std::span<const std::int32_t> levels_seed,
               const Geometry& geometry, const QuantizeConfig& config,
-              QuantizeResult* result, std::string* error) {
+              QuantizeResult* result, std::string& error) {
   if (result == nullptr) {
-    if (error != nullptr) *error = "null result";
+    error = "null result";
     return false;
   }
   const std::size_t area = static_cast<std::size_t>(geometry.w) *
                            static_cast<std::size_t>(geometry.h);
   if (original.size() != area || levels_seed.size() != area) {
-    if (error != nullptr) {
-      *error = "input spans must have exactly w*h entries";
-    }
+error = "input spans must have exactly w*h entries";
     return false;
   }
   if (!quantize_config_valid(config)) {
-    if (error != nullptr) *error = "invalid quantize config";
+    error = "invalid quantize config";
     return false;
   }
   if (!config.dequant_step.empty() && config.dequant_step.size() != area) {
-    if (error != nullptr) *error = "dequant_step span must have w*h entries";
+    error = "dequant_step span must have w*h entries";
     return false;
   }
 
@@ -1305,7 +1297,7 @@ bool quantize(std::span<const double> original,
   std::int32_t dc_parity = 0;
   if (!analyze_ac(levels_seed, geometry, &eob, &num_nz, &sum_abs1,
                   &dc_parity)) {
-    if (error != nullptr) *error = "seed level analysis failed";
+    error = "seed level analysis failed";
     return false;
   }
 
@@ -1444,10 +1436,8 @@ bool quantize(std::span<const double> original,
     }
   }
   if (best < 0) {
-    if (error != nullptr) {
-      *error = candidate_error.empty() ? "no representable candidate"
-                                       : candidate_error;
-    }
+error = candidate_error.empty() ? "no representable candidate"
+                                 : candidate_error;
     return false;
   }
 
@@ -1469,19 +1459,19 @@ bool quantize(std::span<const double> original,
 
 bool quantize_scalar(std::span<const double> original,
                      const Geometry& geometry, const QuantizeConfig& config,
-                     QuantizeResult* result, std::string* error) {
+                     QuantizeResult* result, std::string& error) {
   const std::size_t area = static_cast<std::size_t>(geometry.w) *
                            static_cast<std::size_t>(geometry.h);
   if (original.size() != area) {
-    if (error != nullptr) *error = "input span must have w*h entries";
+    error = "input span must have w*h entries";
     return false;
   }
   if (!quantize_config_valid(config)) {
-    if (error != nullptr) *error = "invalid quantize config";
+    error = "invalid quantize config";
     return false;
   }
   if (!config.dequant_step.empty() && config.dequant_step.size() != area) {
-    if (error != nullptr) *error = "dequant_step span must have w*h entries";
+    error = "dequant_step span must have w*h entries";
     return false;
   }
   std::vector<std::int32_t> levels(area, 0);
@@ -1491,7 +1481,7 @@ bool quantize_scalar(std::span<const double> original,
                             : config.dequant_step[i];
     const double scaled = original[i] / step;
     if (!std::isfinite(scaled)) {
-      if (error != nullptr) *error = "non-finite coefficient";
+      error = "non-finite coefficient";
       return false;
     }
     const long long rounded = std::llround(scaled);
@@ -1506,11 +1496,11 @@ bool quantize_scalar(std::span<const double> original,
 bool apply_parity_hiding(std::span<const double> original,
                          std::span<std::int32_t> levels,
                          const Geometry& geometry, const QuantizeConfig& config,
-                         BlockSyntax* syntax, std::string* error) {
+                         BlockSyntax* syntax, std::string& error) {
   const std::size_t area = static_cast<std::size_t>(geometry.w) *
                            static_cast<std::size_t>(geometry.h);
   if (levels.size() != area || original.size() != area) {
-    if (error != nullptr) *error = "spans must have w*h entries";
+    error = "spans must have w*h entries";
     return false;
   }
   const std::vector<std::int32_t> seed(levels.begin(), levels.end());

@@ -67,8 +67,8 @@ struct Workspace {
   // that `config`'s per-launch scratch fits in the remaining space.  On
   // kArenaExhausted, *required_bytes is the full required_device_bytes(config).
   Status init(Arena& arena, const LaunchConfig& config_in,
-              std::uint64_t* required_bytes = nullptr,
-              std::string* error = nullptr);
+              std::uint64_t* required_bytes,
+              std::string& error);
 
   // Forgets the pointers without freeing anything (the arena owns the memory).
   void reset() noexcept;
@@ -104,8 +104,8 @@ struct LaunchScratch {
 // required_device_bytes(workspace.config).
 Status acquire_scratch(Arena& arena, const Workspace& workspace, int plan_count,
                        LaunchScratch* scratch,
-                       std::uint64_t* required_bytes = nullptr,
-                       std::string* error = nullptr);
+                       std::uint64_t* required_bytes,
+                       std::string& error);
 
 // Rewinds the arena to the mark taken by acquire_scratch().  Safe to call once.
 void release_scratch(Arena& arena, LaunchScratch& scratch) noexcept;
@@ -137,21 +137,21 @@ struct PlanBatch {
 // Validates every request and fills the prefix offsets.  Returns
 // kInvalidArgument with a descriptive error for an illegal partition.
 Status make_batch(const PlanRequest* requests, int count, PlanBatch* batch,
-                  std::string* error = nullptr);
+                  std::string& error);
 
 // Convenience overload for one plan.
 Status make_batch(const PlanRequest& request, PlanBatch* batch,
-                  std::string* error = nullptr);
+                  std::string& error);
 
 // Resolves `batch` on the host (same code as the device kernel) into
 // absolute-indexed TxBlockJobs.  `capacity` must be >= batch.total_parts.
 Status build_host_jobs(const Workspace& workspace, const PlanBatch& batch,
                        TxBlockJob* jobs, int capacity,
-                       std::string* error = nullptr);
+                       std::string& error);
 
 // Same for the resolved part origins.
 Status build_host_parts(const PlanBatch& batch, ResolvedPart* parts,
-                        int capacity, std::string* error = nullptr);
+                        int capacity, std::string& error);
 
 // LumaTxSizes / LumaTxMiddle / LumaTxScanOrder builder, identical to the CPU
 // driver's set_tx_size() walk.  Grid cells outside the parts stay 0.

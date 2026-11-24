@@ -106,11 +106,9 @@ class MockBackend final : public DeviceBackend {
     return Status::kOk;
   }
 
-  Status context_init(int ordinal, std::string* error) override {
+  Status context_init(int ordinal, std::string& error) override {
     if (ordinal < 0 || ordinal >= static_cast<int>(devices_.size())) {
-      if (error != nullptr) {
-        *error = "mock: no such device";
-      }
+error = "mock: no such device";
       return Status::kDeviceUnavailable;
     }
     contexts_.insert(ordinal);
@@ -124,7 +122,7 @@ class MockBackend final : public DeviceBackend {
   }
 
   Status stream_create(int ordinal, StreamHandle* out,
-                       std::string* error) override {
+                       std::string& error) override {
     (void)error;
     if (out == nullptr) {
       return Status::kInvalidArgument;
@@ -150,7 +148,7 @@ class MockBackend final : public DeviceBackend {
   }
 
   Status event_create(int ordinal, bool timing, EventHandle* out,
-                      std::string* error) override {
+                      std::string& error) override {
     (void)timing;
     (void)error;
     if (out == nullptr) {
@@ -225,7 +223,7 @@ class MockBackend final : public DeviceBackend {
   }
 
   Status arena_init(int ordinal, std::uint64_t capacity_bytes,
-                    ArenaHandle* out, std::string* error) override {
+                    ArenaHandle* out, std::string& error) override {
     if (out == nullptr || ordinal < 0 ||
         ordinal >= static_cast<int>(devices_.size())) {
       return Status::kInvalidArgument;
@@ -233,9 +231,7 @@ class MockBackend final : public DeviceBackend {
     const auto fail = options_.arena_fail_above.find(ordinal);
     if (fail != options_.arena_fail_above.end() &&
         capacity_bytes > fail->second) {
-      if (error != nullptr) {
-        *error = "mock: cudaMalloc refused (OOM injection)";
-      }
+error = "mock: cudaMalloc refused (OOM injection)";
       return Status::kOutOfMemory;
     }
     if (capacity_bytes == 0) {
@@ -263,7 +259,7 @@ class MockBackend final : public DeviceBackend {
 
   Status arena_allocate(ArenaHandle arena, std::size_t bytes,
                         std::size_t alignment, void** out,
-                        std::string* error) override {
+                        std::string& error) override {
     if (out == nullptr) {
       return Status::kInvalidArgument;
     }
@@ -279,9 +275,7 @@ class MockBackend final : public DeviceBackend {
         options_.arena_allocate_fail_above.find(it->second.ordinal);
     if (fail != options_.arena_allocate_fail_above.end() &&
         bytes > fail->second) {
-      if (error != nullptr) {
-        *error = "mock: arena allocation refused (OOM injection)";
-      }
+error = "mock: arena allocation refused (OOM injection)";
       return Status::kArenaExhausted;
     }
     const std::uint64_t aligned =
@@ -289,16 +283,12 @@ class MockBackend final : public DeviceBackend {
         ~(static_cast<std::uint64_t>(alignment) - 1);
     if (aligned > it->second.capacity ||
         bytes > it->second.capacity - aligned) {
-      if (error != nullptr) {
-        *error = "mock: arena exhausted";
-      }
+error = "mock: arena exhausted";
       return Status::kArenaExhausted;
     }
     void* block = std::malloc(bytes);
     if (block == nullptr) {
-      if (error != nullptr) {
-        *error = "mock: host malloc failed";
-      }
+error = "mock: host malloc failed";
       return Status::kOutOfMemory;
     }
     it->second.blocks.push_back(block);
@@ -318,14 +308,12 @@ class MockBackend final : public DeviceBackend {
   }
 
   Status pinned_alloc(std::size_t bytes, void** out,
-                      std::string* error) override {
+                      std::string& error) override {
     if (out == nullptr || bytes == 0) {
       return Status::kInvalidArgument;
     }
     if (options_.fail_pinned_alloc) {
-      if (error != nullptr) {
-        *error = "mock: pinned allocation refused";
-      }
+error = "mock: pinned allocation refused";
       return Status::kOutOfMemory;
     }
     void* block = std::malloc(bytes);

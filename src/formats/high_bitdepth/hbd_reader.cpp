@@ -113,9 +113,9 @@ bool read_leb128(std::span<const std::uint8_t> bytes, std::size_t* pos,
 }
 
 bool parse_sequence(std::span<const std::uint8_t> payload,
-                    HbdSequenceHeader* out, std::string* error) {
-  const auto fail = [error](const char* text) {
-    if (error != nullptr) *error = text;
+                    HbdSequenceHeader* out, std::string& error) {
+  const auto fail = [&error](const char* text) {
+    error = text;
     return false;
   };
   BitReader reader(payload);
@@ -243,13 +243,13 @@ bool parse_sequence(std::span<const std::uint8_t> payload,
 }  // namespace
 
 bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
-                  std::string* error) {
+                  std::string& error) {
   if (out == nullptr) {
-    if (error != nullptr) *error = "null output";
+    error = "null output";
     return false;
   }
   *out = HbdParsedStream{};
-  if (error != nullptr) error->clear();
+  error.clear();
 
   std::size_t pos = 0;
   while (pos < bytes.size()) {
@@ -257,11 +257,11 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
     obu.prefix_offset = pos;
     std::uint32_t obu_size = 0;
     if (!read_leb128(bytes, &pos, &obu_size)) {
-      if (error != nullptr) *error = "bad leb128 OBU size";
+      error = "bad leb128 OBU size";
       return false;
     }
     if (obu_size == 0U || pos + obu_size > bytes.size()) {
-      if (error != nullptr) *error = "OBU size out of range";
+      error = "OBU size out of range";
       return false;
     }
     const std::uint8_t header = bytes[pos];
@@ -270,7 +270,7 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
     obu.tlayer_id = static_cast<int>(header & 0x03U);
     obu.header_bytes = obu.extension_flag ? 2U : 1U;
     if (obu.header_bytes > obu_size) {
-      if (error != nullptr) *error = "OBU header larger than OBU";
+      error = "OBU header larger than OBU";
       return false;
     }
     obu.payload_offset = pos + obu.header_bytes;
@@ -287,11 +287,11 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
       HbdSequenceHeader seq;
       if (!parse_sequence(payload, &seq, error)) return false;
       if (seq.bit_depth_idc != 0) {
-        if (error != nullptr) *error = "sequence is not 10-bit (idc != 0)";
+        error = "sequence is not 10-bit (idc != 0)";
         return false;
       }
       if (out->has_sequence) {
-        if (error != nullptr) *error = "multiple sequence headers";
+        error = "multiple sequence headers";
         return false;
       }
       out->sequence = seq;
@@ -299,7 +299,7 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
     }
   }
   if (!out->has_sequence) {
-    if (error != nullptr) *error = "missing sequence header";
+    error = "missing sequence header";
     return false;
   }
 
@@ -313,28 +313,28 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
     bool bit = false;
 
     if (!reader.read_bit(&bit) || !bit) {
-      if (error != nullptr) *error = "tile group: is_first_tile_group";
+      error = "tile group: is_first_tile_group";
       return false;
     }
     frame.is_first_tile_group = true;
     if (!reader.uvlc(&value)) {
-      if (error != nullptr) *error = "frame: cur_mfh_id";
+      error = "frame: cur_mfh_id";
       return false;
     }
     if (!reader.uvlc(&value)) {
-      if (error != nullptr) *error = "frame: seq_header_id";
+      error = "frame: seq_header_id";
       return false;
     }
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: screen content tools";
+      error = "frame: screen content tools";
       return false;
     }
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: allow_intrabc";
+      error = "frame: allow_intrabc";
       return false;
     }
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: disable_cdf_update";
+      error = "frame: disable_cdf_update";
       return false;
     }
     frame.disable_cdf_update = bit;
@@ -345,51 +345,51 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
     const std::uint32_t sb_rows =
         (2U * ((out->sequence.max_frame_height + 7U) >> 3U) + 15U) >> 4U;
     if (!reader.read_bit(&bit) || !bit) {
-      if (error != nullptr) *error = "frame: uniform_tile_spacing";
+      error = "frame: uniform_tile_spacing";
       return false;
     }
     if (sb_cols > 1U) {
       if (!reader.read_bit(&bit) || bit) {
-        if (error != nullptr) *error = "frame: increment_tile_cols_log2";
+        error = "frame: increment_tile_cols_log2";
         return false;
       }
     }
     if (sb_rows > 1U) {
       if (!reader.read_bit(&bit) || bit) {
-        if (error != nullptr) *error = "frame: increment_tile_rows_log2";
+        error = "frame: increment_tile_rows_log2";
         return false;
       }
     }
 
     // §5.18.6.1: f(9) at 10-bit.
     if (!reader.read_bits(9U, &value)) {
-      if (error != nullptr) *error = "frame: base_q_idx";
+      error = "frame: base_q_idx";
       return false;
     }
     frame.base_q_idx = static_cast<std::uint16_t>(value);
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: segmentation";
+      error = "frame: segmentation";
       return false;
     }
     frame.segmentation_enabled = bit;
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: using_qmatrix";
+      error = "frame: using_qmatrix";
       return false;
     }
     frame.using_qmatrix = bit;
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: delta_q_present";
+      error = "frame: delta_q_present";
       return false;
     }
     frame.delta_q_present = bit;
 
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: deblock y vert";
+      error = "frame: deblock y vert";
       return false;
     }
     frame.apply_deblocking_filter[0] = bit;
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: deblock y horz";
+      error = "frame: deblock y horz";
       return false;
     }
     frame.apply_deblocking_filter[1] = bit;
@@ -397,12 +397,12 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
         frame.apply_deblocking_filter[0] || frame.apply_deblocking_filter[1];
     if (have_chroma) {
       if (!reader.read_bit(&bit)) {
-        if (error != nullptr) *error = "frame: deblock u";
+        error = "frame: deblock u";
         return false;
       }
       frame.apply_deblocking_filter[2] = bit;
       if (!reader.read_bit(&bit)) {
-        if (error != nullptr) *error = "frame: deblock v";
+        error = "frame: deblock v";
         return false;
       }
       frame.apply_deblocking_filter[3] = bit;
@@ -410,24 +410,24 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
     for (int plane = 0; plane < 4; ++plane) {
       if (!frame.apply_deblocking_filter[plane]) continue;
       if (!reader.read_bit(&bit) || bit) {
-        if (error != nullptr) *error = "frame: df_delta_q_present";
+        error = "frame: df_delta_q_present";
         return false;
       }
     }
 
     if (!reader.read_bit(&bit)) {
-      if (error != nullptr) *error = "frame: tx_mode_select";
+      error = "frame: tx_mode_select";
       return false;
     }
     frame.tx_mode_select = bit;
     if (!reader.read_bits(2U, &value)) {
-      if (error != nullptr) *error = "frame: reduced_tx_set";
+      error = "frame: reduced_tx_set";
       return false;
     }
     frame.reduced_tx_set = static_cast<int>(value);
 
     if (!reader.align_zero()) {
-      if (error != nullptr) *error = "frame: byte_alignment not zero";
+      error = "frame: byte_alignment not zero";
       return false;
     }
     const std::size_t header_bytes = reader.bits_read() / 8U;
@@ -441,7 +441,7 @@ bool parse_stream(std::span<const std::uint8_t> bytes, HbdParsedStream* out,
     return true;
   }
 
-  if (error != nullptr) *error = "missing tile group";
+  error = "missing tile group";
   return false;
 }
 

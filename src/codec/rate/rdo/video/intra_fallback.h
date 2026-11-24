@@ -29,6 +29,6 @@ struct IntraPlaneRateInput {
 // Sum of `TransformStreamRate::block_bits()` over the three planes.  Returns
 // false on an invalid geometry or level span and sets `error`.
 [[nodiscard]] bool intra_coefficient_bits(std::span<const IntraPlaneRateInput> planes,
-                            double* bits, std::string* error = nullptr);
+                            double* bits, std::string& error);
 
 }  // namespace av2enc::video::rdo

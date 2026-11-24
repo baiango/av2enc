@@ -72,7 +72,7 @@ enum class Y4mReadResult {
 // Exposed separately from Y4mReader so a fuzzer can drive it without a file;
 // the reader's member function is a thin wrapper.
 [[nodiscard]] bool parse_y4m_header(std::string_view line, Y4mHeader* header,
-                      std::string* error);
+                      std::string& error);
 
 class Y4mReader {
  public:

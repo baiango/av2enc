@@ -47,7 +47,7 @@ struct PartitionDecideConfig {
 
 [[nodiscard]] bool partition_config_valid(const PartitionDecideConfig& config) noexcept;
 [[nodiscard]] bool validate_partition_config(const PartitionDecideConfig& config,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 // Converts one node's raw inputs to the partition module's cost form.
 partition::NodeCosts lagrangian_node_costs(
@@ -74,14 +74,14 @@ PartitionRdoDecision decide_frame_rdo(const partition::FrameGeometry& geometry,
                                       const PartitionRawCostFunction& costs,
                                       const partition::DecisionOptions& options,
                                       const PartitionDecideConfig& config,
-                                      std::string* error = nullptr);
+                                      std::string& error);
 
 // Single-superblock variant.
 PartitionRdoDecision decide_superblock_rdo(
     const partition::FrameGeometry& geometry, int sb_mi_row, int sb_mi_col,
     const PartitionRawCostFunction& costs,
     const partition::DecisionOptions& options,
-    const PartitionDecideConfig& config, std::string* error = nullptr);
+    const PartitionDecideConfig& config, std::string& error);
 
 // Documented proxy for a leaf's coefficient+syntax rate when the caller only
 // has a distortion estimate (the M1 partition search runs before prediction).

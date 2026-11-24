@@ -43,7 +43,7 @@ using ChromaRateEstimator = bool (*)(void* context,
 [[nodiscard]] bool estimate_chroma_rates(ChromaRateEstimator estimator, void* context,
                            const ChromaRateRequest& request,
                            ChromaRateEstimate& out,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 struct ChromaCandidateCost {
   bool is_cfl = false;
@@ -92,7 +92,7 @@ class ChromaModeSelector {
   explicit ChromaModeSelector(const ChromaRdoConfig& config) noexcept;
 
   bool add(const ChromaCandidateCost& candidate,
-           std::string* error = nullptr);
+           std::string& error);
 
   const ChromaChoice& choice() const noexcept { return choice_; }
   void reset() noexcept;
@@ -104,7 +104,7 @@ class ChromaModeSelector {
 
 ChromaChoice select_chroma_mode(std::span<const ChromaCandidateCost> candidates,
                                 const ChromaRdoConfig& config,
-                                std::string* error = nullptr);
+                                std::string& error);
 
 // Convenience for the M1 experiment/integration: fill rates from a pluggable
 // estimator into a caller-owned scratch array, then select.  Both spans are
@@ -112,9 +112,8 @@ ChromaChoice select_chroma_mode(std::span<const ChromaCandidateCost> candidates,
 ChromaChoice decide_chroma(std::span<const ChromaCandidateCost> candidates,
                            std::span<ChromaCandidateCost> scratch,
                            const LambdaConfig& config,
-                           ChromaRateEstimator estimator = nullptr,
-                           void* estimator_context = nullptr,
-                           std::string* error = nullptr);
+                           ChromaRateEstimator estimator,
+                           void* estimator_context, std::string& error);
 
 // Placeholder default syntax cost (CfL flag / UV mode).  The entropy owner
 // should replace it with the exact §5.20.5.7 / §5.20.5.8 costs.

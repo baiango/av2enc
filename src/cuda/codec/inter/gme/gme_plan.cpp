@@ -16,11 +16,9 @@ std::uint64_t align_up(std::uint64_t bytes) noexcept {
   return (bytes + alignment - 1) & ~(alignment - 1);
 }
 
-void set_error(std::string* error, const char* context,
+void set_error(std::string& error, const char* context,
                const std::string& detail) {
-  if (error != nullptr) {
-    *error = std::string(context) + ": " + detail;
-  }
+error = std::string(context) + ": " + detail;
 }
 
 bool buffers_ready(const GmeBuffers& buffers) noexcept {
@@ -86,7 +84,7 @@ const char* gme_status_name(GmeStatus status) noexcept {
 GmeStatus allocate_checked(Arena& arena, const GmeConfig& config,
                            GmeBuffers* out,
                            std::uint64_t* required_bytes,
-                           std::string* error) {
+                           std::string& error) {
   if (required_bytes != nullptr) *required_bytes = 0;
   if (out == nullptr) {
     set_error(error, "allocate_checked", "null output");
@@ -193,7 +191,7 @@ bool gme_rewind(Arena& arena, std::uint64_t mark) noexcept {
 
 GmeStatus stage_points(const GmeBuffers& buffers, int job,
                        const GmePoint* host_points, int count,
-                       cudaStream_t stream, std::string* error) {
+                       cudaStream_t stream, std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "stage_points", "buffers are not initialized");
     return GmeStatus::kNotInitialized;
@@ -227,7 +225,7 @@ GmeStatus stage_points(const GmeBuffers& buffers, int job,
 
 GmeStatus stage_blocks(const GmeBuffers& buffers, int job,
                        const GmeBlockMv* host_blocks, int count,
-                       cudaStream_t stream, std::string* error) {
+                       cudaStream_t stream, std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "stage_blocks", "buffers are not initialized");
     return GmeStatus::kNotInitialized;
@@ -261,7 +259,7 @@ GmeStatus stage_blocks(const GmeBuffers& buffers, int job,
 
 GmeStatus stage_warps(const GmeBuffers& buffers, int job,
                       const GmeWarpSample* host_warps, int count,
-                      cudaStream_t stream, std::string* error) {
+                      cudaStream_t stream, std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "stage_warps", "buffers are not initialized");
     return GmeStatus::kNotInitialized;
@@ -295,7 +293,7 @@ GmeStatus stage_warps(const GmeBuffers& buffers, int job,
 
 GmeStatus download_estimate(const GmeBuffers& buffers, int job,
                             GmeEstimate* out, cudaStream_t stream,
-                            std::string* error) {
+                            std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "download_estimate", "buffers are not initialized");
     return GmeStatus::kNotInitialized;
@@ -325,7 +323,7 @@ GmeStatus download_estimate(const GmeBuffers& buffers, int job,
 
 GmeStatus download_estimates(const GmeBuffers& buffers, GmeEstimate* out,
                              int count, cudaStream_t stream,
-                             std::string* error) {
+                             std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "download_estimates", "buffers are not initialized");
     return GmeStatus::kNotInitialized;

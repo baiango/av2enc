@@ -117,11 +117,9 @@ std::size_t required_device_bytes(const MvStackConfig& config) {
 }
 
 Status Workspace::create(Arena& arena, const MvStackConfig& config,
-                         std::string* error, std::size_t* out_required_bytes) {
+                         std::string& error, std::size_t* out_required_bytes) {
   if (config.max_jobs < 0) {
-    if (error != nullptr) {
-      *error = "mv_stack: max_jobs must be non-negative";
-    }
+error = "mv_stack: max_jobs must be non-negative";
     return Status::kInvalidArgument;
   }
   config_ = config;
@@ -175,9 +173,7 @@ Status Workspace::create(Arena& arena, const MvStackConfig& config,
 
   persistent_mark_ = arena.mark();
   created_ = true;
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return Status::kOk;
 }
 

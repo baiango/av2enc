@@ -228,9 +228,9 @@ std::vector<std::uint8_t> make_avg_cdf_sequence_header(const VideoConfig& c) {
 // §5.18.7.2 tile_info() tail for enable_avg_cdf && avg_cdf_type: the
 // context_update_tile_id field is absent.
 bool write_avg_tile_info(BitWriter& writer, const TileLayout& layout,
-                         int tile_size_bytes, std::string* error) {
+                         int tile_size_bytes, std::string& error) {
   if (layout.tile_count() <= 0) {
-    *error = "empty layout";
+    error = "empty layout";
     return false;
   }
   writer.put_bit(true);  // uniform_tile_spacing_flag
@@ -245,7 +245,7 @@ bool write_avg_tile_info(BitWriter& writer, const TileLayout& layout,
 
   if (min_cols_log2 < 0 || cols_log2 < min_cols_log2 ||
       cols_log2 > max_cols_log2) {
-    *error = "tile column log2 outside level bounds";
+    error = "tile column log2 outside level bounds";
     return false;
   }
   for (int l = min_cols_log2; l < cols_log2; ++l) writer.put_bit(true);
@@ -253,7 +253,7 @@ bool write_avg_tile_info(BitWriter& writer, const TileLayout& layout,
 
   if (min_rows_log2 < 0 || rows_log2 < min_rows_log2 ||
       rows_log2 > max_rows_log2) {
-    *error = "tile row log2 outside level bounds";
+    error = "tile row log2 outside level bounds";
     return false;
   }
   for (int l = min_rows_log2; l < rows_log2; ++l) writer.put_bit(true);
@@ -261,7 +261,7 @@ bool write_avg_tile_info(BitWriter& writer, const TileLayout& layout,
 
   if (layout.tile_count() > 1) {
     if (tile_size_bytes < 1 || tile_size_bytes > 4) {
-      *error = "TileSizeBytes outside 1..4";
+      error = "TileSizeBytes outside 1..4";
       return false;
     }
     // context_update_tile_id is intentionally absent: §5.18.7.2 codes it only
@@ -280,7 +280,7 @@ bool write_avg_frame_header(BitWriter& writer, const VideoConfig& config,
                             std::uint8_t ref_slot,
                             std::uint32_t refresh_frame_flags,
                             int tile_size_bytes, std::size_t* bits,
-                            std::string* error) {
+                            std::string& error) {
   const std::size_t start = writer.bit_size();
   put_uvlc(writer, 0);  // cur_mfh_id
   put_uvlc(writer, 0);  // seq_header_id_in_frame_header
@@ -359,7 +359,7 @@ bool build_tile_payloads(const VideoConfig& config, const TileLayout& layout,
                          std::span<const BlockSyntax> blocks,
                          std::span<const std::int32_t> levels,
                          std::vector<std::vector<std::uint8_t>>* payloads,
-                         std::string* error) {
+                         std::string& error) {
   payloads->clear();
   for (int tile_index = 0; tile_index < layout.tile_count(); ++tile_index) {
     av2enc::video::post::VideoTileBlocks tile_blocks;
@@ -383,7 +383,7 @@ bool build_tile_payloads(const VideoConfig& config, const TileLayout& layout,
       return false;
     }
     if (payload.size() < 2) {
-      *error = "tile payload shorter than 2 bytes";
+      error = "tile payload shorter than 2 bytes";
       return false;
     }
     payloads->push_back(std::move(payload));
@@ -398,16 +398,16 @@ bool assemble_avg_frame_obu(const VideoConfig& config, const TileLayout& layout,
                             const std::vector<std::vector<std::uint8_t>>& payloads,
                             std::vector<std::uint8_t>* obu,
                             std::vector<std::uint32_t>* tile_bytes,
-                            int* tile_size_bytes, std::string* error) {
+                            int* tile_size_bytes, std::string& error) {
   if (payloads.size() != static_cast<std::size_t>(layout.tile_count())) {
-    *error = "payload count does not match the tile layout";
+    error = "payload count does not match the tile layout";
     return false;
   }
   std::uint32_t largest = 0;
   tile_bytes->clear();
   for (const auto& payload : payloads) {
     if (payload.size() > 0xFFFFFFFFull) {
-      *error = "tile payload exceeds 4 GiB";
+      error = "tile payload exceeds 4 GiB";
       return false;
     }
     const std::uint32_t size = static_cast<std::uint32_t>(payload.size());
@@ -416,7 +416,7 @@ bool assemble_avg_frame_obu(const VideoConfig& config, const TileLayout& layout,
   }
   *tile_size_bytes = av2enc::tiles::tile_size_bytes_for(largest);
   if (*tile_size_bytes == 0) {
-    *error = "tile size cannot be represented in 1..4 bytes";
+    error = "tile size cannot be represented in 1..4 bytes";
     return false;
   }
 
@@ -466,7 +466,7 @@ std::string find_dav2d() {
 
 bool write_ivf(const std::string& path,
                const std::vector<std::vector<std::uint8_t>>& units,
-               std::uint16_t width, std::uint16_t height, std::string* error) {
+               std::uint16_t width, std::uint16_t height, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = width;
@@ -482,7 +482,7 @@ bool write_ivf(const std::string& path,
 }
 
 bool check_decoded(const std::string& path, int width, int height,
-                   std::string* error) {
+                   std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
@@ -495,7 +495,7 @@ bool check_decoded(const std::string& path, int width, int height,
     if (status == av2enc::Y4mReadResult::kError) return false;
     if (frame.width() != static_cast<std::uint32_t>(width) ||
         frame.height() != static_cast<std::uint32_t>(height)) {
-      *error = "decoded frame has the wrong dimensions";
+      error = "decoded frame has the wrong dimensions";
       return false;
     }
     ++frames;
@@ -513,12 +513,12 @@ bool check_decoded(const std::string& path, int width, int height,
     check_plane(frame.v());
   }
   if (frames != 2) {
-    *error = "decoder produced " + std::to_string(frames) +
+    error = "decoder produced " + std::to_string(frames) +
              " frames, expected 2";
     return false;
   }
   if (mismatches != 0) {
-    *error = "decoded samples differ from the DC/GLOBALMV constant: " +
+    error = "decoded samples differ from the DC/GLOBALMV constant: " +
              std::to_string(mismatches) + " mismatches, max_diff " +
              std::to_string(max_diff);
     return false;

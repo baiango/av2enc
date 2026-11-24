@@ -100,6 +100,6 @@ void gm_sub_block_warp_mv(const inter::gme::GmParams& params, int pixel_x,
 // Unit check for the §7.22 warp store: model classification (identity /
 // translation / warp / invalid shear) and the per-8x8 projection against
 // hand-computed values.  Returns false and fills `error` on a mismatch.
-[[nodiscard]] bool ref_mvs_field_selftest(std::string* error);
+[[nodiscard]] bool ref_mvs_field_selftest(std::string& error);
 
 }  // namespace av2enc::video

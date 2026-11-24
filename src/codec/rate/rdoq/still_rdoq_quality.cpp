@@ -188,7 +188,7 @@ class Replay {
     }
   }
 
-  bool run(Stats* luma, Stats* u, Stats* v, std::string* error);
+  bool run(Stats* luma, Stats* u, Stats* v, std::string& error);
 
   const Plane& recon(int plane) const { return recon_[plane]; }
   const std::vector<LeafRecord>& records() const { return records_; }
@@ -362,7 +362,7 @@ class Replay {
                   std::int32_t bsize_w, std::int32_t bsize_h,
                   int eob_u, std::span<const std::uint8_t> pred, Stats* stats,
                   PlaneRecord* record, std::int32_t* eob_out,
-                  std::string* error);
+                  std::string& error);
 
   const av2enc::still::StillPicture& picture_;
   const Options& options_;
@@ -390,12 +390,12 @@ bool Replay::code_plane(int plane, std::int32_t x0, std::int32_t y0,
                         std::int32_t bsize_w, std::int32_t bsize_h,
                         int eob_u, std::span<const std::uint8_t> pred,
                         Stats* stats, PlaneRecord* record,
-                        std::int32_t* eob_out, std::string* error) {
+                        std::int32_t* eob_out, std::string& error) {
   const auto params_opt =
       av2enc::txv::make_tx_params(coded_w, coded_h,
                                   av2enc::txv::TxType::kDctDct);
   if (!params_opt.has_value()) {
-    *error = "unsupported transform size";
+    error = "unsupported transform size";
     return false;
   }
   const TxParams& params = *params_opt;
@@ -665,7 +665,7 @@ bool Replay::code_plane(int plane, std::int32_t x0, std::int32_t y0,
   return true;
 }
 
-bool Replay::run(Stats* luma, Stats* u, Stats* v, std::string* error) {
+bool Replay::run(Stats* luma, Stats* u, Stats* v, std::string& error) {
   records_.assign(plan_.blocks.size(), LeafRecord{});
   std::size_t leaf_index = 0;
   for (const av2enc::still::plan::BlockPlan& block : plan_.blocks) {
@@ -683,7 +683,7 @@ bool Replay::run(Stats* luma, Stats* u, Stats* v, std::string* error) {
     if (!predict(0, block.x, block.y, block.luma_w, block.luma_h, have_left,
                  have_above, block.luma_avail.num4_above_right,
                  block.luma_avail.num4_below_left, luma_pred)) {
-      *error = "luma prediction failed";
+      error = "luma prediction failed";
       return false;
     }
     std::int32_t luma_eob = 0;
@@ -706,7 +706,7 @@ bool Replay::run(Stats* luma, Stats* u, Stats* v, std::string* error) {
         !predict(2, cx0, cy0, cw, ch, cx0 > 0, cy0 > 0,
                  block.chroma_avail.num4_above_right,
                  block.chroma_avail.num4_below_left, v_dc)) {
-      *error = "chroma prediction failed";
+      error = "chroma prediction failed";
       return false;
     }
     // M1's default (uv_full = false) scores the DC candidate with the U
@@ -849,7 +849,7 @@ bool build_and_encode(const av2enc::still::plan::FramePlan& plan,
                       bool use_rdoq, const Options& options,
                       std::uint32_t width, std::uint32_t height,
                       std::vector<std::uint8_t>* frame,
-                      std::uint32_t* tile_bytes, std::string* error) {
+                      std::uint32_t* tile_bytes, std::string& error) {
   std::vector<av2enc::still::syntax::BlockSyntax> blocks;
   blocks.reserve(plan.tree.size());
   std::vector<std::int32_t> levels;
@@ -871,7 +871,7 @@ bool build_and_encode(const av2enc::still::plan::FramePlan& plan,
     entry.subtree = static_cast<std::uint16_t>(node.subtree);
     if (node.child_count == 0) {
       if (node.leaf_index >= records.size()) {
-        *error = "plan leaf index outside the replay records";
+        error = "plan leaf index outside the replay records";
         return false;
       }
       const LeafRecord& record = records[node.leaf_index];
@@ -891,7 +891,7 @@ bool build_and_encode(const av2enc::still::plan::FramePlan& plan,
         const std::vector<std::int32_t>& source =
             use_rdoq ? plane_record.rdoq_levels : plane_record.scalar_levels;
         if (static_cast<std::size_t>(eob) > source.size()) {
-          *error = "plane EOB exceeds the recorded level count";
+          error = "plane EOB exceeds the recorded level count";
           return false;
         }
         levels.insert(levels.end(), source.begin(),
@@ -931,7 +931,7 @@ bool build_and_encode(const av2enc::still::plan::FramePlan& plan,
 
 bool write_ivf(const std::string& path,
                std::span<const std::uint8_t> frame, std::uint32_t width,
-               std::uint32_t height, std::string* error) {
+               std::uint32_t height, std::string& error) {
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
   header.height = static_cast<std::uint16_t>(height);

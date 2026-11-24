@@ -12,13 +12,13 @@ namespace {
 
 __extension__ using u128 = unsigned __int128;
 
-void set_error(std::string* error, const std::string& message) {
-  if (error != nullptr) *error = message;
+void set_error(std::string& error, const std::string& message) {
+  error = message;
 }
 
 constexpr std::uint64_t kTimebase = 90000U;
 
-bool to_u64(u128 value, std::uint64_t& out, std::string* error,
+bool to_u64(u128 value, std::uint64_t& out, std::string& error,
             const char* what) {
   if (value > static_cast<u128>(std::numeric_limits<std::uint64_t>::max())) {
     set_error(error, std::string(what) + " exceeds 64-bit model range");
@@ -56,7 +56,7 @@ u128 capacity_units(std::uint64_t buffer_size_bits, std::uint64_t bit_rate,
 bool derive_units(const TimingInfo& timing, std::uint32_t nutdt,
                   u128& decoding_units, u128& interval_units,
                   std::uint64_t& ticks_per_picture, bool& exact,
-                  std::string* error) {
+                  std::string& error) {
   if (!timing_info_valid(timing, error)) return false;
   if (nutdt == 0U) {
     set_error(error, "num_units_in_decoding_tick shall be greater than 0");
@@ -85,7 +85,7 @@ bool derive_units(const TimingInfo& timing, std::uint32_t nutdt,
 
 bool derive_clock(const TimingInfo& timing,
                   std::uint32_t num_units_in_decoding_tick,
-                  ClockDerivation& clock, std::string* error) {
+                  ClockDerivation& clock, std::string& error) {
   u128 decoding_units = 0;
   u128 interval_units = 0;
   std::uint64_t ticks = 0;
@@ -112,7 +112,7 @@ bool derive_clock(const TimingInfo& timing,
 bool hrd_config_from_twopass(const rc::twopass::TwoPassConfig& config,
                              const rc::twopass::VbvState& vbv,
                              std::uint32_t num_units_in_decoding_tick,
-                             HrdBufferConfig& out, std::string* error) {
+                             HrdBufferConfig& out, std::string& error) {
   out = HrdBufferConfig{};
   if (num_units_in_decoding_tick == 0U) {
     set_error(error, "num_units_in_decoding_tick shall be greater than 0");
@@ -170,7 +170,7 @@ bool hrd_config_from_twopass(const rc::twopass::TwoPassConfig& config,
 
 bool plan_buffer_removal(const HrdBufferConfig& config,
                          std::span<const FrameBits> frames,
-                         BufferTimingPlan& plan, std::string* error) {
+                         BufferTimingPlan& plan, std::string& error) {
   plan = BufferTimingPlan{};
   if (frames.empty()) {
     set_error(error, "buffer plan needs at least one frame");
@@ -532,7 +532,7 @@ BufferRemovalTiming br_time_for_frame(const BufferTimingPlan& plan,
 bool plan_ops_buffer_removal(const HrdBufferConfig& config,
                              std::uint8_t br_ops_id,
                              std::span<const OperatingPointTimeline> ops,
-                             OpsBufferTimingPlan& plan, std::string* error) {
+                             OpsBufferTimingPlan& plan, std::string& error) {
   plan = OpsBufferTimingPlan{};
   if (ops.empty() || ops.size() > kMaxOpsCnt) {
     set_error(error, "an OPS must have 1..7 operating points");
@@ -623,7 +623,7 @@ bool frames_from_twopass_plans(std::span<const rc::twopass::FramePlan> plans,
                                std::span<const std::int64_t> actual_bits,
                                TwopassBitSource source,
                                std::vector<FrameBits>& out,
-                               std::string* error) {
+                               std::string& error) {
   out.clear();
   if (plans.empty()) {
     set_error(error, "no two-pass frame plans supplied");

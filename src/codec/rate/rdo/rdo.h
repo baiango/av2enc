@@ -100,7 +100,7 @@ struct LambdaParams {
 
 [[nodiscard]] bool lambda_params_valid(const LambdaParams& params) noexcept;
 [[nodiscard]] bool validate_lambda_params(const LambdaParams& params,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 // Quantiser step for base_q_idx. base_q_idx is clamped to [0, 255].
 // Returns 0 if `params` is invalid.
@@ -173,7 +173,7 @@ struct RdoConfig {
 
 [[nodiscard]] bool rdo_config_valid(const RdoConfig& config) noexcept;
 [[nodiscard]] bool validate_rdo_config(const RdoConfig& config,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 // Builds a config whose lambda matches `metric` for base_q_idx.
 RdoConfig make_rdo_config(int base_q_idx,
@@ -223,7 +223,7 @@ class CandidateSelector {
   explicit CandidateSelector(const RdoConfig& config) noexcept;
 
   // Returns false and fills `error` if the candidate or config is invalid.
-  bool add(const CandidateCost& candidate, std::string* error = nullptr);
+  bool add(const CandidateCost& candidate, std::string& error);
 
   const RdoDecision& decision() const noexcept { return decision_; }
   void reset() noexcept;
@@ -236,7 +236,7 @@ class CandidateSelector {
 // Convenience wrapper around CandidateSelector.
 RdoDecision select_best(std::span<const CandidateCost> candidates,
                         const RdoConfig& config,
-                        std::string* error = nullptr);
+                        std::string& error);
 
 // Factories. They only fill kind/id/aux; distortion and rate are caller data.
 CandidateCost make_partition_candidate(int partition_id,
@@ -292,7 +292,7 @@ struct RdoqConfig {
 
 [[nodiscard]] bool rdoq_config_valid(const RdoqConfig& config) noexcept;
 [[nodiscard]] bool validate_rdoq_config(const RdoqConfig& config,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 struct RdoqCoefficient {
   double original = 0.0;           // forward transform coefficient
@@ -352,6 +352,6 @@ struct RdoqResult {
                    const RdoqConfig& config,
                    const RdoqRateModel& rate_model,
                    RdoqResult& result,
-                   std::string* error = nullptr);
+                   std::string& error);
 
 }  // namespace av2enc::rdo

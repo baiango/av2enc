@@ -129,7 +129,7 @@ QuantizerMatrixObu make_level_obu(int level, bool is_default) {
 bool rewrite_clk_payload(const ParsedObu& clk, const Options& options,
                          const FrameQm& frame_qm,
                          std::vector<std::uint8_t>* out_payload,
-                         std::string* error) {
+                         std::string& error) {
   av2enc::still::StillConfig config;
   build_frame_config(options, &config);
 
@@ -139,7 +139,7 @@ bool rewrite_clk_payload(const ParsedObu& clk, const Options& options,
   const std::size_t original_header_bits = 1U + syntax_bits;
   const std::size_t pre = pre_qm_bits(config);
   if (pre + 1U > original_header_bits) {
-    *error = "frame-header probe is shorter than the using_qmatrix field";
+    error = "frame-header probe is shorter than the using_qmatrix field";
     return false;
   }
 
@@ -148,18 +148,18 @@ bool rewrite_clk_payload(const ParsedObu& clk, const Options& options,
   for (std::size_t i = 0; i < pre; ++i) {
     bool bit = false;
     if (!reader.bit(&bit)) {
-      *error = "CLK payload truncated before using_qmatrix";
+      error = "CLK payload truncated before using_qmatrix";
       return false;
     }
     writer.put_bit(bit);
   }
   bool original_using_qmatrix = true;
   if (!reader.bit(&original_using_qmatrix)) {
-    *error = "CLK payload truncated at using_qmatrix";
+    error = "CLK payload truncated at using_qmatrix";
     return false;
   }
   if (original_using_qmatrix) {
-    *error = "base stream already has using_qmatrix = 1";
+    error = "base stream already has using_qmatrix = 1";
     return false;
   }
   if (!av2enc::qm::obu::write_frame_qm_params(writer, frame_qm, 3, false,
@@ -169,7 +169,7 @@ bool rewrite_clk_payload(const ParsedObu& clk, const Options& options,
   for (std::size_t i = pre + 1U; i < original_header_bits; ++i) {
     bool bit = false;
     if (!reader.bit(&bit)) {
-      *error = "CLK payload truncated in frame header";
+      error = "CLK payload truncated in frame header";
       return false;
     }
     writer.put_bit(bit);
@@ -181,7 +181,7 @@ bool rewrite_clk_payload(const ParsedObu& clk, const Options& options,
 
   const std::size_t tile_start = (original_header_bits + 7U) / 8U;
   if (tile_start > clk.payload.size()) {
-    *error = "CLK payload shorter than its frame header";
+    error = "CLK payload shorter than its frame header";
     return false;
   }
   out_payload->insert(
@@ -193,7 +193,7 @@ bool rewrite_clk_payload(const ParsedObu& clk, const Options& options,
 
 bool build_variant(const Options& options, std::vector<std::vector<std::uint8_t>>* obus,
                    FrameQm* frame_qm, bool* expect_data_present,
-                   std::string* error) {
+                   std::string& error) {
   obus->clear();
   *frame_qm = FrameQm{};
   frame_qm->using_qmatrix = true;
@@ -238,7 +238,7 @@ bool build_variant(const Options& options, std::vector<std::vector<std::uint8_t>
     if (!emit(make_level_obu(options.level, false))) return false;
     *expect_data_present = true;
   } else {
-    *error = "unknown --mode";
+    error = "unknown --mode";
     return false;
   }
   (void)level;
@@ -248,7 +248,7 @@ bool build_variant(const Options& options, std::vector<std::vector<std::uint8_t>
 // Drives the stream-order state machine and verifies the selected level.
 bool verify_state(const std::vector<std::vector<std::uint8_t>>& obus,
                   int selected_level, bool expect_data_present,
-                  std::string* error) {
+                  std::string& error) {
   QmState state;
   state.on_temporal_delimiter();
   for (const auto& bytes : obus) {
@@ -256,15 +256,15 @@ bool verify_state(const std::vector<std::vector<std::uint8_t>>& obus,
   }
   state.on_key_frame(true, 3);
   if (state.data_present(selected_level) != expect_data_present) {
-    *error = "QmDataPresent for the selected level does not match the mode";
+    error = "QmDataPresent for the selected level does not match the mode";
     return false;
   }
   if (expect_data_present && state.user_qm(selected_level) == nullptr) {
-    *error = "user QM data is missing for a data-present level";
+    error = "user QM data is missing for a data-present level";
     return false;
   }
   if (!expect_data_present && state.user_qm(selected_level) != nullptr) {
-    *error = "default/no-OBU level unexpectedly has user QM data";
+    error = "default/no-OBU level unexpectedly has user QM data";
     return false;
   }
   // Every level touched by an OBU is protected, so reset_qm() preserved it.
@@ -282,7 +282,7 @@ bool verify_state(const std::vector<std::vector<std::uint8_t>>& obus,
     for (int level = 0; level < av2enc::qm::obu::kNumCustomQms; ++level) {
       if ((matrix.bit_map & (1U << level)) == 0U) continue;
       if (!state.protected_level(level)) {
-        *error = "a specified level lost QmProtected across the key frame";
+        error = "a specified level lost QmProtected across the key frame";
         return false;
       }
     }

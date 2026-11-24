@@ -81,7 +81,7 @@ bool plan_grain(const VideoInputFrame& frame, std::uint32_t index,
                 gr::GrainStreamPlanner& planner, gr::GrainFramePlan& plan,
                 std::string& error) {
   return planner.PlanFrame(make_grain_view(frame), index, /*tlayer_id=*/0,
-                           /*mlayer_id=*/0, &plan, &error);
+                           /*mlayer_id=*/0, &plan, error);
 }
 
 // Copies `grain` into a wrapper header's film_grain_config() fields.
@@ -99,14 +99,14 @@ bool insert_grain_obu(const gr::GrainFramePlan& plan, std::size_t frame_ordinal,
   if (!plan.emit_model) return true;
   std::string grain_error;
   const std::vector<std::uint8_t> obu =
-      gr::MakeFilmGrainObu(plan.obu, &grain_error);
+      gr::MakeFilmGrainObu(plan.obu, grain_error);
   if (obu.empty()) {
     error = "film grain OBU: " + grain_error;
     return false;
   }
   std::vector<std::uint8_t> with_grain;
   if (!gr::InsertFilmGrainObuBeforeFrame(unit, frame_ordinal, obu, &with_grain,
-                                         &grain_error)) {
+                                         grain_error)) {
     error = "film grain OBU: " + grain_error;
     return false;
   }
@@ -240,7 +240,7 @@ bool encode_long_term_closed(std::span<const VideoInputFrame> frames,
   gr::GrainStreamPlanner grain_planner = make_grain_planner(options);
   std::vector<gr::GrainFramePlan> grain_plans(frames.size());
   lt::FrameHeader key;
-  if (!lt::plan_closed_loop_key(config, 0, /*long_term_id=*/0, &key, &error)) {
+  if (!lt::plan_closed_loop_key(config, 0, /*long_term_id=*/0, &key, error)) {
     return false;
   }
   if (options.film_grain &&
@@ -258,7 +258,7 @@ bool encode_long_term_closed(std::span<const VideoInputFrame> frames,
     const std::vector<std::uint8_t> refs{ref_slot};
     if (!lt::plan_inter_frame(config, lt::FrameRole::kRegular,
                               static_cast<std::uint32_t>(i), refs,
-                              refresh_slot, true, &header, &error)) {
+                              refresh_slot, true, &header, error)) {
       return false;
     }
     if (options.film_grain &&
@@ -271,7 +271,7 @@ bool encode_long_term_closed(std::span<const VideoInputFrame> frames,
     units.back().frames.push_back(lt::PlannedFrame{header, plain.tiles[i]});
   }
   lt::AssembledSequence assembled;
-  if (!lt::assemble_sequence(config, units, &assembled, &error)) return false;
+  if (!lt::assemble_sequence(config, units, &assembled, error)) return false;
   if (options.film_grain) {
     // One coded frame per unit, so each model OBU goes immediately before it.
     for (std::size_t i = 0; i < assembled.units.size(); ++i) {
@@ -334,7 +334,7 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
   gr::GrainFramePlan grain_p3;
   lt::FrameHeader clk;
   if (!lt::plan_closed_loop_key(config, 0, /*long_term_id=*/0, &clk,
-                                &error)) {
+                                error)) {
     return false;
   }
   if (options.film_grain &&
@@ -344,12 +344,12 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
   if (options.film_grain) set_grain(clk, grain_clk);
   lt::PoolEvents events;
   if (!lt::apply_frame(config, clk, /*first_picture_in_tu=*/true, &pool,
-                       &events, &error)) {
+                       &events, error)) {
     return false;
   }
   lt::FrameHeader olk;
   if (!lt::plan_open_loop_key(config, pool, /*order_hint=*/1, /*olk_slot=*/1,
-                              /*olk_long_term_id=*/-1, {}, &olk, &error)) {
+                              /*olk_long_term_id=*/-1, {}, &olk, error)) {
     return false;
   }
   // §7.3.8.2: the OLK is a random access point, so a decoder that starts there
@@ -362,7 +362,7 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
     const std::vector<std::uint8_t> refs{1};
     if (!lt::plan_inter_frame(config, lt::FrameRole::kRegular,
                               /*order_hint=*/2, refs, /*refresh_slot=*/2,
-                              true, &p2, &error)) {
+                              true, &p2, error)) {
       return false;
     }
     // Coding order is CLK, OLK (hidden), P2, P3: the planner sees the output
@@ -378,7 +378,7 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
     const std::vector<std::uint8_t> refs{0};
     if (!lt::plan_inter_frame(config, lt::FrameRole::kRegular,
                               /*order_hint=*/3, refs, /*refresh_slot=*/3,
-                              true, &p3_header, &error)) {
+                              true, &p3_header, error)) {
       return false;
     }
     if (options.film_grain &&
@@ -393,7 +393,7 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
   units[1].frames.push_back(lt::PlannedFrame{p2, olk_p2.tiles[1]});
   units[2].frames.push_back(lt::PlannedFrame{p3_header, p3.tiles[1]});
   lt::AssembledSequence assembled;
-  if (!lt::assemble_sequence(config, units, &assembled, &error)) return false;
+  if (!lt::assemble_sequence(config, units, &assembled, error)) return false;
   if (options.film_grain) {
     if (assembled.units.size() != 3U) {
       error = "OLK sequence assembled an unexpected unit count";

@@ -10,8 +10,8 @@
 namespace av2enc::entropy::avg_cdf {
 namespace {
 
-bool fail(std::string* error, const char* text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const char* text) {
+  error = text;
   return false;
 }
 
@@ -71,8 +71,8 @@ void blend_cdf(std::uint16_t* cdf, const std::uint16_t* saved_cdf,
 }
 
 bool CdfBank::init(std::span<const CdfTable> tables,
-                   const CdfBankConfig& config, std::string* error) {
-  if (error != nullptr) error->clear();
+                   const CdfBankConfig& config, std::string& error) {
+  error.clear();
   if (tables.empty()) return fail(error, "avg_cdf: empty CDF table list");
   config_ = config;
   tables_.assign(tables.begin(), tables.end());
@@ -82,8 +82,8 @@ bool CdfBank::init(std::span<const CdfTable> tables,
 }
 
 bool CdfBank::init_owned(std::span<const CdfSpec> specs,
-                         const CdfBankConfig& config, std::string* error) {
-  if (error != nullptr) error->clear();
+                         const CdfBankConfig& config, std::string& error) {
+  error.clear();
   if (specs.empty()) return fail(error, "avg_cdf: empty CDF spec list");
   if (config.reference_contexts > 64u) {
     return fail(error, "avg_cdf: reference_contexts must be <= 64");
@@ -155,7 +155,7 @@ bool CdfBank::init_owned(std::span<const CdfSpec> specs,
   return true;
 }
 
-bool CdfBank::validate(std::string* error) const {
+bool CdfBank::validate(std::string& error) const {
   for (const CdfTable& table : tables_) {
     if (table.symbols < 2 || table.symbols > kMaxSymbols) {
       return fail(error, "avg_cdf: symbols must be in [2, 8]");

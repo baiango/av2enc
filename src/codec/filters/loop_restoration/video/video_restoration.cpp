@@ -10,8 +10,8 @@ namespace av2enc::video::restoration {
 namespace rest = ::av2enc::restoration;
 namespace {
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -30,7 +30,7 @@ int ceil_div(int a, int b) { return b > 0 ? (a + b - 1) / b : 0; }
 // Tools / sequence row
 // ---------------------------------------------------------------------------
 
-bool validate_tools(const VideoRestorationTools& tools, std::string* error) {
+bool validate_tools(const VideoRestorationTools& tools, std::string& error) {
   if (!tools.ccso && !tools.wiener_ns) {
     return true;
   }
@@ -50,7 +50,7 @@ bool validate_tools(const VideoRestorationTools& tools, std::string* error) {
 }
 
 fs::SequenceFilterConfig make_sequence_filter_config(
-    const VideoRestorationTools& tools, std::string* error) {
+    const VideoRestorationTools& tools, std::string& error) {
   fs::SequenceFilterConfig config;
   config.disable_loopfilters_across_tiles = false;
   config.enable_cdef = false;
@@ -74,16 +74,16 @@ fs::SequenceFilterConfig make_sequence_filter_config(
 
 std::size_t write_sequence_filter_config(BitWriter& writer,
                                          const VideoRestorationTools& tools,
-                                         std::string* error) {
+                                         std::string& error) {
   const fs::SequenceFilterConfig config =
       make_sequence_filter_config(tools, error);
-  if (error != nullptr && !error->empty()) return 0;
+  if (!error.empty()) return 0;
   return fs::write_sequence_filter_config(
       writer, config, /*single_picture_header_flag=*/false, error);
 }
 
 bool read_sequence_filter_config(fs::BitReader& reader, VideoRestorationTools* tools,
-                                 std::string* error) {
+                                 std::string& error) {
   if (tools == nullptr) return fail(error, "null VideoRestorationTools");
   fs::SequenceFilterConfig config;
   if (!fs::read_sequence_filter_config(
@@ -141,23 +141,23 @@ fs::CcsoHeaderContext make_ccso_header_context(const VideoRestorationTools& tool
 
 std::size_t write_lr_params(BitWriter& writer, fs::LrParams& params,
                             const fs::LrHeaderContext& context,
-                            std::string* error) {
+                            std::string& error) {
   return fs::write_lr_params(writer, params, context, error);
 }
 
 bool read_lr_params(fs::BitReader& reader, const fs::LrHeaderContext& context,
-                    fs::LrParams* params, std::string* error) {
+                    fs::LrParams* params, std::string& error) {
   return fs::read_lr_params(reader, context, params, error);
 }
 
 std::size_t write_ccso_params(BitWriter& writer, fs::CcsoParams& params,
                               const fs::CcsoHeaderContext& context,
-                              std::string* error) {
+                              std::string& error) {
   return fs::write_ccso_params(writer, params, context, error);
 }
 
 bool read_ccso_params(fs::BitReader& reader, const fs::CcsoHeaderContext& context,
-                      fs::CcsoParams* params, std::string* error) {
+                      fs::CcsoParams* params, std::string& error) {
   return fs::read_ccso_params(reader, context, params, error);
 }
 
@@ -165,7 +165,7 @@ bool make_ccso_frame_params(const fs::CcsoParams& params,
                             fs::CcsoTileState* state, int mi_cols, int mi_rows,
                             int sub_x, int sub_y,
                             rest::CcsoFrameParams* out,
-                            std::string* error) {
+                            std::string& error) {
   if (state == nullptr || out == nullptr) {
     return fail(error, "null CCSO state/params");
   }
@@ -203,7 +203,7 @@ bool make_ccso_frame_params(const fs::CcsoParams& params,
 
 bool init_ccso_tile(fs::CcsoTileState* state, const fs::CcsoParams& params,
                     int mi_cols, int mi_rows, int sub_x, int sub_y,
-                    std::string* error) {
+                    std::string& error) {
   if (!fs::ccso_tile_init(state, params, mi_cols, mi_rows, sub_x, sub_y,
                           error)) {
     return false;
@@ -220,12 +220,12 @@ bool init_ccso_tile(fs::CcsoTileState* state, const fs::CcsoParams& params,
 
 bool write_read_ccso(av2::Encoder& encoder, fs::CcsoTileState& state,
                      int mi_row, int mi_col, const int blk[3],
-                     std::string* error) {
+                     std::string& error) {
   return fs::ccso_write_block(encoder, state, mi_row, mi_col, blk, error);
 }
 
 bool read_ccso(av2::Decoder& decoder, fs::CcsoTileState& state, int mi_row,
-               int mi_col, int blk[3], std::string* error) {
+               int mi_col, int blk[3], std::string& error) {
   return fs::ccso_read_block(decoder, state, mi_row, mi_col, blk, error);
 }
 
@@ -235,7 +235,7 @@ bool read_ccso(av2::Decoder& decoder, fs::CcsoTileState& state, int mi_row,
 
 bool init_lr_tile(fs::LrState* state, const fs::LrParams& params, int mi_cols,
                   int mi_rows, int sub_x, int sub_y, int sb_size,
-                  std::string* error) {
+                  std::string& error) {
   if (!fs::lr_state_init(state, params, mi_cols, mi_rows, sub_x, sub_y,
                          sb_size, error)) {
     return false;
@@ -260,7 +260,7 @@ bool build_lr_decisions(const fs::LrState& state, int mi_row, int mi_col,
                         int w4, int h4, int tile_mi_row_start,
                         int tile_mi_col_start,
                         std::vector<fs::LrUnitDecision>* decisions,
-                        std::string* error) {
+                        std::string& error) {
   return fs::lr_build_decisions(state, mi_row, mi_col, w4, h4,
                                 tile_mi_row_start, tile_mi_col_start,
                                 decisions, error);
@@ -270,7 +270,7 @@ bool write_read_lr(av2::Encoder& encoder, fs::LrState& state, int mi_row,
                    int mi_col, int w4, int h4, int tile_mi_row_start,
                    int tile_mi_col_start,
                    const std::vector<fs::LrUnitDecision>& decisions,
-                   std::string* error) {
+                   std::string& error) {
   return fs::lr_write_block(encoder, state, mi_row, mi_col, w4, h4,
                             tile_mi_row_start, tile_mi_col_start, decisions,
                             error);
@@ -278,7 +278,7 @@ bool write_read_lr(av2::Encoder& encoder, fs::LrState& state, int mi_row,
 
 bool read_lr(av2::Decoder& decoder, fs::LrState& state, int mi_row, int mi_col,
              int w4, int h4, int tile_mi_row_start, int tile_mi_col_start,
-             std::vector<fs::LrUnitDecision>* decisions, std::string* error) {
+             std::vector<fs::LrUnitDecision>* decisions, std::string& error) {
   return fs::lr_read_block(decoder, state, mi_row, mi_col, w4, h4,
                            tile_mi_row_start, tile_mi_col_start, decisions,
                            error);
@@ -286,14 +286,14 @@ bool read_lr(av2::Decoder& decoder, fs::LrState& state, int mi_row, int mi_col,
 
 bool write_read_lr_unit(av2::Encoder& encoder, fs::LrState& state, int plane,
                         int unit_row, int unit_col,
-                        const fs::LrUnitDecision& decision, std::string* error) {
+                        const fs::LrUnitDecision& decision, std::string& error) {
   return fs::lr_write_unit(encoder, state, plane, unit_row, unit_col, decision,
                            error);
 }
 
 bool read_lr_unit(av2::Decoder& decoder, fs::LrState& state, int plane,
                   int unit_row, int unit_col, fs::LrUnitDecision* decision,
-                  std::string* error) {
+                  std::string& error) {
   return fs::lr_read_unit(decoder, state, plane, unit_row, unit_col, decision,
                           error);
 }
@@ -301,14 +301,14 @@ bool read_lr_unit(av2::Decoder& decoder, fs::LrState& state, int plane,
 bool write_read_wienerns_filter(av2::Encoder& encoder, fs::LrState& state,
                                 int plane, int unit_row, int unit_col,
                                 const fs::LrUnitDecision& decision,
-                                std::string* error) {
+                                std::string& error) {
   return fs::lr_write_unit(encoder, state, plane, unit_row, unit_col, decision,
                            error);
 }
 
 bool read_wienerns_filter(av2::Decoder& decoder, fs::LrState& state, int plane,
                           int unit_row, int unit_col,
-                          fs::LrUnitDecision* decision, std::string* error) {
+                          fs::LrUnitDecision* decision, std::string& error) {
   return fs::lr_read_unit(decoder, state, plane, unit_row, unit_col, decision,
                           error);
 }
@@ -318,7 +318,7 @@ bool read_wienerns_filter(av2::Decoder& decoder, fs::LrState& state, int plane,
 // ---------------------------------------------------------------------------
 
 bool validate_class_map(const fs::LrParams& params, int mi_cols, int mi_rows,
-                        std::string* error) {
+                        std::string& error) {
   if (!params.frame_filters_on[0]) return true;
   if (params.frame_type[0] != rest::kRestoreWienerNs &&
       params.frame_type[0] != rest::kRestoreSwitchable) {
@@ -371,7 +371,7 @@ bool validate_class_map(const fs::LrParams& params, int mi_cols, int mi_rows,
 }
 
 bool make_single_class_map(fs::WienerNsClassMap* map, int mi_cols, int mi_rows,
-                           std::string* error) {
+                           std::string& error) {
   if (map == nullptr) return fail(error, "null class map");
   if (mi_cols <= 0 || mi_rows <= 0) return fail(error, "invalid MI grid");
   map->num_classes = 1;
@@ -384,7 +384,7 @@ bool make_single_class_map(fs::WienerNsClassMap* map, int mi_cols, int mi_rows,
 }
 
 bool validate_no_pc_wiener(const fs::LrParams& params, int mi_cols, int mi_rows,
-                           std::string* error) {
+                           std::string& error) {
   (void)mi_cols;
   (void)mi_rows;
   for (int plane = 0; plane < 3; ++plane) {
@@ -403,7 +403,7 @@ bool validate_no_pc_wiener(const fs::LrParams& params, int mi_cols, int mi_rows,
 }
 
 bool validate_frame_filter_layout(const fs::LrParams& params,
-                                  std::string* error) {
+                                  std::string& error) {
   const int num_classes =
       params.frame_filters_on[0] ? params.num_filter_classes : 1;
   if (!valid_num_filter_classes(num_classes)) {
@@ -521,10 +521,10 @@ rest::RestorationStatus apply_restoration_frame(
 namespace {
 
 std::size_t sequence_row_bits(const VideoRestorationTools& tools,
-                              std::string* error) {
+                              std::string& error) {
   BitWriter writer;
   const std::size_t bits = write_sequence_filter_config(writer, tools, error);
-  if (error != nullptr && !error->empty()) return 0;
+  if (!error.empty()) return 0;
   return bits;
 }
 
@@ -536,7 +536,7 @@ bool measure_restoration_cost(const VideoRestorationTools& tools, int mi_cols,
                               const fs::CcsoParams* ccso,
                               const fs::CcsoTileState* ccso_state,
                               fs::LrState* lr_state, VideoRestorationCost* cost,
-                              std::string* error) {
+                              std::string& error) {
   if (cost == nullptr) return fail(error, "null cost");
   if (mi_cols <= 0 || mi_rows <= 0) return fail(error, "invalid MI geometry");
   *cost = VideoRestorationCost{};
@@ -544,7 +544,7 @@ bool measure_restoration_cost(const VideoRestorationTools& tools, int mi_cols,
   VideoRestorationTools off;
   const std::size_t off_bits = sequence_row_bits(off, error);
   const std::size_t on_bits = sequence_row_bits(tools, error);
-  if (error != nullptr && !error->empty()) return false;
+  if (!error.empty()) return false;
   cost->sequence_bits = on_bits > off_bits ? on_bits - off_bits : 0;
 
   if (ccso != nullptr) {
@@ -553,7 +553,7 @@ bool measure_restoration_cost(const VideoRestorationTools& tools, int mi_cols,
     const fs::CcsoHeaderContext context =
         make_ccso_header_context(tools, sb_size, frame_is_intra, tile_start_or);
     cost->ccso_header_bits = ::av2enc::video::restoration::write_ccso_params(writer, copy, context, error);
-    if (error != nullptr && !error->empty()) return false;
+    if (!error.empty()) return false;
   }
 
   if (lr_state != nullptr) {
@@ -562,7 +562,7 @@ bool measure_restoration_cost(const VideoRestorationTools& tools, int mi_cols,
     const fs::LrHeaderContext context =
         make_lr_header_context(tools, sb_size, base_q_idx, frame_is_intra);
     cost->lr_header_bits = ::av2enc::video::restoration::write_lr_params(writer, params, context, error);
-    if (error != nullptr && !error->empty()) return false;
+    if (!error.empty()) return false;
   }
 
   // Tile symbols share one arithmetic-coder stream per frame.  The M2 core

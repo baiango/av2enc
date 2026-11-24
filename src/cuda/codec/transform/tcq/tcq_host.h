@@ -30,7 +30,7 @@ namespace av2enc::cuda::tcq {
 [[nodiscard]] bool tcq_scan_and_pre_max(int tx_size, int tx_class, int plane,
                           int max_coefficients, int* count, int* w, int* h,
                           std::int32_t* scan, std::int32_t* pre_max,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 // Fills `normal_rate`, `eob_coeff_rate` (both table_levels * 8 * count doubles)
 // and `block_eob_rate` (count + 1 doubles) for `job`.
@@ -45,6 +45,6 @@ namespace av2enc::cuda::tcq {
                           const av2enc::tcq::RateModel& model,
                           double* normal_rate, double* eob_coeff_rate,
                           double* block_eob_rate,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 }  // namespace av2enc::cuda::tcq

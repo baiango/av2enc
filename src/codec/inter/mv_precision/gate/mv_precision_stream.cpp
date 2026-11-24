@@ -202,7 +202,7 @@ struct FrameHeader {
 };
 
 bool write_frame_header_syntax(BitWriter& writer, const StreamConfig& config,
-                               const FrameHeader& header, std::string* error) {
+                               const FrameHeader& header, std::string& error) {
   put_uvlc(writer, 0);  // cur_mfh_id
   put_uvlc(writer, 0);  // seq_header_id_in_frame_header
   if (!header.keyframe) writer.put_bit(true);  // frame_is_inter
@@ -229,7 +229,7 @@ bool write_frame_header_syntax(BitWriter& writer, const StreamConfig& config,
     if (!me2::me2_frame_precision_to_bits(header.frame_precision,
                                           config.mv_res.enable_flex_mvres ? 1 : 0,
                                           0, &frame)) {
-      *error = "frame precision is not signallable";
+      error = "frame precision is not signallable";
       return false;
     }
     if (!mvprec::write_frame_mv_precision(writer, frame, 0, error)) {
@@ -267,7 +267,7 @@ bool write_frame_header_syntax(BitWriter& writer, const StreamConfig& config,
 std::vector<std::uint8_t> make_frame_obu(const StreamConfig& config,
                                          const FrameHeader& header,
                                          std::span<const std::uint8_t> tile,
-                                         std::string* error) {
+                                         std::string& error) {
   BitWriter writer;
   writer.put_bit(true);  // is_first_tile_group
   if (!write_frame_header_syntax(writer, config, header, error)) return {};
@@ -287,27 +287,27 @@ std::vector<std::uint8_t> make_td() {
 }  // namespace
 
 bool build_stream(const StreamInput& input, StreamOutput* output,
-                  std::string* error) {
-  if (output == nullptr || error == nullptr) {
-    *error = "null output";
+                  std::string& error) {
+  if (output == nullptr) {
+    error = "null output";
     return false;
   }
   *output = StreamOutput{};
-  error->clear();
+  error.clear();
   if (input.config.width <= 0 || input.config.height <= 0 ||
       input.config.width % 64 != 0 || input.config.height % 64 != 0) {
-    *error = "stream requires 64-multiple dimensions";
+    error = "stream requires 64-multiple dimensions";
     return false;
   }
   if (input.key_tile.empty() || input.p1_tile.empty() || input.p2_tile.empty()) {
-    *error = "missing tile payload";
+    error = "missing tile payload";
     return false;
   }
 
   const std::vector<std::uint8_t> sequence =
       make_sequence_header(input.config);
   if (sequence.empty()) {
-    *error = "sequence header writer failed";
+    error = "sequence header writer failed";
     return false;
   }
   const std::vector<std::uint8_t> td = make_td();
@@ -346,7 +346,7 @@ bool build_stream(const StreamInput& input, StreamOutput* output,
   const std::vector<std::uint8_t> p2_obu =
       make_frame_obu(input.config, p2, input.p2_tile, error);
   if (key_obu.empty() || p1_obu.empty() || p2_obu.empty()) {
-    if (error->empty()) *error = "frame OBU writer failed";
+    if (error.empty()) error = "frame OBU writer failed";
     return false;
   }
 

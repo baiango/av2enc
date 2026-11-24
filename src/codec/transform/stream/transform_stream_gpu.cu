@@ -35,15 +35,13 @@ constexpr std::size_t kAdjElems =
 constexpr std::size_t kCodedElems =
     static_cast<std::size_t>(cuda::kTxTypeCodedElems);
 
-bool cuda_ok(cudaError_t status, const char* what, std::string* error) {
+bool cuda_ok(cudaError_t status, const char* what, std::string& error) {
   if (status == cudaSuccess) return true;
-  if (error != nullptr) {
-    *error = std::string(what) + ": " + cudaGetErrorString(status);
-  }
+error = std::string(what) + ": " + cudaGetErrorString(status);
   return false;
 }
 
-bool sync_stream(cudaStream_t stream, const char* what, std::string* error) {
+bool sync_stream(cudaStream_t stream, const char* what, std::string& error) {
   return cuda_ok(cudaStreamSynchronize(stream), what, error);
 }
 
@@ -67,13 +65,11 @@ class DeviceArena {
     pointers_.clear();
   }
 
-  void* allocate(std::size_t bytes, const char* what, std::string* error) {
+  void* allocate(std::size_t bytes, const char* what, std::string& error) {
     if (bytes == 0) bytes = 1;
     void* pointer = allocator_.allocate(allocator_.user, bytes);
     if (pointer == nullptr) {
-      if (error != nullptr) {
-        *error = std::string("device allocation failed: ") + what;
-      }
+error = std::string("device allocation failed: ") + what;
       return nullptr;
     }
     pointers_.push_back(pointer);
@@ -81,7 +77,7 @@ class DeviceArena {
   }
 
   template <typename T>
-  T* allocate_array(std::size_t count, const char* what, std::string* error) {
+  T* allocate_array(std::size_t count, const char* what, std::string& error) {
     const std::size_t bytes = count * sizeof(T);
     return static_cast<T*>(allocate(bytes, what, error));
   }
@@ -92,14 +88,14 @@ class DeviceArena {
 };
 
 bool upload(cudaStream_t stream, void* device, const void* host,
-            std::size_t bytes, const char* what, std::string* error) {
+            std::size_t bytes, const char* what, std::string& error) {
   return cuda_ok(cudaMemcpyAsync(device, host, bytes, cudaMemcpyHostToDevice,
                                  stream),
                  what, error);
 }
 
 bool download(cudaStream_t stream, void* host, const void* device,
-              std::size_t bytes, const char* what, std::string* error) {
+              std::size_t bytes, const char* what, std::string& error) {
   return cuda_ok(cudaMemcpyAsync(host, device, bytes, cudaMemcpyDeviceToHost,
                                  stream),
                  what, error);
@@ -116,40 +112,40 @@ TxTypeQuery make_query(const Request& request, int mapped_mode) {
 }
 
 bool validate_request(const Request& request, int* mapped_mode,
-                      std::string* error) {
+                      std::string& error) {
   if (request.residual_coded == nullptr) {
-    if (error != nullptr) *error = "null residual";
+    error = "null residual";
     return false;
   }
   if (!txv::tx_size_supported(request.coded_w, request.coded_h)) {
-    if (error != nullptr) *error = "unsupported coded TX size";
+    error = "unsupported coded TX size";
     return false;
   }
   if (!std::isfinite(request.lambda) || request.lambda < 0.0) {
-    if (error != nullptr) *error = "lambda must be finite and >= 0";
+    error = "lambda must be finite and >= 0";
     return false;
   }
   if (request.prev_level_cap < 0 || request.prev_level_cap > 63) {
-    if (error != nullptr) *error = "prev_level_cap must be in [0, 63]";
+    error = "prev_level_cap must be in [0, 63]";
     return false;
   }
   if (request.level_cap < 0) {
-    if (error != nullptr) *error = "level_cap must be >= 0";
+    error = "level_cap must be >= 0";
     return false;
   }
   if (request.reduced_tx_set < 0 || request.reduced_tx_set > 3) {
-    if (error != nullptr) *error = "reduced_tx_set must be in [0, 3]";
+    error = "reduced_tx_set must be in [0, 3]";
     return false;
   }
   if (request.plane < 0 || request.plane > 2) {
-    if (error != nullptr) *error = "plane must be 0, 1 or 2";
+    error = "plane must be 0, 1 or 2";
     return false;
   }
   const int mode = txtype::map_intra_mode(
       request.intra_mode, request.angle_delta, request.coded_w,
       request.coded_h);
   if (mode < 0) {
-    if (error != nullptr) *error = "invalid intra mode, angle delta or size";
+    error = "invalid intra mode, angle delta or size";
     return false;
   }
   *mapped_mode = mode;
@@ -173,7 +169,7 @@ bool build_rdoq_plan(const Request* requests,
                      const std::vector<std::int32_t>& scalar_raster,
                      const RateModelHooks* global_hooks,
                      std::size_t table_budget, RpdoqPlan* plan,
-                     std::string* error) {
+                     std::string& error) {
   const std::size_t candidates = tx_plan.candidates.size();
   plan->original.assign(candidates * kAdjElems, 0.0);
   plan->sign.assign(candidates * kAdjElems, 1);
@@ -194,7 +190,7 @@ bool build_rdoq_plan(const Request* requests,
     const txv::TxParams& params = candidate.tx.params;
     const int area = params.w * params.h;
     if (area <= 0) {
-      if (error != nullptr) *error = "invalid candidate geometry";
+      error = "invalid candidate geometry";
       return false;
     }
 
@@ -229,7 +225,7 @@ bool build_rdoq_plan(const Request* requests,
       coefficient.level_context = i;
       const std::int32_t bound = rdoq::rdoq_level_bound(coefficient, config);
       if (bound < 0) {
-        if (error != nullptr) *error = "invalid coefficient level bound";
+        error = "invalid coefficient level bound";
         return false;
       }
       const std::size_t index = slot + static_cast<std::size_t>(i);
@@ -271,14 +267,12 @@ bool build_rdoq_plan(const Request* requests,
       std::string build_error;
       if (!hooks->build(hooks->user, model_request, &rate_model,
                         &build_error)) {
-        if (error != nullptr) {
-          *error = build_error.empty() ? "rate-model hook failed" : build_error;
-        }
+error = build_error.empty() ? "rate-model hook failed" : build_error;
         return false;
       }
       if (rate_model.coefficient_rate == nullptr ||
           rate_model.eob_rate == nullptr) {
-        if (error != nullptr) *error = "rate-model hook returned no model";
+        error = "rate-model hook returned no model";
         return false;
       }
       custom_model = true;
@@ -291,10 +285,8 @@ bool build_rdoq_plan(const Request* requests,
       std::string init_error;
       if (!default_model.init(info, model_request.scalar_levels_scan,
                               &init_error)) {
-        if (error != nullptr) {
-          *error = init_error.empty() ? "AV2 rate-model init failed"
-                                      : init_error;
-        }
+error = init_error.empty() ? "AV2 rate-model init failed"
+                            : init_error;
         return false;
       }
       rate_model = default_model.rate_model();
@@ -376,11 +368,9 @@ bool build_rdoq_plan(const Request* requests,
         plan->path_total * (sizeof(std::int32_t) + sizeof(std::uint8_t)) +
         plan->original.size() * (sizeof(double) + 2 * sizeof(std::int32_t));
     if (bytes > table_budget) {
-      if (error != nullptr) {
-        *error = "RDOQ rate tables exceed BatchOptions::table_budget_bytes (" +
-                 std::to_string(bytes) + " > " +
-                 std::to_string(table_budget) + "); split the block batch";
-      }
+error = "RDOQ rate tables exceed BatchOptions::table_budget_bytes (" +
+         std::to_string(bytes) + " > " +
+         std::to_string(table_budget) + "); split the block batch";
       return false;
     }
 
@@ -414,7 +404,7 @@ bool candidate_allowed(const Request& request, int type) {
 // subset.  This is how `Request::candidate_types` and enable_idtx_intra = 0
 // reach the GPU path.
 bool filter_plan(const Request* requests, const TxTypePlan& input,
-                 TxTypePlan* output, std::string* error) {
+                 TxTypePlan* output, std::string& error) {
   *output = input;
   output->candidates.clear();
   output->tx_jobs.clear();
@@ -436,10 +426,8 @@ bool filter_plan(const Request* requests, const TxTypePlan& input,
           }
         }
         if (!legal) {
-          if (error != nullptr) {
-            *error = "block " + std::to_string(b) +
-                     ": candidate TX type is not legal for this block";
-          }
+error = "block " + std::to_string(b) +
+         ": candidate TX type is not legal for this block";
           return false;
         }
       }
@@ -457,10 +445,8 @@ bool filter_plan(const Request* requests, const TxTypePlan& input,
       ++block.cand_count;
     }
     if (block.cand_count == 0) {
-      if (error != nullptr) {
-        *error = "block " + std::to_string(b) +
-                 " has no candidate after Request filtering";
-      }
+error = "block " + std::to_string(b) +
+         " has no candidate after Request filtering";
       return false;
     }
   }
@@ -492,14 +478,14 @@ bool better(const CandidateOutcome& candidate, const CandidateOutcome& best) {
 bool evaluate_batch(const Request* requests, int count,
                     const BatchOptions& options,
                     std::vector<CandidateOutcome>* outcomes,
-                    std::string* error) {
+                    std::string& error) {
   if (outcomes == nullptr) {
-    if (error != nullptr) *error = "null outcomes";
+    error = "null outcomes";
     return false;
   }
   outcomes->clear();
   if (count < 0 || (count > 0 && requests == nullptr)) {
-    if (error != nullptr) *error = "invalid request batch";
+    error = "invalid request batch";
     return false;
   }
   if (count == 0) return true;
@@ -508,10 +494,8 @@ bool evaluate_batch(const Request* requests, int count,
   // no allocator of its own and no cudaMalloc fallback.
   if (options.allocator.allocate == nullptr ||
       options.allocator.deallocate == nullptr) {
-    if (error != nullptr) {
-      *error = "BatchOptions::allocator is required and must be backed by "
-               "av2enc::cuda::Arena (both allocate and deallocate set)";
-    }
+error = "BatchOptions::allocator is required and must be backed by "
+         "av2enc::cuda::Arena (both allocate and deallocate set)";
     return false;
   }
 
@@ -553,7 +537,7 @@ bool evaluate_batch(const Request* requests, int count,
     const auto params =
         txv::make_tx_params(request.coded_w, request.coded_h);
     if (!params.has_value()) {
-      if (error != nullptr) *error = "unsupported TX size";
+      error = "unsupported TX size";
       return false;
     }
     txv::downsample_residual(
@@ -565,7 +549,7 @@ bool evaluate_batch(const Request* requests, int count,
   std::string plan_error;
   if (!av2enc::cuda::tx_type_build_plan(block_requests.data(), count, &raw_plan,
                                         &plan_error)) {
-    if (error != nullptr) *error = plan_error.empty() ? "TX-type plan failed"
+    error = plan_error.empty() ? "TX-type plan failed"
                                                       : plan_error;
     return false;
   }
@@ -886,9 +870,9 @@ bool evaluate_batch(const Request* requests, int count,
 
 bool quantize_batch(const Request* requests, int count,
                     const BatchOptions& options, Decision* decisions,
-                    std::string* error) {
+                    std::string& error) {
   if (decisions == nullptr) {
-    if (error != nullptr) *error = "null decisions";
+    error = "null decisions";
     return false;
   }
   std::vector<CandidateOutcome> outcomes;
@@ -914,10 +898,8 @@ bool quantize_batch(const Request* requests, int count,
       if (best == nullptr || better(outcome, *best)) best = &outcome;
     }
     if (best == nullptr) {
-      if (error != nullptr) {
-        *error = "block " + std::to_string(block) +
-                 " has no codable TX-type candidate";
-      }
+error = "block " + std::to_string(block) +
+         " has no codable TX-type candidate";
       return false;
     }
 
@@ -925,7 +907,7 @@ bool quantize_batch(const Request* requests, int count,
         requests[block].coded_w, requests[block].coded_h,
         static_cast<TxType>(best->type));
     if (!params.has_value()) {
-      if (error != nullptr) *error = "winner has an unsupported TX type";
+      error = "winner has an unsupported TX type";
       return false;
     }
     decision.valid = true;

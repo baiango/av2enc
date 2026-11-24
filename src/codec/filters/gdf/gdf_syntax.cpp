@@ -10,8 +10,8 @@ namespace {
 
 using av2enc::still::filters_stream::BitReader;
 
-bool fail(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+bool fail(std::string& error, const char* message) {
+  error = message;
   return false;
 }
 
@@ -73,7 +73,7 @@ GdfUnitLayout DeriveGdfUnitLayout(const FrameGdfContext& context) {
 
 std::size_t WriteSequenceGdfFlags(BitWriter& writer,
                                   const SequenceGdfFlags& flags, int sb_size,
-                                  std::string* error) {
+                                  std::string& error) {
   if (!valid_sb_size(sb_size)) {
     fail(error, "GDF: sb_size must be 64 or 128");
     return 0;
@@ -87,7 +87,7 @@ std::size_t WriteSequenceGdfFlags(BitWriter& writer,
 }
 
 bool ReadSequenceGdfFlags(BitReader& reader, int sb_size,
-                          SequenceGdfFlags* flags, std::string* error) {
+                          SequenceGdfFlags* flags, std::string& error) {
   if (flags == nullptr) return fail(error, "GDF: null sequence flags");
   if (!valid_sb_size(sb_size)) {
     return fail(error, "GDF: sb_size must be 64 or 128");
@@ -107,7 +107,7 @@ bool ReadSequenceGdfFlags(BitReader& reader, int sb_size,
 
 std::size_t WriteFrameGdfParams(BitWriter& writer,
                                 const FrameGdfContext& context,
-                                FrameGdfParams* params, std::string* error) {
+                                FrameGdfParams* params, std::string& error) {
   if (params == nullptr) {
     fail(error, "GDF: null frame params");
     return 0;
@@ -161,7 +161,7 @@ std::size_t WriteFrameGdfParams(BitWriter& writer,
 }
 
 bool ReadFrameGdfParams(BitReader& reader, const FrameGdfContext& context,
-                        FrameGdfParams* params, std::string* error) {
+                        FrameGdfParams* params, std::string& error) {
   if (params == nullptr) return fail(error, "GDF: null frame params");
   *params = FrameGdfParams{};
   if (context.coded_lossless || !context.enable_gdf) return true;

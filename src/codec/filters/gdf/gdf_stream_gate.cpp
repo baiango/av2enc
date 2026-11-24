@@ -96,7 +96,7 @@ unsigned BitWidth(std::uint32_t value) {
 // §5.4.1 sequence_header_obu() as written by M1, with the §5.4.10 GDF rows.
 std::vector<std::uint8_t> MakeSequenceHeader(
     const av2enc::still::StillConfig& config, const gdf::SequenceGdfFlags& flags,
-    std::string* error) {
+    std::string& error) {
   av2enc::BitWriter writer;
   PutUvlc(writer, 0);                          // seq_header_id
   writer.put_bits(0U, 5U);                     // seq_profile_idc
@@ -174,7 +174,7 @@ std::vector<std::uint8_t> MakeSequenceHeader(
 std::vector<std::uint8_t> MakeFrameObu(
     const av2enc::still::StillConfig& config, const gdf::FrameGdfContext& context,
     const gdf::FrameGdfParams& params, bool gdf_on,
-    std::span<const std::uint8_t> tile_payload, std::string* error) {
+    std::span<const std::uint8_t> tile_payload, std::string& error) {
   av2enc::BitWriter writer;
   writer.put_bit(true);  // is_first_tile_group
   PutUvlc(writer, 0);    // cur_mfh_id
@@ -244,7 +244,7 @@ std::vector<std::uint8_t> AssembleStream(
     const av2enc::still::StillConfig& config, const gdf::SequenceGdfFlags& seq_flags,
     bool gdf_on, const gdf::FrameGdfContext& context,
     const gdf::FrameGdfParams& params,
-    std::span<const std::uint8_t> tile_payload, std::string* error) {
+    std::span<const std::uint8_t> tile_payload, std::string& error) {
   const std::vector<std::uint8_t> temporal =
       av2enc::basic::make_obu({av2enc::basic::ObuType::kTemporalDelimiter}, {});
   const std::vector<std::uint8_t> sequence =
@@ -260,7 +260,7 @@ std::vector<std::uint8_t> AssembleStream(
 }
 
 bool WriteIvf(const fs::path& path, std::span<const std::uint8_t> frame,
-              int width, int height, std::string* error) {
+              int width, int height, std::string& error) {
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
   header.height = static_cast<std::uint16_t>(height);
@@ -281,13 +281,13 @@ struct Planes {
 
 bool DecodeAndCompare(const std::string& decoder, const fs::path& ivf,
                       const fs::path& y4m, int width, int height,
-                      const Planes& expected, std::string* error) {
+                      const Planes& expected, std::string& error) {
   const std::string command = "\"" + decoder + "\" -q -i \"" + ivf.string() +
                               "\" -o \"" + y4m.string() +
                               "\" --strict 1 --threads 1";
   const int status = std::system(command.c_str());
   if (status != 0) {
-    *error = "dav2d failed";
+    error = "dav2d failed";
     return false;
   }
   av2enc::Y4mReader reader(y4m);
@@ -298,7 +298,7 @@ bool DecodeAndCompare(const std::string& decoder, const fs::path& ivf,
   }
   if (static_cast<int>(frame.width()) != width ||
       static_cast<int>(frame.height()) != height) {
-    *error = "decoded size mismatch";
+    error = "decoded size mismatch";
     return false;
   }
   const std::size_t luma_size =
@@ -325,7 +325,7 @@ bool DecodeAndCompare(const std::string& decoder, const fs::path& ivf,
   compare(frame.u(), expected.u);
   compare(frame.v(), expected.v);
   if (diffs != 0) {
-    *error = "decoded samples differ";
+    error = "decoded samples differ";
     std::printf("       first diff at %zu (%zu diffs, luma %zu, chroma %zu)\n",
                 first, diffs, luma_size, chroma_size);
     return false;

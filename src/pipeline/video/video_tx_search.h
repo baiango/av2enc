@@ -194,6 +194,6 @@ struct Result {
             std::int32_t coded_h, Mode mode, std::int32_t qindex,
             std::int32_t delta_dc, std::int32_t delta_ac,
             const std::uint8_t* prediction, const Options& options,
-            Result* out, std::string* error);
+            Result* out, std::string& error);
 
 }  // namespace av2enc::video::txtsearch

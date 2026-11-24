@@ -89,7 +89,7 @@ struct TxTypeDecision {
                     std::span<std::int32_t> levels_out,
                     std::span<std::int16_t> recon_out,
                     TransformStreamRate& stream, TxTypeDecision& out,
-                    std::string* error = nullptr);
+                    std::string& error);
 
 struct RdoqConfig {
   double lambda = 0.0;    // coefficient-domain lambda
@@ -134,7 +134,7 @@ struct RdoqDecision {
                  int txb_skip_context, int dc_sign_context,
                  const RdoqConfig& config, RdoqWorkspace& workspace,
                  TransformStreamRate& stream, std::span<std::int32_t> levels_out,
-                 RdoqDecision& out, std::string* error = nullptr);
+                 RdoqDecision& out, std::string& error);
 
 // lambda_pixel / 64 for the M1 transform normalisation (coefficient = pixel/8).
 double rdoq_lambda_from_pixel_lambda(double lambda_pixel) noexcept;

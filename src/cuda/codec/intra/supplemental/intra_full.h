@@ -361,7 +361,7 @@ class Workspace {
   // Allocates the persistent result arrays exactly once and validates capacity.
   // On failure returns the reason; when it is kArenaExhausted the arena bump
   // pointer is restored and `*required_out` (when non-null) is the requirement.
-  Status init(Arena& arena, const Config& config, std::string* error = nullptr,
+  Status init(Arena& arena, const Config& config, std::string& error,
               std::uint64_t* required_out = nullptr);
 
   bool initialized() const noexcept { return arena_ != nullptr; }
@@ -444,7 +444,7 @@ class Workspace {
 // ---------------------------------------------------------------------------
 
 inline Status Workspace::init(Arena& arena, const Config& config,
-                              std::string* error,
+                              std::string& error,
                               std::uint64_t* required_out) {
   arena_ = nullptr;
   config_ = Config{};
@@ -456,21 +456,19 @@ inline Status Workspace::init(Arena& arena, const Config& config,
 
   if (!detail::config_valid(config)) {
     if (required_out != nullptr) *required_out = 0;
-    if (error != nullptr) *error = "intra_full: invalid workspace configuration";
+    error = "intra_full: invalid workspace configuration";
     return Status::kInvalidArgument;
   }
 
   const std::uint64_t need = required_device_bytes(config);
   if (required_out != nullptr) *required_out = need;
   if (!arena.initialized()) {
-    if (error != nullptr) *error = "intra_full: arena is not initialized";
+    error = "intra_full: arena is not initialized";
     return Status::kNotInitialized;
   }
   if (arena.remaining() < need) {
-    if (error != nullptr) {
-      *error = "intra_full: arena needs " + std::to_string(need) +
-               " bytes, " + std::to_string(arena.remaining()) + " available";
-    }
+error = "intra_full: arena needs " + std::to_string(need) +
+         " bytes, " + std::to_string(arena.remaining()) + " available";
     return Status::kArenaExhausted;
   }
 
@@ -494,10 +492,8 @@ inline Status Workspace::init(Arena& arena, const Config& config,
     d_chroma_results_ = nullptr;
     d_sign_results_ = nullptr;
     d_sign_context_results_ = nullptr;
-    if (error != nullptr) {
-      *error = "intra_full: arena exhausted after " + std::to_string(need) +
-               " bytes";
-    }
+error = "intra_full: arena exhausted after " + std::to_string(need) +
+         " bytes";
     return Status::kArenaExhausted;
   }
 

@@ -27,18 +27,18 @@ bool score_inter_candidate(const InterCandidateSpec& spec,
                            const RdoConfig& config,
                            const InterRateModel& model,
                            ScoredInterCandidate& out,
-                           std::string* error) {
+                           std::string& error) {
   out = ScoredInterCandidate{};
   std::string local_error;
   if (!validate_config(config, &local_error)) {
-    if (error != nullptr) *error = local_error;
+    error = local_error;
     return false;
   }
 
   residual::BlockDecision decision;
   if (!decide_residual(block, config, evaluate_residual,
                        spec.force_residual, decision, &local_error)) {
-    if (error != nullptr) *error = local_error;
+    error = local_error;
     return false;
   }
 
@@ -60,7 +60,7 @@ bool score_inter_candidate(const InterCandidateSpec& spec,
           : (decision.skip ? decision.skip_distortion : decision.distortion);
   if (!finite_nonnegative(mode_bits) || !finite_nonnegative(residual_bits) ||
       !finite_nonnegative(distortion)) {
-    if (error != nullptr) *error = "inter candidate rate/distortion invalid";
+    error = "inter candidate rate/distortion invalid";
     return false;
   }
 
@@ -113,15 +113,15 @@ InterCandidate make_intra_candidate(double distortion, double coefficient_bits,
 
 InterDecision decide_inter_candidates(
     std::span<const InterCandidate> candidates, const RdoConfig& config,
-    std::string* error) {
+    std::string& error) {
   InterDecision result;
   std::string local_error;
   if (!validate_config(config, &local_error)) {
-    if (error != nullptr) *error = local_error;
+    error = local_error;
     return result;
   }
   if (candidates.empty()) {
-    if (error != nullptr) *error = "no inter candidates";
+    error = "no inter candidates";
     return result;
   }
 
@@ -145,7 +145,7 @@ InterDecision decide_inter_candidates(
       continue;
     }
     if (accepted_count >= static_cast<int>(accepted.size())) {
-      if (error != nullptr) *error = "too many inter candidates";
+      error = "too many inter candidates";
       return result;
     }
     accepted[static_cast<std::size_t>(accepted_count)] = static_cast<int>(i);
@@ -155,7 +155,7 @@ InterDecision decide_inter_candidates(
   const av2enc::rdo::RdoDecision& decision = selector_state.decision();
   if (!decision.found ||
       decision.best.input_index >= accepted_count) {
-    if (error != nullptr) *error = "no valid inter candidate";
+    error = "no valid inter candidate";
     return result;
   }
   result.found = true;

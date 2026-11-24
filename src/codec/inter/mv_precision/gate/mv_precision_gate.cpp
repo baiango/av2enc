@@ -94,7 +94,7 @@ std::vector<OwnedFrame> make_synthetic_clip(int frames, int width, int height) {
 }
 
 bool load_y4m(const std::string& path, int frames, std::vector<OwnedFrame>* out,
-              std::string* error) {
+              std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
@@ -105,7 +105,7 @@ bool load_y4m(const std::string& path, int frames, std::vector<OwnedFrame>* out,
     const int w = static_cast<int>(frame.width()) & ~63;
     const int h = static_cast<int>(frame.height()) & ~63;
     if (w <= 0 || h <= 0) {
-      *error = "Y4M frame is smaller than 64x64";
+      error = "Y4M frame is smaller than 64x64";
       return false;
     }
     OwnedFrame owned;
@@ -144,7 +144,7 @@ bool load_y4m(const std::string& path, int frames, std::vector<OwnedFrame>* out,
 
 bool write_ivf(const std::string& path,
                const std::vector<std::vector<std::uint8_t>>& units, int width,
-               int height, std::string* error) {
+               int height, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
@@ -181,7 +181,7 @@ bool decode_and_compare(const std::string& dav2d, const std::string& ivf,
                         const std::vector<av2enc::video::VideoReconFrame>& recons,
                         int64_t* total_diffs, int* first_frame,
                         int* first_index, int* decoded_frames,
-                        std::string* error) {
+                        std::string& error) {
   const std::string y4m = ivf + ".decoded.y4m";
   std::filesystem::remove(y4m);
   const std::string cmd = "\"" + dav2d + "\" -q -i \"" + ivf + "\" -o \"" +
@@ -189,7 +189,7 @@ bool decode_and_compare(const std::string& dav2d, const std::string& ivf,
                           " --threads 1";
   const int status = std::system(cmd.c_str());
   if (status != 0) {
-    *error = "dav2d decode failed (status " + std::to_string(status) + ")";
+    error = "dav2d decode failed (status " + std::to_string(status) + ")";
     return false;
   }
   av2enc::Y4mReader reader(y4m);
@@ -204,7 +204,7 @@ bool decode_and_compare(const std::string& dav2d, const std::string& ivf,
   }
   *decoded_frames = static_cast<int>(frames.size());
   if (frames.size() < recons.size()) {
-    *error = "decoded only " + std::to_string(frames.size()) + " frames, want " +
+    error = "decoded only " + std::to_string(frames.size()) + " frames, want " +
              std::to_string(recons.size());
     return false;
   }

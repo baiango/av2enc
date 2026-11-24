@@ -279,7 +279,7 @@ bool run_chroma_filters(const Format& format,
     filter_frame.bit_depth = kBitDepth;
     if (!av2enc::hbd::plan_cdef(filter_frame, options.cdef_damping,
                                 options.cdef_num_strengths, &plan->cdef,
-                                &error)) {
+                                error)) {
       return false;
     }
     const std::uint16_t* src_planes[3] = {nullptr, nullptr, nullptr};
@@ -292,7 +292,7 @@ bool run_chroma_filters(const Format& format,
       dst_planes[p] = cdef16[p].data();
     }
     if (!av2enc::hbd::apply_cdef16(plan->cdef, format, src_planes, dst_planes,
-                                   src_stride, mi_cols, mi_rows, &error)) {
+                                   src_stride, mi_cols, mi_rows, error)) {
       return false;
     }
     for (int p = 0; p < num_planes; ++p) plane16[p].swap(cdef16[p]);
@@ -326,11 +326,11 @@ bool run_chroma_filters(const Format& format,
     filter_frame.bit_depth = kBitDepth;
     if (!av2enc::hbd::plan_ccso(filter_frame, options.ccso_luma_size_log2,
                                 options.ccso_edge_only, &plan->ccso,
-                                &error)) {
+                                error)) {
       return false;
     }
     if (!av2enc::hbd::apply_ccso16(plan->ccso, format, curr_planes, out_planes,
-                                   stride, stride, mi_cols, mi_rows, &error)) {
+                                   stride, stride, mi_cols, mi_rows, error)) {
       return false;
     }
   }
@@ -384,7 +384,7 @@ bool run_chroma_filters(const Format& format,
       if (!av2enc::hbd::plan_lr(lr_frame, options.enable_wiener,
                                 options.enable_chroma_lr,
                                 options.enable_pc_wiener, options.base_q_idx,
-                                &plan->lr, &error)) {
+                                &plan->lr, error)) {
         return false;
       }
       plan->lr.config.lr_tx_skip = lr_tx_skip;
@@ -409,7 +409,7 @@ bool run_chroma_filters(const Format& format,
     }
     if (any_lr && plan->lr.config.enabled) {
       if (!av2enc::hbd::apply_wiener16(lr_frame, plan->lr.config, lr_ptr,
-                                       lr_stride, &error)) {
+                                       lr_stride, error)) {
         return false;
       }
       if (options.enable_pc_wiener && plan->lr.config.plane[0].enabled) {
@@ -435,11 +435,11 @@ bool run_chroma_filters(const Format& format,
       gdf_frame.mi_rows = mi_rows;
       gdf_frame.bit_depth = kBitDepth;
       gdf_frame.base_q_idx = options.base_q_idx;
-      if (!av2enc::hbd::plan_gdf(gdf_frame, &plan->gdf, &error)) {
+      if (!av2enc::hbd::plan_gdf(gdf_frame, &plan->gdf, error)) {
         return false;
       }
       if (!av2enc::hbd::apply_gdf16(plan->gdf, gdf_frame, lr_ptr[0],
-                                    lr_stride[0], &error)) {
+                                    lr_stride[0], error)) {
         return false;
       }
     }

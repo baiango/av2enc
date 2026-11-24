@@ -82,8 +82,8 @@ void write_tile_info(BitWriter& writer, const SequenceConfig& c) {
   }
 }
 
-bool set_error(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+bool set_error(std::string& error, const char* message) {
+  error = message;
   return false;
 }
 
@@ -189,7 +189,7 @@ int max_long_term_id_plus_1(const SequenceConfig& config) {
 }
 
 bool validate_sequence_header_config(const SequenceConfig& c,
-                                     std::string* error) {
+                                     std::string& error) {
   if (c.max_mlayer_id != 0U) {
     return set_error(
         error,
@@ -217,7 +217,7 @@ bool validate_sequence_header_config(const SequenceConfig& c,
   if (c.max_drl_bits_minus_1 >= 5U) {
     return set_error(error, "max_drl_bits_minus_1 is outside f(3)");
   }
-  if (error != nullptr) error->clear();
+  error.clear();
   return true;
 }
 
@@ -226,7 +226,8 @@ bool validate_sequence_header_config(const SequenceConfig& c,
 // ---------------------------------------------------------------------------
 std::size_t write_sequence_header(BitWriter& writer,
                                   const SequenceConfig& c) {
-  if (!validate_sequence_header_config(c, nullptr)) {
+  std::string ignored;
+  if (!validate_sequence_header_config(c, ignored)) {
     return 0;
   }
   const std::size_t start = writer.bit_size();
@@ -370,7 +371,8 @@ std::size_t write_sequence_header(BitWriter& writer,
 
 std::vector<std::uint8_t> make_sequence_header_obu(
     const SequenceConfig& config) {
-  if (!validate_sequence_header_config(config, nullptr)) return {};
+  std::string ignored;
+  if (!validate_sequence_header_config(config, ignored)) return {};
   BitWriter writer;
   write_sequence_header(writer, config);
   writer.put_bit(false);  // obu_extension_flag
@@ -492,7 +494,7 @@ std::size_t write_frame_header(BitWriter& writer, const SequenceConfig& c,
         h.role == FrameRole::kOpenLoopKey ? false : h.immediate_output_frame;
     std::string grain_error;
     (void)filters::grain::WriteFilmGrainConfig(
-        writer, h.grain, context, &grain_error);
+        writer, h.grain, context, grain_error);
     assert(grain_error.empty());
   }
 
@@ -527,7 +529,7 @@ std::vector<std::uint8_t> make_frame_obu(
 // ---------------------------------------------------------------------------
 namespace {
 
-bool read_uvlc(BitReader& reader, std::uint32_t* out, std::string* error) {
+bool read_uvlc(BitReader& reader, std::uint32_t* out, std::string& error) {
   if (!reader.uvlc(out)) {
     return set_error(error, "uvlc() ran past the end of the OBU");
   }
@@ -535,17 +537,15 @@ bool read_uvlc(BitReader& reader, std::uint32_t* out, std::string* error) {
 }
 
 bool expect_flag(BitReader& reader, bool expected, const char* name,
-                 std::string* error) {
+                 std::string& error) {
   bool value = false;
   if (!read_flag(reader, &value)) {
-    if (error != nullptr) *error = std::string("truncated bit: ") + name;
+    error = std::string("truncated bit: ") + name;
     return false;
   }
   if (value != expected) {
-    if (error != nullptr) {
-      *error = std::string(name) + " = " + (value ? "1" : "0") +
-               ", expected " + (expected ? "1" : "0");
-    }
+error = std::string(name) + " = " + (value ? "1" : "0") +
+         ", expected " + (expected ? "1" : "0");
     return false;
   }
   return true;
@@ -554,7 +554,7 @@ bool expect_flag(BitReader& reader, bool expected, const char* name,
 }  // namespace
 
 bool parse_obu(std::span<const std::uint8_t> bytes, ObuView* view,
-               std::size_t* consumed, std::string* error) {
+               std::size_t* consumed, std::string& error) {
   if (view == nullptr || consumed == nullptr) {
     return set_error(error, "parse_obu: null output");
   }
@@ -596,7 +596,7 @@ bool parse_obu(std::span<const std::uint8_t> bytes, ObuView* view,
 
 bool read_tile_group_header(std::span<const std::uint8_t> payload,
                             const SequenceConfig& c, ParsedFrameHeader* out,
-                            std::string* error) {
+                            std::string& error) {
   if (out == nullptr) return set_error(error, "read_tile_group_header: null");
   BitReader reader(payload);
   // The OBU type is not part of the tile-group payload, so the caller seeds
@@ -803,8 +803,8 @@ bool read_tile_group_header(std::span<const std::uint8_t> payload,
     std::size_t position = reader.bit_pos();
     std::string grain_error;
     if (!filters::grain::ReadFilmGrainConfig(payload, &position, context,
-                                             &h.grain, &grain_error)) {
-      if (error != nullptr) error->assign("film_grain_config: " + grain_error);
+                                             &h.grain, grain_error)) {
+      error.assign("film_grain_config: " + grain_error);
       return false;
     }
     while (reader.bit_pos() < position) {
@@ -827,7 +827,7 @@ bool read_tile_group_header(std::span<const std::uint8_t> payload,
 
 bool read_sequence_header(std::span<const std::uint8_t> payload,
                           const SequenceConfig& c, std::size_t* bits,
-                          std::string* error) {
+                          std::string& error) {
   if (!validate_sequence_header_config(c, error)) return false;
   BitReader reader(payload);
   std::uint32_t uvlc = 0;

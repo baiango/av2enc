@@ -21,14 +21,14 @@ using av2enc::fmt::Picture;
 
 bool write_10bit_recon(const Picture& picture,
                        const av2enc::high_bitdepth::HighBitDepthPlane recon_planes[3],
-                       const std::filesystem::path& path, std::string* error) {
+                       const std::filesystem::path& path, std::string& error) {
   Picture recon;
   Format format;
   format.width = picture.format.width;
   format.height = picture.format.height;
   format.chroma = picture.format.chroma;
   format.depth = BitDepth::k10;
-  if (!av2enc::fmt::allocate_picture(format, recon, *error)) {
+  if (!av2enc::fmt::allocate_picture(format, recon, error)) {
     return false;
   }
   const int planes = av2enc::fmt::num_planes(format.chroma);
@@ -52,22 +52,22 @@ bool write_10bit_recon(const Picture& picture,
 bool encode_10bit(const Picture& picture,
                   const StillFormatOptions& options,
                   std::vector<std::uint8_t>* frame,
-                  std::uint32_t* tile_bytes, std::string* error) {
+                  std::uint32_t* tile_bytes, std::string& error) {
   av2enc::high_bitdepth::HighBitDepthResult result;
   if (options.high_bitdepth_gpu != nullptr) {
     if (options.enable_cdef) {
-      *error = "--still-cdef has no GPU block stage for the 10-bit format "
+      error = "--still-cdef has no GPU block stage for the 10-bit format "
                "writer; use --still (CPU)";
       return false;
     }
     if (options.enable_ccso) {
-      *error = "--still-ccso has no GPU block stage for the 10-bit format "
+      error = "--still-ccso has no GPU block stage for the 10-bit format "
                "writer; use --still (CPU)";
       return false;
     }
     if (options.enable_wiener || options.enable_chroma_lr ||
         options.enable_pc_wiener || options.enable_gdf) {
-      *error = "loop restoration/GDF have no GPU block stage for the 10-bit "
+      error = "loop restoration/GDF have no GPU block stage for the 10-bit "
                "format writer; use --still (CPU)";
       return false;
     }
@@ -77,7 +77,7 @@ bool encode_10bit(const Picture& picture,
     av2enc::high_bitdepth::HighBitDepthOptions gpu_options;
     gpu_options.base_q_idx = options.base_q_idx;
     gpu_options.enable_deblock = options.enable_deblock;
-    if (!options.high_bitdepth_gpu(picture, gpu_options, result, *error)) {
+    if (!options.high_bitdepth_gpu(picture, gpu_options, result, error)) {
       return false;
     }
   } else {
@@ -95,7 +95,7 @@ bool encode_10bit(const Picture& picture,
     hbd_options.enable_pc_wiener = options.enable_pc_wiener;
     hbd_options.enable_gdf = options.enable_gdf;
     av2enc::hbd::HbdResult cpu_result;
-    if (!av2enc::hbd::encode_still(picture, hbd_options, cpu_result, *error)) {
+    if (!av2enc::hbd::encode_still(picture, hbd_options, cpu_result, error)) {
       return false;
     }
     result.frame = std::move(cpu_result.frame);
@@ -116,9 +116,9 @@ bool encode_10bit(const Picture& picture,
 bool encode_8bit_chroma(const Picture& picture,
                         const StillFormatOptions& options,
                         std::vector<std::uint8_t>* frame,
-                        std::uint32_t* tile_bytes, std::string* error) {
+                        std::uint32_t* tile_bytes, std::string& error) {
   av2enc::chroma::ChromaPicture chroma_picture;
-  if (!av2enc::chroma::make_chroma_picture(picture, chroma_picture, *error)) {
+  if (!av2enc::chroma::make_chroma_picture(picture, chroma_picture, error)) {
     return false;
   }
   av2enc::chroma::ChromaStillOptions chroma_options;
@@ -140,7 +140,7 @@ bool encode_8bit_chroma(const Picture& picture,
   av2enc::chroma::ChromaStillResult result;
   if (!av2enc::chroma::encode_chroma_still_picture(chroma_picture,
                                                    chroma_options, result,
-                                                   *error)) {
+                                                   error)) {
     return false;
   }
   *frame = std::move(result.frame);
@@ -153,7 +153,7 @@ bool encode_8bit_chroma(const Picture& picture,
     format.height = static_cast<std::uint32_t>(result.shape.height);
     format.chroma = result.shape.chroma;
     format.depth = BitDepth::k8;
-    if (!av2enc::fmt::allocate_picture(format, recon, *error)) {
+    if (!av2enc::fmt::allocate_picture(format, recon, error)) {
       return false;
     }
     const int planes = av2enc::fmt::num_planes(format.chroma);
@@ -184,9 +184,9 @@ bool encode_8bit_chroma(const Picture& picture,
 }  // namespace
 
 bool format_still_supported(ChromaFormat chroma, BitDepth depth,
-                            std::string* reason) {
+                            std::string& reason) {
   if (fmt::chroma_format_idc(chroma) < 0) {
-    if (reason != nullptr) *reason = "invalid chroma format";
+    reason = "invalid chroma format";
     return false;
   }
   if (depth == BitDepth::k10) {
@@ -198,19 +198,17 @@ bool format_still_supported(ChromaFormat chroma, BitDepth depth,
     }
     return true;
   }
-  if (reason != nullptr) {
-    *reason = "only 8-bit and 10-bit are signalable in AV2 v1.0.0";
-  }
+    reason = "only 8-bit and 10-bit are signalable in AV2 v1.0.0";
   return false;
 }
 
 bool encode_still_format(const std::filesystem::path& input,
                          const std::filesystem::path& output,
                          const StillFormatOptions& options,
-                         StillFormatStats* stats, std::string* error) {
+                         StillFormatStats* stats, std::string& error) {
   std::string reason;
-  if (!format_still_supported(options.chroma, options.depth, &reason)) {
-    *error = reason;
+  if (!format_still_supported(options.chroma, options.depth, reason)) {
+    error = reason;
     return false;
   }
 
@@ -220,7 +218,7 @@ bool encode_still_format(const std::filesystem::path& input,
     return false;
   }
   if (info.chroma != options.chroma || info.depth != options.depth) {
-    *error = "input is " + av2enc::fmt::y4m_colorspace_tag(info.chroma,
+    error = "input is " + av2enc::fmt::y4m_colorspace_tag(info.chroma,
                                                            info.depth) +
              " but the requested format is " +
              av2enc::fmt::y4m_colorspace_tag(options.chroma, options.depth) +
@@ -247,15 +245,15 @@ bool encode_still_format(const std::filesystem::path& input,
   ivf.fps_den = info.fps_den;
 
   av2enc::IvfWriter writer;
-  if (!writer.open(output, ivf, *error)) {
+  if (!writer.open(output, ivf, error)) {
     return false;
   }
-  if (!writer.write_frame(frame, 0, *error)) {
+  if (!writer.write_frame(frame, 0, error)) {
     std::string close_error;
     writer.close(close_error);
     return false;
   }
-  if (!writer.close(*error)) {
+  if (!writer.close(error)) {
     return false;
   }
 

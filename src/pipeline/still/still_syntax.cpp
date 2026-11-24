@@ -598,7 +598,7 @@ class Writer {
       pc_params.chroma_shift = config_.lr.plane[1].shift;
       pc_ready_ = pcw::InitTileState(&pc_state_, pc_params, mi_cols_,
                                      mi_rows_, /*sub_x=*/1, /*sub_y=*/1,
-                                     &error_);
+                                     error_);
       if (config_.lr.plane[1].enabled || config_.lr.plane[2].enabled) {
         restoration::classes::WienerLrHeaderParams params;
         params.frame_type[0] = restoration::kRestoreNone;
@@ -620,7 +620,7 @@ class Writer {
                                   : config_.lr.plane[2].shift;
         lr_ready_ = restoration::classes::wiener_tile_init(
             &lr_state_, params, mi_cols_, mi_rows_, /*sub_x=*/1, /*sub_y=*/1,
-            &error_);
+            error_);
       }
     } else if (config_.lr.enable) {
       restoration::classes::WienerLrHeaderParams params;
@@ -638,7 +638,7 @@ class Writer {
                                 : config_.lr.plane[2].shift;
       lr_ready_ = restoration::classes::wiener_tile_init(
           &lr_state_, params, mi_cols_, mi_rows_, /*sub_x=*/1, /*sub_y=*/1,
-          &error_);
+          error_);
     }
   }
 
@@ -731,13 +731,13 @@ class Writer {
     qp_header.primary_ref_is_none = true;
     std::string err;
     const int base_q_idx = static_cast<int>(config_.base_q_idx);
-    if (!make_delta_q_params(config_.per_sb_delta_q, seg_params, dq_params, &err) ||
+    if (!make_delta_q_params(config_.per_sb_delta_q, seg_params, dq_params, err) ||
         !deltaq::derive_frame_segmentation(seg_params, dq_params, base_q_idx,
-                                           qp_header, seg_, &err) ||
-        !deltaq::begin_tile(tile_qp_, base_q_idx, dq_params, &err) ||
+                                           qp_header, seg_, err) ||
+        !deltaq::begin_tile(tile_qp_, base_q_idx, dq_params, err) ||
         !deltaq::init_segment_grid(
             seg_grid_, mi_cols_, mi_rows_, 0, mi_cols_, 0, mi_rows_,
-            /*enable_ext_seg=*/false, deltaq::max_segments(false), {}, &err)) {
+            /*enable_ext_seg=*/false, deltaq::max_segments(false), {}, err)) {
       deltaq_init_error_ = "delta-Q setup: " + err;
       return;
     }
@@ -1420,7 +1420,7 @@ class Writer {
         }
         if (!cfl::mhccp::write_cfl_alphas(
                 enc_, cdfs_.mh_cdfs, syntax, config_.enable_cfl_intra,
-                mhccp_allowed, mh_size_group, &alpha_error)) {
+                mhccp_allowed, mh_size_group, alpha_error)) {
           error_ = "read_cfl_alphas: " + alpha_error;
           return false;
         }
@@ -2275,7 +2275,7 @@ class Writer {
                          static_cast<std::size_t>(j)];
     }
     return restoration::classes::wiener_write_unit(
-        enc_, lr_state_, plane, unit_row, unit_col, unit, &error);
+        enc_, lr_state_, plane, unit_row, unit_col, unit, error);
   }
 
   // §5.20.10.4 read_lr(): called once per coding block, before
@@ -2309,7 +2309,7 @@ class Writer {
             decision.type = cfg.unit_type[index];
             if (!av2enc::filters::pc_wiener_stream::WriteUnit(
                     enc_, pc_state_, 0, unit_row, unit_col, decision,
-                    &error)) {
+                    error)) {
               return false;
             }
           }
@@ -2375,7 +2375,7 @@ class Writer {
     info.dip_mode = node.dip_mode;
     std::string dip_error;
     if (!dip::write_dip_mode_info(context, info, enc_, cdfs_.dip_cdfs,
-                                  &dip_error)) {
+                                  dip_error)) {
       error = "dip_mode_info: " + dip_error;
       return false;
     }
@@ -2578,7 +2578,7 @@ class Writer {
                                           segment_block, segment_id,
                                           /*skip_flag=*/is_ibc &&
                                               node.ibc_skip != 0,
-                                          &dq_error)) {
+                                          dq_error)) {
         error = "intra_segment_id: " + dq_error;
         return false;
       }
@@ -2611,7 +2611,7 @@ class Writer {
       if (!deltaq::write_delta_qindex(
               enc_, deltaq_cdfs_.delta_q, tile_qp_,
               w == plan_.sb_size && h == plan_.sb_size, /*skip_flag=*/false,
-              /*reduced_delta=*/0, &dq_error)) {
+              /*reduced_delta=*/0, dq_error)) {
         error = "delta_qindex: " + dq_error;
         return false;
       }
@@ -2646,7 +2646,7 @@ class Writer {
           const mrl_stream::MrlSyntaxStatus status =
               mrl_stream::write_mrl_syntax(enc_, cdfs_.mrl, cdfs_.mrl_context,
                                            mrl_block, node.y_mode, mrl_decision,
-                                           &error_);
+                                           error_);
           if (status != mrl_stream::MrlSyntaxStatus::kOk) {
             error = "mrl syntax: " + std::string(
                                         mrl_stream::mrl_syntax_status_name(
@@ -2701,7 +2701,7 @@ class Writer {
             std::string geometry_error;
             if (!av2enc::video::txpartition::tx_partition_geometry(
                     node.bsize, node.mi_row, node.mi_col, decision, &geometry,
-                    &geometry_error)) {
+                    geometry_error)) {
               error = "tx_partition_geometry: " + geometry_error;
               return false;
             }
@@ -2791,7 +2791,7 @@ class Writer {
     // Record the segment id for the neighbours' prediction contexts (§5.20.5.7).
     if (!chroma_part &&
         !deltaq::commit_segment_block(seg_grid_, segment_block, segment_id,
-                                      &dq_error)) {
+                                      dq_error)) {
       error = "commit_segment_block: " + dq_error;
       return false;
     }
@@ -2992,11 +2992,9 @@ std::size_t cdf_image_words() { return cdf_image_words_impl(); }
 
 bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
                                        std::vector<std::uint16_t>& out,
-                                       std::string* error) {
+                                       std::string& error) {
   if (base_q_idx < 1 || base_q_idx > 255) {
-    if (error != nullptr) {
-      *error = "base_q_idx must be in [1, 255] for a CDF default image";
-    }
+error = "base_q_idx must be in [1, 255] for a CDF default image";
     return false;
   }
   CdfState state{};
@@ -3012,20 +3010,18 @@ bool cdf_image_tables(std::vector<std::uint16_t>& frame,
                       std::vector<std::uint16_t>& saved,
                       std::vector<std::uint16_t>& defaults,
                       std::vector<entropy::avg_cdf::CdfTable>& tables,
-                      std::string* error) {
+                      std::string& error) {
   const std::size_t words = cdf_image_words_impl();
   if (frame.size() != words || tile.size() != words ||
       saved.size() != words || defaults.size() != words) {
-    if (error != nullptr) {
-      *error = "CDF images must all have cdf_image_words() entries";
-    }
+error = "CDF images must all have cdf_image_words() entries";
     return false;
   }
   tables.clear();
   for (const CdfArrayDesc& desc : cdf_arrays()) {
     const std::size_t entries = static_cast<std::size_t>(desc.symbols) + 1U;
     if (entries == 0U || desc.words % entries != 0U) {
-      if (error != nullptr) *error = "CDF array size is not a multiple of N+1";
+      error = "CDF array size is not a multiple of N+1";
       return false;
     }
     const std::size_t instances = desc.words / entries;

@@ -13,7 +13,7 @@
 namespace av2enc::high_bitdepth {
 namespace {
 
-bool read_header_line(std::ifstream& file, std::string* line, std::string* error) {
+bool read_header_line(std::ifstream& file, std::string* line, std::string& error) {
   line->clear();
   char c = 0;
   while (file.get(c)) {
@@ -21,7 +21,7 @@ bool read_header_line(std::ifstream& file, std::string* line, std::string* error
     if (c == '\r') continue;
     line->push_back(c);
   }
-  if (error != nullptr) *error = "truncated Y4M header";
+  error = "truncated Y4M header";
   return false;
 }
 
@@ -39,7 +39,7 @@ bool fill_10bit_visible(const std::vector<std::uint16_t>& y,
                         const std::vector<std::uint16_t>& u,
                         const std::vector<std::uint16_t>& v, std::uint32_t w,
                         std::uint32_t h, fmt::Picture* picture,
-                        std::string* error) {
+                        std::string& error) {
   fmt::Format format;
   format.width = w;
   format.height = h;
@@ -69,21 +69,21 @@ bool fill_10bit_visible(const std::vector<std::uint16_t>& y,
 }  // namespace
 
 bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
-                    Y4mFrameInfo* info, std::string* error) {
-  if (error != nullptr) error->clear();
+                    Y4mFrameInfo* info, std::string& error) {
+  error.clear();
   if (picture == nullptr) {
-    if (error != nullptr) *error = "null picture";
+    error = "null picture";
     return false;
   }
   std::ifstream file(path, std::ios::binary);
   if (!file) {
-    if (error != nullptr) *error = "cannot open " + path;
+    error = "cannot open " + path;
     return false;
   }
   std::string header;
   if (!read_header_line(file, &header, error)) return false;
   if (header.rfind("YUV4MPEG2", 0) != 0) {
-    if (error != nullptr) *error = "not a Y4M file";
+    error = "not a Y4M file";
     return false;
   }
   std::uint32_t width = 0;
@@ -101,18 +101,18 @@ bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
     }
   }
   if (width == 0 || height == 0) {
-    if (error != nullptr) *error = "missing Y4M dimensions";
+    error = "missing Y4M dimensions";
     return false;
   }
   if (width > 0xFFFFU || height > 0xFFFFU ||
       static_cast<std::uint64_t>(width) * height > kMaxInputPixels) {
-    if (error != nullptr) *error = "Y4M dimensions exceed the input budget";
+    error = "Y4M dimensions exceed the input budget";
     return false;
   }
   std::string frame_tag;
   if (!read_header_line(file, &frame_tag, error)) return false;
   if (frame_tag.rfind("FRAME", 0) != 0) {
-    if (error != nullptr) *error = "missing Y4M FRAME tag";
+    error = "missing Y4M FRAME tag";
     return false;
   }
 
@@ -129,7 +129,7 @@ bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
     file.read(reinterpret_cast<char*>(raw.data()),
               static_cast<std::streamsize>(raw.size()));
     if (static_cast<std::size_t>(file.gcount()) != raw.size()) {
-      if (error != nullptr) *error = "truncated 10-bit Y4M frame";
+      error = "truncated 10-bit Y4M frame";
       return false;
     }
     std::vector<std::uint16_t> y(y_count);
@@ -145,13 +145,13 @@ bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
     for (std::size_t i = 0; i < c_count; ++i) v[i] = load(cursor++);
     for (std::uint16_t sample : y) {
       if (sample > 1023) {
-        if (error != nullptr) *error = "10-bit Y4M luma exceeds 1023";
+        error = "10-bit Y4M luma exceeds 1023";
         return false;
       }
     }
     for (std::size_t i = 0; i < c_count; ++i) {
       if (u[i] > 1023 || v[i] > 1023) {
-        if (error != nullptr) *error = "10-bit Y4M chroma exceeds 1023";
+        error = "10-bit Y4M chroma exceeds 1023";
         return false;
       }
     }
@@ -161,17 +161,15 @@ bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
   } else {
     if (colorspace != "420" && colorspace != "420jpeg" &&
         colorspace != "420mpeg2" && colorspace != "420paldv") {
-      if (error != nullptr) {
-        *error = "unsupported Y4M colorspace C" + colorspace +
-                 " (M10 accepts C420 and C420p10)";
-      }
+error = "unsupported Y4M colorspace C" + colorspace +
+         " (M10 accepts C420 and C420p10)";
       return false;
     }
     std::vector<std::uint8_t> raw(y_count + 2U * c_count);
     file.read(reinterpret_cast<char*>(raw.data()),
               static_cast<std::streamsize>(raw.size()));
     if (static_cast<std::size_t>(file.gcount()) != raw.size()) {
-      if (error != nullptr) *error = "truncated 8-bit Y4M frame";
+      error = "truncated 8-bit Y4M frame";
       return false;
     }
     if (!convert_8bit_420_to_picture(raw.data(), raw.data() + y_count,
@@ -192,7 +190,7 @@ bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
 }
 
 bool write_y4m_10bit(const std::string& path, const fmt::Picture& picture,
-                     std::string* error) {
+                     std::string& error) {
   return write_y4m_10bit_planes(
       path, picture.format.width, picture.format.height,
       picture.planes[0].samples.data(), static_cast<int>(picture.planes[0].stride),
@@ -207,14 +205,14 @@ bool write_y4m_10bit_planes(const std::string& path, std::uint32_t width,
                             int y_stride, const std::uint16_t* u, int u_stride,
                             const std::uint16_t* v, int v_stride,
                             int chroma_width, int chroma_height,
-                            std::string* error) {
+                            std::string& error) {
   if (y == nullptr || u == nullptr || v == nullptr) {
-    if (error != nullptr) *error = "null reconstruction plane";
+    error = "null reconstruction plane";
     return false;
   }
   std::ofstream file(path, std::ios::binary);
   if (!file) {
-    if (error != nullptr) *error = "cannot write " + path;
+    error = "cannot write " + path;
     return false;
   }
   file << "YUV4MPEG2 W" << width << " H" << height << " F1:1 Ip A0:0 C420p10\n";
@@ -239,7 +237,7 @@ bool write_y4m_10bit_planes(const std::string& path, std::uint32_t width,
   put_plane(u, u_stride, chroma_width, chroma_height);
   put_plane(v, v_stride, chroma_width, chroma_height);
   if (!file) {
-    if (error != nullptr) *error = "write failed: " + path;
+    error = "write failed: " + path;
     return false;
   }
   return true;

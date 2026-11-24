@@ -105,13 +105,13 @@ struct MultiFrameHeader {
 // ignored by the syntax (for example frame_width != 0 without the present
 // flag).
 [[nodiscard]] bool validate_multi_frame_header(const MultiFrameHeader& header,
-                                 std::string* error);
+                                 std::string& error);
 
 // §5.7 syntax bits only: no OBU header, no §5.2.3 trailing_bits.  Returns the
 // number of bits written; on validation failure returns 0 and writes nothing.
 std::size_t write_multi_frame_header_syntax(BitWriter& writer,
                                             const MultiFrameHeader& header,
-                                            std::string* error);
+                                            std::string& error);
 
 // Complete Annex B.2 OBU:
 //   leb128(1 + payload_bytes) obu_header() payload
@@ -124,7 +124,7 @@ std::size_t write_multi_frame_header_syntax(BitWriter& writer,
 // The OBU header is byte 0x0C for tlayer 0 (obu_header_extension_flag 0,
 // type 3).
 std::vector<std::uint8_t> make_multi_frame_header_obu(
-    const MultiFrameHeader& header, std::string* error);
+    const MultiFrameHeader& header, std::string& error);
 
 // One OBU in an Annex B.2 byte stream.
 struct ObuView {
@@ -142,20 +142,20 @@ struct ObuView {
 // Parses one Annex B.2 OBU starting at `offset` (§5.2.1/§5.2.2).  `bytes` may
 // contain a whole temporal unit; the caller advances by `out->total_size`.
 [[nodiscard]] bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
-               ObuView* out, std::string* error);
+               ObuView* out, std::string& error);
 
 // Parses and validates a §5.7 MFH payload (excluding the OBU header).  The
 // §5.2.1 extensible-OBU trailer is checked: obu_extension_flag must be 0 and
 // trailing_bits() must be a one bit followed by zero padding.  `out->tlayer_id`
 // is not set here: the OBU header carries it.
 [[nodiscard]] bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
-                                      MultiFrameHeader* out, std::string* error);
+                                      MultiFrameHeader* out, std::string& error);
 
 // Parses one MFH OBU at `offset`; rejects a non-MFH OBU type.  On success
 // copies obu_tlayer_id into out->tlayer_id and fills `obu` when non-null.
 [[nodiscard]] bool parse_multi_frame_header_obu(std::span<const std::uint8_t> bytes,
                                   std::size_t offset, MultiFrameHeader* out,
-                                  ObuView* obu, std::string* error);
+                                  ObuView* obu, std::string& error);
 
 // Decoder-side store for MfhSeqHeaderId / MfhTLayerId / MfhMLayerId plus the
 // per-slot MFH payload.  Entries persist until overwritten; the spec defines
@@ -163,10 +163,10 @@ struct ObuView {
 class MfhStore {
  public:
   void reset();
-  bool insert(const MultiFrameHeader& header, std::string* error);
+  bool insert(const MultiFrameHeader& header, std::string& error);
   const MultiFrameHeader* find(std::uint32_t mfh_id) const;
   bool parse_and_insert(std::span<const std::uint8_t> bytes, std::size_t offset,
-                        MultiFrameHeader* parsed, std::string* error);
+                        MultiFrameHeader* parsed, std::string& error);
   std::size_t size() const { return count_; }
 
  private:
@@ -275,13 +275,13 @@ struct ResolvedFrameFields {
                           const SequenceFrameFields& sequence,
                           const FrameHeaderFields& frame,
                           const LayerDependencyMap* deps,
-                          ResolvedFrameFields* out, std::string* error);
+                          ResolvedFrameFields* out, std::string& error);
 
 // Reads every MFH OBU in a byte range (temporal unit or whole stream) and
 // inserts each one into `store`.  Non-MFH OBUs are skipped.  Useful for a
 // decoder front end and tests.
 [[nodiscard]] bool scan_multi_frame_headers(std::span<const std::uint8_t> bytes,
                               MfhStore* store, std::size_t* mfh_count,
-                              std::string* error);
+                              std::string& error);
 
 }  // namespace av2enc::frame::mfh

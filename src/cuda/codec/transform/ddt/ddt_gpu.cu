@@ -126,16 +126,14 @@ struct ArenaRewind {
   std::uint64_t mark_;
 };
 
-bool fail(std::string* error, const std::string& what) {
-  if (error != nullptr) *error = what;
+bool fail(std::string& error, const std::string& what) {
+  error = what;
   return false;
 }
 
-bool check_cuda(cudaError_t result, const char* what, std::string* error) {
+bool check_cuda(cudaError_t result, const char* what, std::string& error) {
   if (result == cudaSuccess) return true;
-  if (error != nullptr) {
-    *error = std::string("DDT GPU: ") + what + ": " + cuda_error_name(result);
-  }
+error = std::string("DDT GPU: ") + what + ": " + cuda_error_name(result);
   (void)cudaGetLastError();
   return false;
 }
@@ -162,7 +160,7 @@ bool valid_coded_dim(int n) {
 }
 
 BatchStatus allocate(Arena& arena, std::uint64_t bytes, void** out,
-                     std::string* error) {
+                     std::string& error) {
   *out = nullptr;
   if (bytes == 0) return BatchStatus::kOk;
   void* raw = nullptr;
@@ -222,7 +220,7 @@ const char* batch_status_name(BatchStatus status) {
   return "unknown";
 }
 
-bool valid_job(const DdtJob& job, Direction direction, std::string* error) {
+bool valid_job(const DdtJob& job, Direction direction, std::string& error) {
   (void)direction;
   const TxParams& p = job.params;
   if (!valid_coded_dim(p.coded_w) || !valid_coded_dim(p.coded_h)) {
@@ -296,7 +294,7 @@ BatchStatus forward_batch(Arena& arena, const DdtJob* jobs, int job_count,
                           const std::int16_t* host_residual_adj,
                           std::int32_t* host_coeff, std::int32_t* host_levels,
                           cudaStream_t stream, std::uint64_t* required_bytes,
-                          std::string* error) {
+                          std::string& error) {
   const BatchConfig config{Direction::kForward, job_count,
                            host_levels != nullptr, false};
   const std::uint64_t need = required_device_bytes(config);
@@ -394,7 +392,7 @@ BatchStatus inverse_batch(Arena& arena, const DdtJob* jobs, int job_count,
                           const std::int32_t* host_input,
                           std::int16_t* host_residual_coded,
                           bool input_is_levels, cudaStream_t stream,
-                          std::uint64_t* required_bytes, std::string* error) {
+                          std::uint64_t* required_bytes, std::string& error) {
   const BatchConfig config{Direction::kInverse, job_count, false,
                            input_is_levels};
   const std::uint64_t need = required_device_bytes(config);

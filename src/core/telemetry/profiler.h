@@ -167,11 +167,11 @@ class Profiler {
   // profiler runs in NVTX/stats-only mode.  Returns true if any sink is active.
   // Re-opening resets all counters and stage statistics.
   bool open(const std::string& jsonl_path, bool enable_nvtx,
-            std::string* error = nullptr);
+            std::string& error);
 
   // Read AV2ENC_PROFILE and AV2ENC_PROFILE_NVTX.  Returns true when enabled.
   // No environment variables means "disabled", which is not an error.
-  bool open_from_env(std::string* error = nullptr);
+  bool open_from_env(std::string& error);
 
   // Resolve pending CUDA events, write the summary sidecar, flush and close
   // the JSONL file.  Idempotent.  Also called by the destructor.

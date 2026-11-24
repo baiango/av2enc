@@ -97,13 +97,13 @@ struct Obu {
 };
 
 bool parse_obus(std::span<const std::uint8_t> frame, std::vector<Obu>* out,
-                std::string* error) {
+                std::string& error) {
   std::size_t pos = 0;
   while (pos < frame.size()) {
     std::uint32_t size = 0;
     if (!read_leb128(frame, &pos, &size) || size == 0 ||
         pos + size > frame.size()) {
-      *error = "bad OBU framing";
+      error = "bad OBU framing";
       return false;
     }
     const std::size_t start = pos;
@@ -111,7 +111,7 @@ bool parse_obus(std::span<const std::uint8_t> frame, std::vector<Obu>* out,
     const bool extension = (header & 0x80U) != 0;
     const int type = (header >> 2) & 0x1f;
     if (extension || (header & 0x3U) != 0U) {
-      *error = "gate only supports non-extension tlayer-0 OBUs";
+      error = "gate only supports non-extension tlayer-0 OBUs";
       return false;
     }
     Obu obu;
@@ -216,13 +216,13 @@ std::size_t pre_base_q_bits(const av2enc::still::StillConfig& config) {
 }
 
 bool rewrite_sequence(const Obu& seq_obu, const Options& options,
-                      std::vector<std::uint8_t>* out, std::string* error) {
+                      std::vector<std::uint8_t>* out, std::string& error) {
   const std::span<const std::uint8_t> payload(seq_obu.payload);
   const std::size_t group = sequence_group_start_bits(options.width,
                                                       options.height);
   const std::size_t stop = last_set_bit(payload);
   if (group + 8 >= stop) {
-    *error = "sequence payload too short";
+    error = "sequence payload too short";
     return false;
   }
 
@@ -231,7 +231,7 @@ bool rewrite_sequence(const Obu& seq_obu, const Options& options,
   while (skipped + 32 <= group) {
     std::uint32_t ignored = 0;
     if (!probe.read_bits(32, ignored)) {
-      *error = "sequence prefix truncated";
+      error = "sequence prefix truncated";
       return false;
     }
     skipped += 32;
@@ -239,7 +239,7 @@ bool rewrite_sequence(const Obu& seq_obu, const Options& options,
   while (skipped < group) {
     bool ignored = false;
     if (!probe.read_bit(ignored)) {
-      *error = "sequence prefix truncated";
+      error = "sequence prefix truncated";
       return false;
     }
     ++skipped;
@@ -272,7 +272,7 @@ bool rewrite_sequence(const Obu& seq_obu, const Options& options,
   BitWriter writer;
   BitReader prefix(payload);
   if (!copy_bits(prefix, writer, group)) {
-    *error = "sequence prefix copy failed";
+    error = "sequence prefix copy failed";
     return false;
   }
   const std::size_t new_group = av2enc::dcdeltaq::
@@ -281,11 +281,11 @@ bool rewrite_sequence(const Obu& seq_obu, const Options& options,
 
   BitReader post(payload);
   if (!skip_bits(post, group_end)) {
-    *error = "sequence post-header seek failed";
+    error = "sequence post-header seek failed";
     return false;
   }
   if (!copy_bits(post, writer, stop - group_end)) {
-    *error = "sequence post-header copy failed";
+    error = "sequence post-header copy failed";
     return false;
   }
   writer.put_bit(true);  // trailing stop bit
@@ -297,14 +297,14 @@ bool rewrite_sequence(const Obu& seq_obu, const Options& options,
 }
 
 bool rewrite_frame(const Obu& clk, const Options& options,
-                   std::vector<std::uint8_t>* out, std::string* error) {
+                   std::vector<std::uint8_t>* out, std::string& error) {
   av2enc::still::StillConfig config = base_config(options);
   BitWriter probe_writer;
   const std::size_t header_bits =
       1U + av2enc::still::write_frame_header(probe_writer, config);
   const std::size_t pre = pre_base_q_bits(config);
   if (pre + 8 > header_bits || header_bits > clk.payload.size() * 8) {
-    *error = "frame header probe inconsistent with CLK payload";
+    error = "frame header probe inconsistent with CLK payload";
     return false;
   }
 
@@ -331,7 +331,7 @@ bool rewrite_frame(const Obu& clk, const Options& options,
   BitReader reader(clk.payload);
   BitWriter writer;
   if (!copy_bits(reader, writer, pre)) {
-    *error = "CLK prefix copy failed";
+    error = "CLK prefix copy failed";
     return false;
   }
   const int base_q = options.identity ? options.ref_qp : options.base_q_idx;
@@ -343,12 +343,12 @@ bool rewrite_frame(const Obu& clk, const Options& options,
   bool ignored = false;
   for (int i = 0; i < 8; ++i) {
     if (!reader.read_bit(ignored)) {
-      *error = "CLK base_q_idx truncated";
+      error = "CLK base_q_idx truncated";
       return false;
     }
   }
   if (!copy_bits(reader, writer, header_bits - pre - 8)) {
-    *error = "CLK header copy failed";
+    error = "CLK header copy failed";
     return false;
   }
   writer.align_to_byte();
@@ -357,7 +357,7 @@ bool rewrite_frame(const Obu& clk, const Options& options,
   out->assign(bytes.begin(), bytes.end());
   const std::size_t tile_start = (header_bits + 7U) / 8U;
   if (tile_start > clk.payload.size()) {
-    *error = "CLK payload shorter than its header";
+    error = "CLK payload shorter than its header";
     return false;
   }
   out->insert(out->end(),

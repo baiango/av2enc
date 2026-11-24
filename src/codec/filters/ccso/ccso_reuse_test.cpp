@@ -797,7 +797,7 @@ void test_validation() {
 // ---------------------------------------------------------------------------
 
 Written encode_tile(cr::TileState* state, std::vector<std::uint8_t>& buf,
-                    std::size_t* payload, std::string* error) {
+                    std::size_t* payload, std::string& error) {
   av2::Encoder encoder;
   check(encoder.init_symbol(buf.data(), buf.size()) == av2::Status::kOk,
         "encoder init");

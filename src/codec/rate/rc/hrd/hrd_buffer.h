@@ -58,7 +58,7 @@ struct ClockDerivation {
 
 [[nodiscard]] bool derive_clock(const TimingInfo& timing,
                   std::uint32_t num_units_in_decoding_tick,
-                  ClockDerivation& clock, std::string* error = nullptr);
+                  ClockDerivation& clock, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Input
@@ -100,7 +100,7 @@ struct HrdBufferConfig {
                              const rc::twopass::VbvState& vbv,
                              std::uint32_t num_units_in_decoding_tick,
                              HrdBufferConfig& out,
-                             std::string* error = nullptr);
+                             std::string& error);
 
 // ---------------------------------------------------------------------------
 // Output
@@ -148,7 +148,7 @@ struct BufferTimingPlan {
 [[nodiscard]] bool plan_buffer_removal(const HrdBufferConfig& config,
                          std::span<const FrameBits> frames,
                          BufferTimingPlan& plan,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 // Converts one entry of a plan into the §5.12 non-operating-point-dependent
 // form (br_ops_dependent_flag = 0).
@@ -187,7 +187,7 @@ struct OpsBufferTimingPlan {
                              std::uint8_t br_ops_id,
                              std::span<const OperatingPointTimeline> ops,
                              OpsBufferTimingPlan& plan,
-                             std::string* error = nullptr);
+                             std::string& error);
 
 // ---------------------------------------------------------------------------
 // Two-pass adapter
@@ -208,6 +208,6 @@ enum class TwopassBitSource {
                                std::span<const std::int64_t> actual_bits,
                                TwopassBitSource source,
                                std::vector<FrameBits>& out,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 }  // namespace av2enc::hrd

@@ -29,14 +29,11 @@ std::uintptr_t align_up_ptr(std::uintptr_t value, std::size_t alignment) noexcep
   return (value + mask) & ~mask;
 }
 
-void set_error(std::string* error, const std::string& context, Status status,
+void set_error(std::string& error, const std::string& context, Status status,
                cudaError_t cuda_error = cudaSuccess) {
-  if (error == nullptr) {
-    return;
-  }
   char detail[256];
   format_status(status, cuda_error, detail, sizeof(detail));
-  *error = context + ": " + detail;
+  error = context + ": " + detail;
 }
 
 std::string mib_text(std::uint64_t bytes) {
@@ -62,7 +59,7 @@ std::uint64_t Arena::capacity_cap_bytes() noexcept {
   return g_capacity_cap_bytes.load(std::memory_order_relaxed);
 }
 
-Status Arena::init(std::uint64_t capacity_bytes, std::size_t alignment, std::string* error) {
+Status Arena::init(std::uint64_t capacity_bytes, std::size_t alignment, std::string& error) {
   if (raw_ != nullptr) {
     set_error(error, "Arena::init", Status::kAlreadyInitialized);
     return Status::kAlreadyInitialized;
@@ -146,7 +143,7 @@ Status Arena::init(std::uint64_t capacity_bytes, std::size_t alignment, std::str
   return Status::kOk;
 }
 
-Status Arena::init_mb(std::uint32_t capacity_mb, std::size_t alignment, std::string* error) {
+Status Arena::init_mb(std::uint32_t capacity_mb, std::size_t alignment, std::string& error) {
   if (capacity_mb == 0) {
     set_error(error, "Arena::init_mb: zero capacity", Status::kInvalidArgument);
     return Status::kInvalidArgument;

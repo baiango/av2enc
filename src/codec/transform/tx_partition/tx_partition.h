@@ -136,7 +136,7 @@ LegalSplits legal_splits(int mi_size, bool reduced_tx_part_set = false);
 // reduced set and HORZ5/VERT5, which the syntax cannot signal).
 [[nodiscard]] bool tx_partition_geometry(int mi_size, int mi_row, int mi_col,
                            TxPartition part, SplitGeometry* out,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // True when the *syntax* can represent this partition for this block size,
 // independent of the caller's reduced-set configuration.

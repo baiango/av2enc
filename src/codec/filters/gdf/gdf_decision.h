@@ -72,7 +72,7 @@ int GdfUnitRegions(const GdfUnitLayout& layout, int row, int col,
                      const FrameGdfContext& context,
                      const FrameGdfParams& params,
                      const std::vector<std::uint8_t>& unit_flags,
-                     std::uint16_t* out, int out_stride, std::string* error);
+                     std::uint16_t* out, int out_stride, std::string& error);
 
 struct GdfDecisionOptions {
   GdfFilterInputs filter;
@@ -119,7 +119,7 @@ struct GdfDecision {
 [[nodiscard]] bool DecideGdf(const GdfSourceFrame& recon, const GdfPlane& original,
                const FrameGdfContext& context,
                const GdfDecisionOptions& options, GdfDecision* decision,
-               std::string* error);
+               std::string& error);
 
 // Exact byte/bit cost of a standalone use_gdf symbol sequence in coding order.
 // Used by the decision and pinned by the unit tests.  `disable_cdf_update`
@@ -128,7 +128,7 @@ struct GdfDecision {
                           const FrameGdfParams& params, int sb_size,
                           const std::vector<std::uint8_t>& flags,
                           bool disable_cdf_update, std::int64_t* bytes,
-                          std::int64_t* bits, std::string* error);
+                          std::int64_t* bits, std::string& error);
 
 }  // namespace av2enc::filters::gdf
 

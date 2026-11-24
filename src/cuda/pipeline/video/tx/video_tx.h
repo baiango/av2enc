@@ -315,7 +315,7 @@ struct VideoTxPlanData {
 // Returns false and fills `*error` on an invalid request, an unsupported size,
 // or a plan that would exceed the module caps.
 [[nodiscard]] bool video_tx_build_plan(const VideoTxJobRequest* requests, int count,
-                         VideoTxPlanData* plan, std::string* error);
+                         VideoTxPlanData* plan, std::string& error);
 
 // Candidate types for one size/mode (exposed for the orchestrator and tests).
 // `out` must have room for kMaxCandidatesPerLeaf entries.  Returns the count,
@@ -371,8 +371,8 @@ struct VideoTxWorkspace {
   int* d_error_count = nullptr;
 
   Status init(Arena& arena, const VideoTxConfig& config_in,
-              std::uint64_t* required_bytes = nullptr,
-              std::string* error = nullptr);
+              std::uint64_t* required_bytes,
+              std::string& error);
   void reset() noexcept;
   bool valid() const noexcept;
 };

@@ -126,14 +126,14 @@ std::vector<Frame> make_synthetic_clip(int frames, int width, int height) {
 }
 
 bool load_y4m(const std::string& path, int want, std::vector<Frame>* out,
-              std::string* error) {
+              std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
   while (static_cast<int>(out->size()) < want) {
     const av2enc::Y4mReadResult status = reader.read_frame(frame, *error);
     if (status == av2enc::Y4mReadResult::kEof) {
-      *error = "end of file after " + std::to_string(out->size()) + " frame(s)";
+      error = "end of file after " + std::to_string(out->size()) + " frame(s)";
       break;
     }
     if (status != av2enc::Y4mReadResult::kFrame) return false;
@@ -154,7 +154,7 @@ struct SubEncode {
 };
 
 bool run_m2(const std::vector<Frame>& frames,
-            std::span<const int> indices, SubEncode* out, std::string* error) {
+            std::span<const int> indices, SubEncode* out, std::string& error) {
   std::vector<av2enc::video::VideoInputFrame> inputs;
   inputs.reserve(indices.size());
   for (const int index : indices) {
@@ -193,7 +193,7 @@ Frame to_frame(const av2enc::video::VideoReconFrame& recon) {
 }
 
 bool write_ivf(const std::string& path, const AssembledSequence& sequence,
-               int width, int height, std::string* error) {
+               int width, int height, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
@@ -227,10 +227,10 @@ struct DiffResult {
 };
 
 bool compare(const std::vector<Frame>& decoded, const std::vector<Frame>& want,
-             DiffResult* out, std::string* error) {
+             DiffResult* out, std::string& error) {
   out->frames = static_cast<int>(decoded.size());
   if (decoded.size() != want.size()) {
-    *error = "decoder produced " + std::to_string(decoded.size()) + " of " +
+    error = "decoder produced " + std::to_string(decoded.size()) + " of " +
              std::to_string(want.size()) + " expected pictures";
     return false;
   }
@@ -239,7 +239,7 @@ bool compare(const std::vector<Frame>& decoded, const std::vector<Frame>& want,
     const Frame& b = want[i];
     if (a.width != b.width || a.height != b.height || a.y.size() != b.y.size() ||
         a.u.size() != b.u.size() || a.v.size() != b.v.size()) {
-      *error = "frame " + std::to_string(i) + " geometry mismatch";
+      error = "frame " + std::to_string(i) + " geometry mismatch";
       return false;
     }
     const std::vector<std::uint8_t>* planes_a[3] = {&a.y, &a.u, &a.v};
@@ -259,7 +259,7 @@ bool compare(const std::vector<Frame>& decoded, const std::vector<Frame>& want,
 }
 
 bool load_y4m_all(const std::string& path, std::vector<Frame>* out,
-                  std::string* error) {
+                  std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;

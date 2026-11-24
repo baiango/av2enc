@@ -140,18 +140,16 @@ std::uint64_t required_device_bytes(const Config& config) noexcept {
 // Workspace
 // ---------------------------------------------------------------------------
 
-Status Workspace::release_and_restore(std::uint64_t mark, std::string* error,
+Status Workspace::release_and_restore(std::uint64_t mark, std::string& error,
                                       const char* what) {
   if (arena_ != nullptr) {
     arena_->rewind(mark);
   }
-  if (error != nullptr) {
-    *error = std::string("video_intra: ") + what;
-  }
+error = std::string("video_intra: ") + what;
   return Status::kArenaExhausted;
 }
 
-Status Workspace::init(Arena& arena, const Config& config, std::string* error,
+Status Workspace::init(Arena& arena, const Config& config, std::string& error,
                        std::uint64_t* required_out) {
   arena_ = nullptr;
   config_ = Config{};
@@ -175,22 +173,16 @@ Status Workspace::init(Arena& arena, const Config& config, std::string* error,
     *required_out = need;
   }
   if (!caps.valid) {
-    if (error != nullptr) {
-      *error = "video_intra: invalid configuration";
-    }
+error = "video_intra: invalid configuration";
     return Status::kInvalidArgument;
   }
   if (!arena.initialized()) {
-    if (error != nullptr) {
-      *error = "video_intra: arena is not initialized";
-    }
+error = "video_intra: arena is not initialized";
     return Status::kNotInitialized;
   }
   if (arena.remaining() < need) {
-    if (error != nullptr) {
-      *error = "video_intra: arena needs " + std::to_string(need) + " bytes, " +
-               std::to_string(arena.remaining()) + " available";
-    }
+error = "video_intra: arena needs " + std::to_string(need) + " bytes, " +
+         std::to_string(arena.remaining()) + " available";
     return Status::kArenaExhausted;
   }
 
@@ -227,23 +219,17 @@ Status Workspace::init(Arena& arena, const Config& config, std::string* error,
 
 Status Workspace::evaluate(const BlockJob* jobs, int count,
                            const EvaluateOptions& options, cudaStream_t stream,
-                           std::string* error) {
+                           std::string& error) {
   if (arena_ == nullptr) {
-    if (error != nullptr) {
-      *error = "video_intra: workspace is not initialized";
-    }
+error = "video_intra: workspace is not initialized";
     return Status::kNotInitialized;
   }
   if (count < 0 || (count > 0 && jobs == nullptr)) {
-    if (error != nullptr) {
-      *error = "video_intra: bad job array";
-    }
+error = "video_intra: bad job array";
     return Status::kInvalidArgument;
   }
   if (options.run_tx && !config_.enable_tx) {
-    if (error != nullptr) {
-      *error = "video_intra: TX requested but Config::enable_tx is false";
-    }
+error = "video_intra: TX requested but Config::enable_tx is false";
     return Status::kInvalidArgument;
   }
 
@@ -309,36 +295,26 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
     } else if (job.enable_edge_filter < 0 || job.enable_edge_filter > 1) {
       reason = "enable_edge_filter must be 0 or 1";
     }
-    if (reason != nullptr) {
-      if (error != nullptr) {
-        *error = "video_intra: job " + std::to_string(i) + ": " + reason;
-      }
+error = "video_intra: job " + std::to_string(i) + ": " + reason;
       return Status::kInvalidArgument;
-    }
 
     const int n = build_candidates(job.plane, job.mode_mask,
                                    job.include_angle_deltas, candidates,
                                    kMaxCandidates);
     if (n <= 0) {
-      if (error != nullptr) {
-        *error = "video_intra: job " + std::to_string(i) +
-                 ": empty or invalid candidate set";
-      }
+error = "video_intra: job " + std::to_string(i) +
+         ": empty or invalid candidate set";
       return Status::kInvalidArgument;
     }
     if (n > config_.max_candidates) {
-      if (error != nullptr) {
-        *error = "video_intra: job " + std::to_string(i) + ": " +
-                 std::to_string(n) + " candidates exceed Config::max_candidates";
-      }
+error = "video_intra: job " + std::to_string(i) + ": " +
+         std::to_string(n) + " candidates exceed Config::max_candidates";
       return Status::kArenaExhausted;
     }
     if (candidate_total + n > caps.cand_total) {
-      if (error != nullptr) {
-        *error = "video_intra: candidate total exceeds capacity " +
-                 std::to_string(caps.cand_total) +
-                 " (raise Config::max_blocks/max_candidates)";
-      }
+error = "video_intra: candidate total exceeds capacity " +
+         std::to_string(caps.cand_total) +
+         " (raise Config::max_blocks/max_candidates)";
       return Status::kArenaExhausted;
     }
     host_plan_[static_cast<std::size_t>(i)].candidate_offset = candidate_total;
@@ -358,16 +334,12 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
     candidate_total += n;
   }
   if (pred_total > caps.pred_bytes) {
-    if (error != nullptr) {
-      *error = "video_intra: prediction area exceeds capacity " +
-               std::to_string(caps.pred_bytes) + " bytes";
-    }
+error = "video_intra: prediction area exceeds capacity " +
+         std::to_string(caps.pred_bytes) + " bytes";
     return Status::kArenaExhausted;
   }
   if (pred_total > static_cast<std::uint64_t>(INT_MAX)) {
-    if (error != nullptr) {
-      *error = "video_intra: prediction area exceeds int32 offsets";
-    }
+error = "video_intra: prediction area exceeds int32 offsets";
     return Status::kInvalidArgument;
   }
 
@@ -385,18 +357,14 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
         const int cand = plan.candidate_offset + c;
         StillTxJob tx{};
         if (!still_tx_init_job(&tx, job.w, job.h, type)) {
-          if (error != nullptr) {
-            *error = "video_intra: no TX size for " + std::to_string(job.w) +
-                     "x" + std::to_string(job.h);
-          }
+error = "video_intra: no TX size for " + std::to_string(job.w) +
+         "x" + std::to_string(job.h);
           return Status::kInvalidArgument;
         }
         const int adj_elems = tx.params.w * tx.params.h;
         if (adj_elems > config_.max_tx_area) {
-          if (error != nullptr) {
-            *error = "video_intra: adjusted TX area exceeds "
-                     "Config::max_tx_area";
-          }
+error = "video_intra: adjusted TX area exceeds "
+         "Config::max_tx_area";
           return Status::kInvalidArgument;
         }
         tx.input =
@@ -420,9 +388,7 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
       }
     }
     if (tx_level_total > caps.levels_bytes / sizeof(std::int32_t)) {
-      if (error != nullptr) {
-        *error = "video_intra: TX level area exceeds capacity";
-      }
+error = "video_intra: TX level area exceeds capacity";
       return Status::kArenaExhausted;
     }
   }
@@ -436,17 +402,13 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
   const std::size_t descs_bytes =
       descs.size() * sizeof(detail_v::CandidateDesc);
   if (align_up(jobs_bytes) + align_up(descs_bytes) > staging_bytes_) {
-    if (error != nullptr) {
-      *error = "video_intra: descriptor staging exceeds capacity";
-    }
+error = "video_intra: descriptor staging exceeds capacity";
     return Status::kArenaExhausted;
   }
   Status status = status_from_cuda(cudaMemcpyAsync(
       staging, jobs, jobs_bytes, cudaMemcpyHostToDevice, stream));
   if (!is_ok(status)) {
-    if (error != nullptr) {
-      *error = "video_intra: staging jobs failed";
-    }
+error = "video_intra: staging jobs failed";
     return status;
   }
   auto* d_descs = reinterpret_cast<detail_v::CandidateDesc*>(
@@ -454,9 +416,7 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
   status = status_from_cuda(cudaMemcpyAsync(
       d_descs, descs.data(), descs_bytes, cudaMemcpyHostToDevice, stream));
   if (!is_ok(status)) {
-    if (error != nullptr) {
-      *error = "video_intra: staging descriptors failed";
-    }
+error = "video_intra: staging descriptors failed";
     return status;
   }
 
@@ -467,9 +427,7 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
       d_jobs, d_descs, d_pred_, d_residual, d_results_);
   status = last_error();
   if (!is_ok(status)) {
-    if (error != nullptr) {
-      *error = "video_intra: candidate kernel launch failed";
-    }
+error = "video_intra: candidate kernel launch failed";
     return status;
   }
 
@@ -479,9 +437,7 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
     const std::size_t tx_res_bytes =
         tx_results.size() * sizeof(TxCandidateResult);
     if (align_up(tx_jobs_bytes) + align_up(tx_res_bytes) > staging_bytes_) {
-      if (error != nullptr) {
-        *error = "video_intra: TX staging exceeds capacity";
-      }
+error = "video_intra: TX staging exceeds capacity";
       return Status::kArenaExhausted;
     }
     auto* d_tx_jobs = reinterpret_cast<StillTxJob*>(staging);
@@ -489,18 +445,14 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
         d_tx_jobs, tx_jobs.data(), tx_jobs_bytes, cudaMemcpyHostToDevice,
         stream));
     if (!is_ok(status)) {
-      if (error != nullptr) {
-        *error = "video_intra: staging TX jobs failed";
-      }
+error = "video_intra: staging TX jobs failed";
       return status;
     }
     status = status_from_cuda(cudaMemcpyAsync(
         d_tx_results_, tx_results.data(), tx_res_bytes,
         cudaMemcpyHostToDevice, stream));
     if (!is_ok(status)) {
-      if (error != nullptr) {
-        *error = "video_intra: staging TX results failed";
-      }
+error = "video_intra: staging TX results failed";
       return status;
     }
 
@@ -516,9 +468,7 @@ Status Workspace::evaluate(const BlockJob* jobs, int count,
         still_tx_batch(d_tx_jobs, candidate_total, buffers, smem_elems, stream);
     status = status_from_cuda(launch);
     if (!is_ok(status)) {
-      if (error != nullptr) {
-        *error = "video_intra: still_tx_batch launch failed";
-      }
+error = "video_intra: still_tx_batch launch failed";
       return status;
     }
   }

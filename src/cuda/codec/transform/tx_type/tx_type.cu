@@ -169,11 +169,9 @@ void tx_type_pack_layout(TxTypeBlockRequest* requests, int nblocks,
 }
 
 bool tx_type_build_plan(const TxTypeBlockRequest* requests, int nblocks,
-                        TxTypePlan* plan, std::string* error) {
+                        TxTypePlan* plan, std::string& error) {
   if (requests == nullptr || plan == nullptr || nblocks < 0) {
-    if (error != nullptr) {
-      *error = "invalid arguments";
-    }
+error = "invalid arguments";
     return false;
   }
   plan->blocks.clear();
@@ -191,9 +189,7 @@ bool tx_type_build_plan(const TxTypeBlockRequest* requests, int nblocks,
     query.dct_only = r.dct_only != 0;
     txtype::TxTypeSet set;
     if (!txtype::intra_tx_candidates(query, &set)) {
-      if (error != nullptr) {
-        *error = "unsupported TX size or intra mode";
-      }
+error = "unsupported TX size or intra mode";
       return false;
     }
     TxTypeBlockJob block;
@@ -226,9 +222,7 @@ bool tx_type_build_plan(const TxTypeBlockRequest* requests, int nblocks,
   plan->coeff_scratch_elems = ncandidates * kTxTypeAdjElems;
   plan->level_scratch_elems = ncandidates * kTxTypeAdjElems;
   plan->recon_scratch_elems = ncandidates * kTxTypeCodedElems;
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return true;
 }
 

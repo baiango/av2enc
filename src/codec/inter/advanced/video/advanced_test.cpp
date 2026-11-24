@@ -66,13 +66,13 @@ bool cdfs_equal(const AdvancedCdfState& a, const AdvancedCdfState& b) {
 // fresh CDF state.  CDF adaptation stays enabled so the final states must also
 // match.  Returns the payload size.
 template <typename WriteFn, typename ReadFn>
-bool round_trip(WriteFn write, ReadFn read, std::string* error,
+bool round_trip(WriteFn write, ReadFn read, std::string& error,
                 std::size_t* payload_bytes = nullptr) {
   std::vector<std::uint8_t> buffer(1u << 20);
   av2::Encoder encoder;
   av2::Encoder* enc = &encoder;
   if (enc->init_symbol(buffer.data(), buffer.size()) != av2::Status::kOk) {
-    *error = "encoder init failed";
+    error = "encoder init failed";
     return false;
   }
   AdvancedCdfState enc_cdfs;
@@ -80,7 +80,7 @@ bool round_trip(WriteFn write, ReadFn read, std::string* error,
   if (!write(*enc, enc_cdfs, error)) return false;
   std::size_t bytes = 0;
   if (enc->exit_symbol(&bytes) != av2::Status::kOk) {
-    *error = "encoder exit failed";
+    error = "encoder exit failed";
     return false;
   }
 
@@ -88,18 +88,18 @@ bool round_trip(WriteFn write, ReadFn read, std::string* error,
   av2::Decoder* dec = &decoder;
   if (dec->init_symbol(buffer.data(), buffer.size(), bytes) !=
       av2::Status::kOk) {
-    *error = "decoder init failed";
+    error = "decoder init failed";
     return false;
   }
   AdvancedCdfState dec_cdfs;
   dec_cdfs.reset();
   if (!read(*dec, dec_cdfs, error)) return false;
   if (dec->exit_symbol() != av2::Status::kOk) {
-    *error = "decoder exit_symbol rejected the trailing bits";
+    error = "decoder exit_symbol rejected the trailing bits";
     return false;
   }
   if (!cdfs_equal(enc_cdfs, dec_cdfs)) {
-    *error = "encoder/decoder CDF state diverged";
+    error = "encoder/decoder CDF state diverged";
     return false;
   }
   if (payload_bytes != nullptr) *payload_bytes = bytes;
@@ -162,12 +162,12 @@ void test_wedge_mapping() {
       EXPECT(wedge_mode_symbols(index, &in));
       std::string error;
       auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs,
-                       std::string* err) {
+                       std::string& err) {
         return write_wedge_mode(enc, cdfs, in, err) &&
                write_wedge_sign(enc, sign != 0, err);
       };
       auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs,
-                      std::string* err) {
+                      std::string& err) {
         WedgeModeSymbols out{};
         int decoded_sign = -1;
         return read_wedge_mode(dec, cdfs, &out, err) &&
@@ -209,7 +209,7 @@ void test_wedge_weights() {
 
 void test_warp_symbols() {
   std::string error;
-  auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs, std::string* err) {
+  auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs, std::string& err) {
     if (!write_is_warp(enc, cdfs, 0, false, err)) return false;
     if (!write_is_warp(enc, cdfs, 4, true, err)) return false;
     if (!write_warp_mv(enc, cdfs, true, err)) return false;
@@ -219,7 +219,7 @@ void test_warp_symbols() {
     if (!write_warpmv_with_mvd(enc, cdfs, true, err)) return false;
     return true;
   };
-  auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs, std::string* err) {
+  auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs, std::string& err) {
     bool warp = true;
     bool warp_mv = false;
     bool with_mvd = false;
@@ -258,11 +258,11 @@ void test_warp_delta_symbols() {
 
       std::string error;
       auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs,
-                       std::string* err) {
+                       std::string& err) {
         return write_warp_delta(enc, cdfs, 3, symbols, six != 0, err);
       };
       auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs,
-                      std::string* err) {
+                      std::string& err) {
         WarpDeltaSymbols out{};
         if (!read_warp_delta(dec, cdfs, 3, six != 0, &out, err)) return false;
         if (out.high_precision != (high != 0)) return false;
@@ -345,13 +345,13 @@ void test_warp_decoding_reconstruction() {
 
     std::string error;
     auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs,
-                     std::string* err) {
+                     std::string& err) {
       return write_warp_delta(enc, cdfs, 12, choice.quantization.symbols,
                               false, err);
     };
     WarpDeltaSymbols decoded{};
     auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs,
-                    std::string* err) {
+                    std::string& err) {
       return read_warp_delta(dec, cdfs, 12, false, &decoded, err);
     };
     EXPECT(round_trip(write, read, &error));
@@ -613,12 +613,12 @@ void test_inter_intra_symbols() {
           symbols.wedge_index = wedge ? (mi_size * 7 + mode) % 68 : 0;
           std::string error;
           auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs,
-                           std::string* err) {
+                           std::string& err) {
             return write_inter_intra(enc, cdfs, is_warp != 0, mi_size, symbols,
                                      err);
           };
           auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs,
-                          std::string* err) {
+                          std::string& err) {
             bool enabled = false;
             bool decoded_wedge = false;
             int decoded_mode = -1;
@@ -649,10 +649,10 @@ void test_motion_mode_symbols() {
   s.use_local_warp = true;
   s.extend_warp_ctx = 2;
   s.local_warp_ctx = 3;
-  auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs, std::string* err) {
+  auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs, std::string& err) {
     return write_motion_mode(enc, cdfs, 12, s, err);
   };
-  auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs, std::string* err) {
+  auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs, std::string& err) {
     MotionModeSymbols out{};
     if (!read_motion_mode(dec, cdfs, kSizeGroup[12], true, true, true, 2, 3,
                           false, false, &out, err)) {
@@ -671,10 +671,10 @@ void test_motion_mode_symbols() {
   s.wedge_index = 12;
   s.local_allowed = true;
   s.use_local_warp = false;
-  auto write2 = [&](av2::Encoder& enc, AdvancedCdfState& cdfs, std::string* err) {
+  auto write2 = [&](av2::Encoder& enc, AdvancedCdfState& cdfs, std::string& err) {
     return write_motion_mode(enc, cdfs, 12, s, err);
   };
-  auto read2 = [&](av2::Decoder& dec, AdvancedCdfState& cdfs, std::string* err) {
+  auto read2 = [&](av2::Decoder& dec, AdvancedCdfState& cdfs, std::string& err) {
     MotionModeSymbols out{};
     return read_motion_mode(dec, cdfs, kSizeGroup[12], false, false, true, 0, 0,
                             true, true, &out, err) &&
@@ -772,11 +772,11 @@ void test_bawp_symbols() {
           symbols.explicit_ctx = 2;
           std::string error;
           auto write = [&](av2::Encoder& enc, AdvancedCdfState& cdfs,
-                           std::string* err) {
+                           std::string& err) {
             return write_bawp_symbols(enc, cdfs, symbols, true, err);
           };
           auto read = [&](av2::Decoder& dec, AdvancedCdfState& cdfs,
-                          std::string* err) {
+                          std::string& err) {
             BawpSymbols out{};
             return read_bawp_symbols(dec, cdfs, 2, true, &out, err) &&
                    out.use_bawp == symbols.use_bawp &&

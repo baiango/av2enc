@@ -15,11 +15,9 @@ std::uint64_t align_up(std::uint64_t bytes) noexcept {
   return (bytes + alignment - 1) & ~(alignment - 1);
 }
 
-void set_error(std::string* error, const char* context,
+void set_error(std::string& error, const char* context,
                const std::string& detail) {
-  if (error != nullptr) {
-    *error = std::string(context) + ": " + detail;
-  }
+error = std::string(context) + ": " + detail;
 }
 
 bool buffers_ready(const SubPuBuffers& buffers) noexcept {
@@ -95,7 +93,7 @@ const char* subpu_status_name(SubPuStatus status) noexcept {
 SubPuStatus allocate_checked(Arena& arena, const SubPuConfig& config,
                              SubPuBuffers* out,
                              std::uint64_t* required_bytes,
-                             std::string* error) {
+                             std::string& error) {
   if (required_bytes != nullptr) {
     *required_bytes = 0;
   }
@@ -197,7 +195,7 @@ void deallocate(Arena& arena, SubPuBuffers& buffers) noexcept {
 
 SubPuStatus download_tx_table(const SubPuBuffers& buffers, SubPuTxEntry* out,
                               int capacity, cudaStream_t stream,
-                              std::string* error) {
+                              std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "download_tx_table", "buffers are not initialized");
     return SubPuStatus::kNotInitialized;
@@ -224,7 +222,7 @@ SubPuStatus download_tx_table(const SubPuBuffers& buffers, SubPuTxEntry* out,
 }
 
 SubPuStatus download_grid(const SubPuBuffers& buffers, SubPuHostGrid* out,
-                          cudaStream_t stream, std::string* error) {
+                          cudaStream_t stream, std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "download_grid", "buffers are not initialized");
     return SubPuStatus::kNotInitialized;

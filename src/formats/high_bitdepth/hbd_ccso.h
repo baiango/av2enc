@@ -264,9 +264,9 @@ inline FitResult fit_plane(const HbdCcsoFrame16& f, int plane,
 // format is supported; the offset table is per plane and the unit grid follows
 // `ccso_luma_size_log2` (6 for a 64x64 superblock).
 inline bool plan_ccso(const HbdCcsoFrame16& frame, int ccso_luma_size_log2,
-                      bool edge_only, HbdCcsoPlan* plan, std::string* error) {
-  auto fail = [error](const std::string& text) {
-    if (error != nullptr) *error = text;
+                      bool edge_only, HbdCcsoPlan* plan, std::string& error) {
+  auto fail = [&error](const std::string& text) {
+    error = text;
     return false;
   };
   if (plan == nullptr) return fail("ccso plan: null output");
@@ -403,7 +403,7 @@ inline bool plan_ccso(const HbdCcsoFrame16& frame, int ccso_luma_size_log2,
     *plan = HbdCcsoPlan{};
     plan->config.ccso_luma_size_log2 = ccso_luma_size_log2;
   }
-  if (error != nullptr) error->clear();
+  error.clear();
   return true;
 }
 
@@ -415,7 +415,7 @@ inline bool apply_ccso16(const HbdCcsoPlan& plan, const fmt::Format& format,
                          std::uint16_t* const cdef[3],
                          const int curr_stride[3],
                          const int cdef_stride[3], int mi_cols, int mi_rows,
-                         std::string* error) {
+                         std::string& error) {
   if (!plan.config.enabled) return true;
   const int num_planes = fmt::num_planes(format.chroma);
   restoration::RestorationFrame16 frame{};
@@ -453,7 +453,7 @@ inline bool apply_ccso16(const HbdCcsoPlan& plan, const fmt::Format& format,
     if (src.enabled) {
       if (!restoration::ccso_set_offsets(dst, src.offset_idx.data(),
                                          src.offset_idx.size())) {
-        if (error != nullptr) *error = "ccso plan: bad offset table";
+        error = "ccso plan: bad offset table";
         return false;
       }
     }
@@ -461,10 +461,8 @@ inline bool apply_ccso16(const HbdCcsoPlan& plan, const fmt::Format& format,
   const restoration::RestorationStatus status = restoration::ccso_frame16(
       frame, params);
   if (status != restoration::RestorationStatus::kOk) {
-    if (error != nullptr) {
-      *error = std::string("hbd ccso: ") +
-               restoration::restoration_status_string(status);
-    }
+error = std::string("hbd ccso: ") +
+         restoration::restoration_status_string(status);
     return false;
   }
   return true;

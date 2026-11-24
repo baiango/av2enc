@@ -19,8 +19,8 @@ const char* frame_status_string(FrameStatus status) {
 
 namespace {
 
-FrameStatus fail(FrameStatus status, std::string* why, const char* message) {
-  if (why != nullptr) *why = message;
+FrameStatus fail(FrameStatus status, std::string& why, const char* message) {
+  why = message;
   return status;
 }
 
@@ -28,7 +28,7 @@ FrameStatus fail(FrameStatus status, std::string* why, const char* message) {
 
 FrameStatus derive_frame_enabled_motion_modes(
     const SequenceMotionModes& seq, const bool frame_override[kMotionModes],
-    FrameMotionModes* out, std::string* why) {
+    FrameMotionModes* out, std::string& why) {
   if (out == nullptr) {
     return fail(FrameStatus::kInvalidArgument, why, "null output");
   }
@@ -57,7 +57,7 @@ FrameStatus derive_frame_enabled_motion_modes(
 
 FrameStatus derive_allow_warpmv_mode(const SequenceMotionModes& seq,
                                      const FrameMotionModes& frame,
-                                     WarpmvMode* out, std::string* why) {
+                                     WarpmvMode* out, std::string& why) {
   if (out == nullptr) {
     return fail(FrameStatus::kInvalidArgument, why, "null output");
   }
@@ -78,7 +78,7 @@ FrameStatus derive_allow_warpmv_mode(const SequenceMotionModes& seq,
 FrameStatus derive_warp_block_gates(bool allow_warpmv_mode,
                                     bool force_integer_mv, int block_width,
                                     int block_height, bool is_warp,
-                                    WarpBlockGates* out, std::string* why) {
+                                    WarpBlockGates* out, std::string& why) {
   if (out == nullptr) {
     return fail(FrameStatus::kInvalidArgument, why, "null output");
   }
@@ -98,7 +98,7 @@ FrameStatus derive_warp_block_gates(bool allow_warpmv_mode,
 FrameStatus validate_warp_block(bool allow_warpmv_mode, bool force_integer_mv,
                                 int block_width, int block_height, bool is_warp,
                                 bool warp_mv, int y_mode, int motion_mode,
-                                std::string* why) {
+                                std::string& why) {
   WarpBlockGates gates;
   const FrameStatus status =
       derive_warp_block_gates(allow_warpmv_mode, force_integer_mv, block_width,
@@ -135,9 +135,9 @@ FrameStatus validate_warp_block(bool allow_warpmv_mode, bool force_integer_mv,
 
 bool write_sequence_motion_modes(BitWriter* writer,
                                  const SequenceMotionModes& config,
-                                 std::string* error) {
+                                 std::string& error) {
   if (writer == nullptr) {
-    if (error != nullptr) *error = "null BitWriter";
+    error = "null BitWriter";
     return false;
   }
   bool any = false;
@@ -148,26 +148,22 @@ bool write_sequence_motion_modes(BitWriter* writer,
   if (any) {
     writer->put_bit(config.seq_frame_motion_modes_present_flag);
   } else if (config.seq_frame_motion_modes_present_flag) {
-    if (error != nullptr) {
-      *error = "seq_frame_motion_modes_present_flag without enabled modes";
-    }
+error = "seq_frame_motion_modes_present_flag without enabled modes";
     return false;
   }
   if (config.seq_enabled_motion_modes[kMotionDeltaWarp]) {
     writer->put_bit(config.enable_six_param_warp_delta);
   } else if (config.enable_six_param_warp_delta) {
-    if (error != nullptr) {
-      *error = "enable_six_param_warp_delta without DELTAWARP";
-    }
+error = "enable_six_param_warp_delta without DELTAWARP";
     return false;
   }
   return true;
 }
 
 bool read_sequence_motion_modes(BitReader* reader, SequenceMotionModes* config,
-                                std::string* error) {
+                                std::string& error) {
   if (reader == nullptr || config == nullptr) {
-    if (error != nullptr) *error = "null argument";
+    error = "null argument";
     return false;
   }
   SequenceMotionModes out;
@@ -175,7 +171,7 @@ bool read_sequence_motion_modes(BitReader* reader, SequenceMotionModes* config,
   for (int mode = kMotionInterIntra; mode < kMotionModes; ++mode) {
     bool bit = false;
     if (!reader->read_bit(&bit)) {
-      if (error != nullptr) *error = "truncated motion-mode bits";
+      error = "truncated motion-mode bits";
       return false;
     }
     out.seq_enabled_motion_modes[mode] = bit;
@@ -184,7 +180,7 @@ bool read_sequence_motion_modes(BitReader* reader, SequenceMotionModes* config,
   if (any) {
     bool bit = false;
     if (!reader->read_bit(&bit)) {
-      if (error != nullptr) *error = "truncated motion-mode presence flag";
+      error = "truncated motion-mode presence flag";
       return false;
     }
     out.seq_frame_motion_modes_present_flag = bit;
@@ -192,7 +188,7 @@ bool read_sequence_motion_modes(BitReader* reader, SequenceMotionModes* config,
   if (out.seq_enabled_motion_modes[kMotionDeltaWarp]) {
     bool bit = false;
     if (!reader->read_bit(&bit)) {
-      if (error != nullptr) *error = "truncated six-param flag";
+      error = "truncated six-param flag";
       return false;
     }
     out.enable_six_param_warp_delta = bit;
@@ -204,9 +200,9 @@ bool read_sequence_motion_modes(BitReader* reader, SequenceMotionModes* config,
 bool write_frame_motion_modes(BitWriter* writer,
                               const SequenceMotionModes& seq,
                               const FrameMotionModes& frame,
-                              std::string* error) {
+                              std::string& error) {
   if (writer == nullptr) {
-    if (error != nullptr) *error = "null BitWriter";
+    error = "null BitWriter";
     return false;
   }
   if (!seq.seq_frame_motion_modes_present_flag) {
@@ -218,9 +214,7 @@ bool write_frame_motion_modes(BitWriter* writer,
     for (int mode = kMotionInterIntra; mode < kMotionModes; ++mode) {
       if (derived.frame_enabled_motion_modes[mode] !=
           frame.frame_enabled_motion_modes[mode]) {
-        if (error != nullptr) {
-          *error = "frame motion modes disagree with the sequence";
-        }
+error = "frame motion modes disagree with the sequence";
         return false;
       }
     }
@@ -229,9 +223,7 @@ bool write_frame_motion_modes(BitWriter* writer,
   for (int mode = kMotionInterIntra; mode < kMotionModes; ++mode) {
     if (!seq.seq_enabled_motion_modes[mode]) {
       if (frame.frame_enabled_motion_modes[mode]) {
-        if (error != nullptr) {
-          *error = "frame enables a sequence-disabled motion mode";
-        }
+error = "frame enables a sequence-disabled motion mode";
         return false;
       }
       continue;
@@ -242,9 +234,9 @@ bool write_frame_motion_modes(BitWriter* writer,
 }
 
 bool read_frame_motion_modes(BitReader* reader, const SequenceMotionModes& seq,
-                             FrameMotionModes* frame, std::string* error) {
+                             FrameMotionModes* frame, std::string& error) {
   if (reader == nullptr || frame == nullptr) {
-    if (error != nullptr) *error = "null argument";
+    error = "null argument";
     return false;
   }
   bool override[kMotionModes] = {false, false, false, false, false};
@@ -253,7 +245,7 @@ bool read_frame_motion_modes(BitReader* reader, const SequenceMotionModes& seq,
       if (!seq.seq_enabled_motion_modes[mode]) continue;
       bool bit = false;
       if (!reader->read_bit(&bit)) {
-        if (error != nullptr) *error = "truncated frame motion-mode bit";
+        error = "truncated frame motion-mode bit";
         return false;
       }
       override[mode] = bit;
@@ -271,9 +263,9 @@ bool read_frame_motion_modes(BitReader* reader, const SequenceMotionModes& seq,
 
 bool write_allow_warpmv_mode(BitWriter* writer, const SequenceMotionModes& seq,
                              const FrameMotionModes& frame, WarpmvMode* out,
-                             std::string* error) {
+                             std::string& error) {
   if (writer == nullptr || out == nullptr) {
-    if (error != nullptr) *error = "null argument";
+    error = "null argument";
     return false;
   }
   WarpmvMode required;
@@ -283,9 +275,7 @@ bool write_allow_warpmv_mode(BitWriter* writer, const SequenceMotionModes& seq,
   }
   if (!required.present) {
     if (out->present) {
-      if (error != nullptr) {
-        *error = "allow_warpmv_mode requested where it is not present";
-      }
+error = "allow_warpmv_mode requested where it is not present";
       return false;
     }
     out->allow_warpmv_mode = false;
@@ -302,9 +292,9 @@ bool write_allow_warpmv_mode(BitWriter* writer, const SequenceMotionModes& seq,
 
 bool read_allow_warpmv_mode(BitReader* reader, const SequenceMotionModes& seq,
                             const FrameMotionModes& frame, WarpmvMode* out,
-                            std::string* error) {
+                            std::string& error) {
   if (reader == nullptr || out == nullptr) {
-    if (error != nullptr) *error = "null argument";
+    error = "null argument";
     return false;
   }
   WarpmvMode required;
@@ -319,7 +309,7 @@ bool read_allow_warpmv_mode(BitReader* reader, const SequenceMotionModes& seq,
   }
   bool bit = false;
   if (!reader->read_bit(&bit)) {
-    if (error != nullptr) *error = "truncated allow_warpmv_mode";
+    error = "truncated allow_warpmv_mode";
     return false;
   }
   out->allow_warpmv_mode = bit;

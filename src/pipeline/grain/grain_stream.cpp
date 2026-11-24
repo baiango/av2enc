@@ -8,8 +8,8 @@
 namespace av2enc::filters::grain {
 namespace {
 
-bool Fail(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+bool Fail(std::string& error, const char* message) {
+  error = message;
   return false;
 }
 
@@ -221,7 +221,7 @@ bool ModelsEqual(const GrainModel& a, GrainChromaIdc a_idc,
 }
 
 bool ParseLeb128(std::span<const std::uint8_t> data, std::size_t* pos,
-                 std::uint64_t* value, std::string* error) {
+                 std::uint64_t* value, std::string& error) {
   std::uint64_t result = 0;
   int shift = 0;
   while (true) {
@@ -303,7 +303,7 @@ GrainEstimate EstimateGrainModel(const GrainFrameView& frame,
 
   model = NormalizeModel(model, GrainChromaIdc::k420);
   std::string why;
-  if (!ValidateModel(model, GrainChromaIdc::k420, &why)) {
+  if (!ValidateModel(model, GrainChromaIdc::k420, why)) {
     return estimate;
   }
   estimate.apply = true;
@@ -342,7 +342,7 @@ GrainFramePlan GrainStreamPlanner::CancelFrame(
 bool GrainStreamPlanner::PlanFrame(const GrainFrameView& frame,
                                    std::uint32_t frame_index, int tlayer_id,
                                    int mlayer_id, GrainFramePlan* plan,
-                                   std::string* error) {
+                                   std::string& error) {
   if (plan == nullptr) return Fail(error, "null grain plan");
   if (options_.disable) {
     *plan = CancelFrame(frame_index);
@@ -359,7 +359,7 @@ bool GrainStreamPlanner::PlanFrame(const GrainFrameView& frame,
   // the frame's chroma format before using it.
   const GrainChromaIdc idc = options_.chroma_idc;
   std::string why;
-  if (!ValidateModel(estimate.model, idc, &why)) {
+  if (!ValidateModel(estimate.model, idc, why)) {
     // For non-4:2:0 layouts the chroma point constraints change; fall back to
     // cancelling rather than emitting an invalid model.
     *plan = CancelFrame(frame_index);
@@ -444,7 +444,7 @@ bool IsFrameObuType(std::uint8_t type) {
 }
 
 bool ParseTemporalUnit(std::span<const std::uint8_t> unit,
-                       std::vector<GrainObuView>* obus, std::string* error) {
+                       std::vector<GrainObuView>* obus, std::string& error) {
   if (obus == nullptr) return Fail(error, "null OBU list");
   obus->clear();
   std::size_t pos = 0;
@@ -474,7 +474,7 @@ bool ParseTemporalUnit(std::span<const std::uint8_t> unit,
 
 bool InsertFilmGrainObu(std::span<const std::uint8_t> unit,
                         std::span<const std::uint8_t> obu_bytes,
-                        std::vector<std::uint8_t>* out, std::string* error) {
+                        std::vector<std::uint8_t>* out, std::string& error) {
   return InsertFilmGrainObuBeforeFrame(unit, 0, obu_bytes, out, error);
 }
 
@@ -482,7 +482,7 @@ bool InsertFilmGrainObuBeforeFrame(std::span<const std::uint8_t> unit,
                                    std::size_t frame_ordinal,
                                    std::span<const std::uint8_t> obu_bytes,
                                    std::vector<std::uint8_t>* out,
-                                   std::string* error) {
+                                   std::string& error) {
   if (out == nullptr) return Fail(error, "null stream output");
   std::vector<GrainObuView> obus;
   if (!ParseTemporalUnit(unit, &obus, error)) return false;
@@ -500,10 +500,8 @@ bool InsertFilmGrainObuBeforeFrame(std::span<const std::uint8_t> unit,
     ++seen_frames;
   }
   if (insert_at == unit.size()) {
-    if (error != nullptr) {
-      *error = "unit has no coded-frame OBU at index " +
-               std::to_string(frame_ordinal);
-    }
+error = "unit has no coded-frame OBU at index " +
+         std::to_string(frame_ordinal);
     return false;
   }
   const auto split = static_cast<std::ptrdiff_t>(insert_at);
@@ -522,7 +520,7 @@ namespace {
 bool FindFilmGrainPresentBit(std::span<const std::uint8_t> unit,
                              std::size_t* payload_start,
                              std::size_t* payload_bytes,
-                             std::size_t* bit_in_payload, std::string* error) {
+                             std::size_t* bit_in_payload, std::string& error) {
   std::vector<GrainObuView> obus;
   if (!ParseTemporalUnit(unit, &obus, error)) return false;
   for (const GrainObuView& obu : obus) {
@@ -562,7 +560,7 @@ bool FindFilmGrainPresentBit(std::span<const std::uint8_t> unit,
 }  // namespace
 
 bool ReadSequenceHeaderFilmGrainPresent(std::span<const std::uint8_t> unit,
-                                        bool* present, std::string* error) {
+                                        bool* present, std::string& error) {
   std::size_t payload_start = 0;
   std::size_t payload_bytes = 0;
   std::size_t bit = 0;
@@ -577,7 +575,7 @@ bool ReadSequenceHeaderFilmGrainPresent(std::span<const std::uint8_t> unit,
 }
 
 bool PatchSequenceHeaderFilmGrainPresent(std::vector<std::uint8_t>* unit,
-                                         bool present, std::string* error) {
+                                         bool present, std::string& error) {
   if (unit == nullptr) return Fail(error, "null temporal unit");
   std::size_t payload_start = 0;
   std::size_t payload_bytes = 0;

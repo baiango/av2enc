@@ -79,10 +79,10 @@ __global__ void grid_kernel(const PlanDesc* __restrict__ plans, int nplans,
 
 Status resolve_plans(const PlanBatch& batch, const Workspace& workspace,
                      const LaunchScratch& scratch, cudaStream_t stream,
-                     std::string* error) {
+                     std::string& error) {
   const int plan_count = static_cast<int>(batch.plans.size());
   if (plan_count > scratch.plan_capacity) {
-    if (error != nullptr) *error = "tx_partition: plan capacity exceeded";
+    error = "tx_partition: plan capacity exceeded";
     return Status::kInvalidArgument;
   }
   const cudaError_t copy_error = cudaMemcpyAsync(
@@ -97,21 +97,19 @@ Status resolve_plans(const PlanBatch& batch, const Workspace& workspace,
 }
 
 bool batch_fits(const Workspace& workspace, const PlanBatch& batch,
-                std::string* error) {
+                std::string& error) {
   if (!workspace.valid()) {
-    if (error != nullptr) *error = "tx_partition: workspace not initialized";
+    error = "tx_partition: workspace not initialized";
     return false;
   }
   const int plan_count = static_cast<int>(batch.plans.size());
   if (plan_count <= 0 || plan_count > workspace.max_plans) {
-    if (error != nullptr) {
-      *error = "tx_partition: plan count outside workspace max_plans";
-    }
+error = "tx_partition: plan count outside workspace max_plans";
     return false;
   }
   if (batch.total_parts <= 0 ||
       batch.total_parts > plan_count * kMaxParts) {
-    if (error != nullptr) *error = "tx_partition: invalid total_parts";
+    error = "tx_partition: invalid total_parts";
     return false;
   }
   return true;
@@ -123,10 +121,10 @@ Status forward_batch(Arena& arena, Workspace& workspace,
                      const PlanBatch& batch,
                      const std::int16_t* d_residual_adj, double* d_coeff,
                      std::int32_t* d_levels, cudaStream_t stream,
-                     std::uint64_t* required_bytes, std::string* error) {
+                     std::uint64_t* required_bytes, std::string& error) {
   if (!batch_fits(workspace, batch, error)) return Status::kInvalidArgument;
   if (d_residual_adj == nullptr || d_coeff == nullptr || d_levels == nullptr) {
-    if (error != nullptr) *error = "tx_partition: null transform buffer";
+    error = "tx_partition: null transform buffer";
     return Status::kInvalidArgument;
   }
   LaunchScratch scratch;
@@ -147,10 +145,10 @@ Status forward_batch(Arena& arena, Workspace& workspace,
 Status inverse_batch(Arena& arena, Workspace& workspace,
                      const PlanBatch& batch, const std::int32_t* d_levels,
                      std::int16_t* d_residual_coded, cudaStream_t stream,
-                     std::uint64_t* required_bytes, std::string* error) {
+                     std::uint64_t* required_bytes, std::string& error) {
   if (!batch_fits(workspace, batch, error)) return Status::kInvalidArgument;
   if (d_levels == nullptr || d_residual_coded == nullptr) {
-    if (error != nullptr) *error = "tx_partition: null transform buffer";
+    error = "tx_partition: null transform buffer";
     return Status::kInvalidArgument;
   }
   LaunchScratch scratch;
@@ -170,10 +168,10 @@ Status inverse_batch(Arena& arena, Workspace& workspace,
 Status dequantize_batch(Arena& arena, Workspace& workspace,
                         const PlanBatch& batch, const std::int32_t* d_levels,
                         std::int32_t* d_dequant, cudaStream_t stream,
-                        std::uint64_t* required_bytes, std::string* error) {
+                        std::uint64_t* required_bytes, std::string& error) {
   if (!batch_fits(workspace, batch, error)) return Status::kInvalidArgument;
   if (d_levels == nullptr || d_dequant == nullptr) {
-    if (error != nullptr) *error = "tx_partition: null dequant buffer";
+    error = "tx_partition: null dequant buffer";
     return Status::kInvalidArgument;
   }
   LaunchScratch scratch;
@@ -199,11 +197,11 @@ Status inverse_dequant_batch(Arena& arena, Workspace& workspace,
                              std::int16_t* d_residual_coded,
                              cudaStream_t stream,
                              std::uint64_t* required_bytes,
-                             std::string* error) {
+                             std::string& error) {
   if (!batch_fits(workspace, batch, error)) return Status::kInvalidArgument;
   if (d_levels == nullptr || d_dequant == nullptr ||
       d_residual_coded == nullptr) {
-    if (error != nullptr) *error = "tx_partition: null transform buffer";
+    error = "tx_partition: null transform buffer";
     return Status::kInvalidArgument;
   }
   LaunchScratch scratch;
@@ -239,11 +237,11 @@ Status build_scan_tables_device(const ScanTableView& view,
 Status build_grid_device(Arena& arena, Workspace& workspace,
                          const PlanBatch& batch, const TxGridView& grid,
                          cudaStream_t stream, std::uint64_t* required_bytes,
-                         std::string* error) {
+                         std::string& error) {
   if (!batch_fits(workspace, batch, error)) return Status::kInvalidArgument;
   if (grid.tx_size == nullptr || grid.middle == nullptr ||
       grid.scan_order == nullptr || grid.mi_rows <= 0 || grid.mi_cols <= 0) {
-    if (error != nullptr) *error = "tx_partition: invalid grid view";
+    error = "tx_partition: invalid grid view";
     return Status::kInvalidArgument;
   }
   LaunchScratch scratch;

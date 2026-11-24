@@ -294,7 +294,7 @@ bool apply_frame_filters(
     frame.bit_depth = bit_depth;
     if (!av2enc::hbd::plan_cdef(frame, tools.cdef_damping,
                                 tools.cdef_num_strengths, &cdef_plan,
-                                &error)) {
+                                error)) {
       return false;
     }
     const std::uint16_t* src_planes[3] = {nullptr, nullptr, nullptr};
@@ -310,7 +310,7 @@ bool apply_frame_filters(
       dst_planes[p] = cdef_samples[p].data();
     }
     if (!av2enc::hbd::apply_cdef16(cdef_plan, format, src_planes, dst_planes,
-                                   stride, mi_cols, mi_rows, &error)) {
+                                   stride, mi_cols, mi_rows, error)) {
       return false;
     }
     for (int p = 0; p < num_planes; ++p) {
@@ -375,11 +375,11 @@ bool apply_frame_filters(
     // planner; the shared still planner searches its own candidate ladder and
     // takes only the CCSO unit size (6 = the 64x64 superblock).
     (void)tools.ccso_bands_log2;
-    if (!av2enc::hbd::plan_ccso(frame, 6, false, &ccso_plan, &error)) {
+    if (!av2enc::hbd::plan_ccso(frame, 6, false, &ccso_plan, error)) {
       return false;
     }
     if (!av2enc::hbd::apply_ccso16(ccso_plan, format, curr_planes, out_planes,
-                                   stride, stride, mi_cols, mi_rows, &error)) {
+                                   stride, stride, mi_cols, mi_rows, error)) {
       return false;
     }
     for (int p = 0; p < num_planes; ++p) {
@@ -453,7 +453,7 @@ bool apply_frame_filters(
     if (any_lr) {
       if (!av2enc::hbd::plan_lr(lr_frame, tools.wiener, tools.chroma_lr,
                                 tools.pc_wiener, base_q_idx, &lr_plan,
-                                &error)) {
+                                error)) {
         return false;
       }
       lr_plan.config.lr_tx_skip = lr_tx_skip;
@@ -481,7 +481,7 @@ bool apply_frame_filters(
     }
     if (any_lr && lr_plan.config.enabled) {
       if (!av2enc::hbd::apply_wiener16(lr_frame, lr_plan.config, lr_ptr,
-                                       lr_stride, &error)) {
+                                       lr_stride, error)) {
         return false;
       }
       if (tools.pc_wiener && lr_plan.config.plane[0].enabled) {
@@ -519,9 +519,9 @@ bool apply_frame_filters(
       gdf_frame.mi_rows = mi_rows;
       gdf_frame.bit_depth = bit_depth;
       gdf_frame.base_q_idx = base_q_idx;
-      if (!av2enc::hbd::plan_gdf(gdf_frame, &gdf_plan, &error)) return false;
+      if (!av2enc::hbd::plan_gdf(gdf_frame, &gdf_plan, error)) return false;
       if (!av2enc::hbd::apply_gdf16(gdf_plan, gdf_frame, lr_ptr[0],
-                                    lr_stride[0], &error)) {
+                                    lr_stride[0], error)) {
         return false;
       }
     }

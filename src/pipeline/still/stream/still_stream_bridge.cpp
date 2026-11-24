@@ -730,7 +730,7 @@ bool plan_tree_to_nodes(const plan::FramePlan& plan,
     std::vector<TreeNode>& dst;
     const plan::FramePlan& plan;
     const FrameGeometry& geometry;
-    std::string* error;
+    std::string& error;
     int leaf_count = 0;
 
     // `has_chroma` / `chroma_offset` are the §5.20.3.2 recursion state for this
@@ -739,16 +739,16 @@ bool plan_tree_to_nodes(const plan::FramePlan& plan,
     bool build(std::size_t i, std::size_t* next, int depth, bool has_chroma,
                bool chroma_offset) {
       if (i >= src.size()) {
-        *error = "partition tree ended inside a subtree";
+        error = "partition tree ended inside a subtree";
         return false;
       }
       if (depth > kMaxTreeDepth) {
-        *error = "partition tree is deeper than the M1 limit";
+        error = "partition tree is deeper than the M1 limit";
         return false;
       }
       const plan::TreeNode& node = src[i];
       if (node.index != i) {
-        *error = "plan tree node index is not its preorder position";
+        error = "plan tree node index is not its preorder position";
         return false;
       }
       std::uint8_t spec_mask = 0;
@@ -757,32 +757,32 @@ bool plan_tree_to_nodes(const plan::FramePlan& plan,
       if (!derive_node_flags(geometry, node.mi_row, node.mi_col,
                              node.block_size, has_chroma, chroma_offset,
                              &spec_mask, &spec_flags, &forced_partition,
-                             *error)) {
+                             error)) {
         return false;
       }
       if (node.allowed_mask != spec_mask) {
-        *error = "plan tree allowed_mask disagrees with the spec at mi (" +
+        error = "plan tree allowed_mask disagrees with the spec at mi (" +
                  std::to_string(node.mi_row) + "," +
                  std::to_string(node.mi_col) + ")";
         return false;
       }
       if ((node.forced ? syntax::kFlagForced : 0) != spec_flags) {
-        *error = "plan tree forced flag disagrees with the spec at mi (" +
+        error = "plan tree forced flag disagrees with the spec at mi (" +
                  std::to_string(node.mi_row) + "," +
                  std::to_string(node.mi_col) + ")";
         return false;
       }
       const auto partition = static_cast<PartitionType>(node.partition );
       if (node.partition >= partition::kPartitionTypeCount) {
-        *error = "plan tree node has an invalid partition type";
+        error = "plan tree node has an invalid partition type";
         return false;
       }
       if (forced_partition >= 0 && forced_partition != node.partition) {
-        *error = "plan tree partition disagrees with the spec-forced partition";
+        error = "plan tree partition disagrees with the spec-forced partition";
         return false;
       }
       if ((spec_mask >> node.partition) == 0) {
-        *error = "plan tree partition is not in its allowed set";
+        error = "plan tree partition is not in its allowed set";
         return false;
       }
 
@@ -800,30 +800,30 @@ bool plan_tree_to_nodes(const plan::FramePlan& plan,
       if (partition == PartitionType::kNone) {
         if (node.child_count != 0 || node.subtree != 0 ||
             node.first_child != plan::kNoTreeNode) {
-          *error = "plan tree leaf reports children";
+          error = "plan tree leaf reports children";
           return false;
         }
         if (node.leaf_index == plan::kNoTreeNode) {
-          *error = "plan tree leaf has no leaf_index";
+          error = "plan tree leaf has no leaf_index";
           return false;
         }
         if (!plan.blocks.empty() && node.leaf_index >= plan.blocks.size()) {
-          *error = "plan tree leaf_index is outside plan.blocks";
+          error = "plan tree leaf_index is outside plan.blocks";
           return false;
         }
         // Leaves must reference blocks in syntax order.
         if (static_cast<int>(node.leaf_index) != leaf_count) {
-          *error = "plan tree leaves are not in plan.blocks order";
+          error = "plan tree leaves are not in plan.blocks order";
           return false;
         }
         if (!plan.blocks.empty()) {
           const plan::BlockPlan& block = plan.blocks[node.leaf_index];
           if (block.has_chroma != has_chroma) {
-            *error = "plan leaf has_chroma disagrees with the recursion";
+            error = "plan leaf has_chroma disagrees with the recursion";
             return false;
           }
           if (block.chroma_offset != chroma_offset) {
-            *error = "plan leaf chroma_offset disagrees with the recursion";
+            error = "plan leaf chroma_offset disagrees with the recursion";
             return false;
           }
         }
@@ -834,11 +834,11 @@ bool plan_tree_to_nodes(const plan::FramePlan& plan,
       }
 
       if (node.child_count == 0 || node.child_count > 4) {
-        *error = "plan tree node has an invalid child count";
+        error = "plan tree node has an invalid child count";
         return false;
       }
       if (node.first_child != i + 1) {
-        *error = "plan tree children are not contiguous in preorder";
+        error = "plan tree children are not contiguous in preorder";
         return false;
       }
       std::size_t cursor = i + 1;
@@ -856,7 +856,7 @@ bool plan_tree_to_nodes(const plan::FramePlan& plan,
         cursor = after;
       }
       if (node.subtree != cursor - i - 1) {
-        *error = "plan tree subtree count disagrees with its children";
+        error = "plan tree subtree count disagrees with its children";
         return false;
       }
       *next = cursor;
@@ -867,7 +867,7 @@ bool plan_tree_to_nodes(const plan::FramePlan& plan,
   const FrameGeometry geometry =
       make_geometry(FrameInfo{plan.width, plan.height,
                               plan.sb_size != 0 ? plan.sb_size : 64, {0, 0, 0}});
-  Walker walker{src, tree, plan, geometry, &error};
+  Walker walker{src, tree, plan, geometry, error};
   const int sb_mi = partition::sb_size_mi(geometry);
   const int sb_cols = (partition::mi_cols(geometry) + sb_mi - 1) / sb_mi;
   const int sb_rows = (partition::mi_rows(geometry) + sb_mi - 1) / sb_mi;

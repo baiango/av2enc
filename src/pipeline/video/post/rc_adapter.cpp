@@ -8,8 +8,8 @@
 namespace av2enc::video::post {
 namespace {
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -47,7 +47,7 @@ int video_qp_slice(int base_q_idx) noexcept {
   return rc::coeff_cdf_qctx(base_q_idx);
 }
 
-bool video_rc_config_valid(const VideoRcConfig& config, std::string* error) {
+bool video_rc_config_valid(const VideoRcConfig& config, std::string& error) {
   if (video_base_q_idx_bits(config.depth) < 0 ||
       video_max_quantizer(config.depth) < 0) {
     return fail(error, "m2 rate control: 12-bit is reserved in AV2 v1.0.0");
@@ -81,7 +81,7 @@ bool video_rc_config_valid(const VideoRcConfig& config, std::string* error) {
   return true;
 }
 
-bool VideoRateControl::configure(const VideoRcConfig& config, std::string* error) {
+bool VideoRateControl::configure(const VideoRcConfig& config, std::string& error) {
   if (!video_rc_config_valid(config, error)) {
     configured_ = false;
     return false;
@@ -149,7 +149,7 @@ bool VideoRateControl::configure(const VideoRcConfig& config, std::string* error
 }
 
 bool VideoRateControl::begin_frame(const rc::FrameComplexity& complexity,
-                                VideoFrameQp& qp, std::string* error) {
+                                VideoFrameQp& qp, std::string& error) {
   if (!configured_) return fail(error, "m2 rate control: not configured");
   rc::QpDecision decision;
   if (!rc_.begin_frame(complexity, decision, error)) return false;
@@ -192,7 +192,7 @@ bool VideoRateControl::begin_frame(const rc::FrameComplexity& complexity,
     // The controller frame is already open; close the accounting frame with
     // the model estimate so the caller can retry or abort cleanly.
     (void)rc_.end_frame(
-        static_cast<std::int64_t>(std::llround(decision.estimated_bits)));
+        static_cast<std::int64_t>(std::llround(decision.estimated_bits)), error);
     return fail(error,
                 "m2 rate control: decision is outside the M2 qindex policy and "
                 "clamping is disabled");
@@ -204,7 +204,7 @@ bool VideoRateControl::begin_frame(const rc::FrameComplexity& complexity,
   if (!rc::estimate_frame_bits(config_.rc.estimator, complexity, base_q_idx,
                                estimated, error)) {
     (void)rc_.end_frame(
-        static_cast<std::int64_t>(std::llround(decision.estimated_bits)));
+        static_cast<std::int64_t>(std::llround(decision.estimated_bits)), error);
     return false;
   }
 
@@ -226,7 +226,7 @@ bool VideoRateControl::begin_frame(const rc::FrameComplexity& complexity,
   return true;
 }
 
-bool VideoRateControl::end_frame(std::int64_t actual_bits, std::string* error) {
+bool VideoRateControl::end_frame(std::int64_t actual_bits, std::string& error) {
   if (!configured_) return fail(error, "m2 rate control: not configured");
   return rc_.end_frame(actual_bits, error);
 }

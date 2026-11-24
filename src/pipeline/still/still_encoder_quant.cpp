@@ -280,7 +280,7 @@ bool Encoder::compute_tx(int plane, int x0, int y0, int cw, int ch,
         info.qctx = qctx_slice_;
         av2enc::rdoq::av2::Model model;
         std::string rdoq_error;
-        if (!model.init(info, scalar_scan, &rdoq_error)) {
+        if (!model.init(info, scalar_scan, rdoq_error)) {
           error_ = "rdoq model init failed: " + rdoq_error;
           return false;
         }
@@ -337,7 +337,7 @@ bool Encoder::compute_tx(int plane, int x0, int y0, int cw, int ch,
         info.tx_class_2d = true;
         av2enc::tcq::av2::Model model;
         std::string tcq_error;
-        if (!model.init(info, reference, &tcq_error)) {
+        if (!model.init(info, reference, tcq_error)) {
           error_ = "tcq model init failed: " + tcq_error;
           return false;
         }
@@ -348,7 +348,7 @@ bool Encoder::compute_tx(int plane, int x0, int y0, int cw, int ch,
         tcq_config.max_coefficients = area;
         av2enc::tcq::Result tcq_result;
         if (!av2enc::tcq::quantize(input, tcq_config, model.rate_model(),
-                                   tcq_result, &tcq_error)) {
+                                   tcq_result, tcq_error)) {
           error_ = "tcq quantize failed: " + tcq_error;
           return false;
         }
@@ -588,7 +588,7 @@ bool Encoder::compute_chroma_cctx(int x0, int y0, int cw, int ch,
     std::string cctx_error;
     if (!av2enc::tcq::cctx_enumerate_scalar(u_coeff, v_coeff, params.w,
                                             params.h, config, &candidates,
-                                            &cctx_error)) {
+                                            cctx_error)) {
       error_ = "cctx enumerate failed: " + cctx_error;
       return false;
     }
@@ -713,7 +713,7 @@ bool Encoder::compute_chroma_cctx(int x0, int y0, int cw, int ch,
         info.qctx = qctx_slice_;
         av2enc::rdoq::av2::Model model;
         std::string rdoq_error;
-        if (!model.init(info, scalar_scan, &rdoq_error)) {
+        if (!model.init(info, scalar_scan, rdoq_error)) {
           error_ = "cctx rdoq model init failed: " + rdoq_error;
           return false;
         }

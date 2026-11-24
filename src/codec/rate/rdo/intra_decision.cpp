@@ -85,11 +85,9 @@ bool intra_rdo_config_valid(const IntraRdoConfig& config) noexcept {
 }
 
 bool validate_intra_rdo_config(const IntraRdoConfig& config,
-                               std::string* error) {
+                               std::string& error) {
   if (!std::isfinite(config.lambda) || config.lambda < 0.0) {
-    if (error != nullptr) {
-      *error = "IntraRdoConfig.lambda must be finite and >= 0";
-    }
+error = "IntraRdoConfig.lambda must be finite and >= 0";
     return false;
   }
   return true;
@@ -99,19 +97,15 @@ IntraModeSelector::IntraModeSelector(const IntraRdoConfig& config) noexcept
     : config_(config) {}
 
 bool IntraModeSelector::add(const IntraCandidateCost& candidate,
-                            std::string* error) {
+                            std::string& error) {
   if (!intra_rdo_config_valid(config_)) {
     ++choice_.rejected_count;
-    if (error != nullptr) {
-      *error = "invalid IntraRdoConfig";
-    }
+error = "invalid IntraRdoConfig";
     return false;
   }
   if (!candidate_valid(candidate)) {
     ++choice_.rejected_count;
-    if (error != nullptr) {
-      *error = "invalid intra candidate (mode/angle/distortion/rate)";
-    }
+error = "invalid intra candidate (mode/angle/distortion/rate)";
     return false;
   }
 
@@ -124,9 +118,7 @@ bool IntraModeSelector::add(const IntraCandidateCost& candidate,
                    : candidate.sse;
   if (!std::isfinite(score.cost)) {
     ++choice_.rejected_count;
-    if (error != nullptr) {
-      *error = "intra candidate cost is not finite";
-    }
+error = "intra candidate cost is not finite";
     return false;
   }
   score.input_index = choice_.candidate_count;
@@ -166,13 +158,13 @@ void IntraModeSelector::reset() noexcept { choice_ = IntraModeChoice{}; }
 
 IntraModeChoice select_intra_mode(std::span<const IntraCandidateCost> candidates,
                                   const IntraRdoConfig& config,
-                                  std::string* error) {
+                                  std::string& error) {
   IntraModeSelector selector(config);
   for (const IntraCandidateCost& candidate : candidates) {
     std::string local_error;
-    if (!selector.add(candidate, &local_error)) {
-      if (error != nullptr && error->empty()) {
-        *error = local_error;
+    if (!selector.add(candidate, local_error)) {
+      if (error.empty()) {
+        error = local_error;
       }
     }
   }
@@ -298,13 +290,11 @@ bool estimate_intra_rates(IntraRateEstimator estimator,
                           void* context,
                           const IntraRateRequest& request,
                           IntraRateEstimate& out,
-                          std::string* error) {
+                          std::string& error) {
   out = IntraRateEstimate{};
   if (estimator != nullptr) {
     if (!estimator(context, request, out)) {
-      if (error != nullptr) {
-        *error = "IntraRateEstimator rejected the candidate";
-      }
+error = "IntraRateEstimator rejected the candidate";
       return false;
     }
   } else {
@@ -319,9 +309,7 @@ bool estimate_intra_rates(IntraRateEstimator estimator,
       out.syntax_rate_bits < 0.0 ||
       !std::isfinite(out.coefficient_rate_bits) ||
       out.coefficient_rate_bits < 0.0) {
-    if (error != nullptr) {
-      *error = "intra rate estimate must be finite and >= 0";
-    }
+error = "intra rate estimate must be finite and >= 0";
     return false;
   }
   return true;

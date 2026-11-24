@@ -144,7 +144,7 @@ std::vector<std::int32_t> brute_force_best(
     std::int32_t level_max,
     std::int32_t active,
     double* best_cost,
-    std::string* error) {
+    std::string& error) {
   const std::int32_t count = static_cast<std::int32_t>(coefficients.size());
   if (active < 0) active = 0;
   if (active > count) active = count;
@@ -200,9 +200,7 @@ std::vector<std::int32_t> brute_force_best(
     }
   }
 
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   if (best_cost != nullptr) *best_cost = best_value;
   (void)best_eob;
   return best;
@@ -378,7 +376,7 @@ void test_exhaustive(std::size_t count,
   double brute_cost = 0.0;
   std::vector<std::int32_t> brute =
       brute_force_best(block, config, rate_model, level_max, active,
-                       &brute_cost, &error);
+                       &brute_cost, error);
   check_close(result.cost, brute_cost, 1.0e-9, label);
   const double recomputed =
       evaluate_path(block, result.levels, result.eob, config, rate_model);
@@ -606,7 +604,7 @@ void test_av2_model() {
   levels[9] = 2;
   av2::Model model;
   std::string error;
-  check(model.init(info, levels, &error), "AV2 model initialises");
+  check(model.init(info, levels, error), "AV2 model initialises");
   check(model.scalar_eob() == 10, "AV2 model scalar EOB");
   const double scalar = model.scalar_bits();
   check(std::isfinite(scalar) && scalar > 0.0, "AV2 model bits are positive");
@@ -617,7 +615,7 @@ void test_av2_model() {
   av2::BlockInfo inter_info = info;
   inter_info.is_inter = true;
   av2::Model inter_model;
-  check(inter_model.init(inter_info, levels, &error),
+  check(inter_model.init(inter_info, levels, error),
         "AV2 inter model initialises");
   const double inter_scalar = inter_model.scalar_bits();
   check(std::isfinite(inter_scalar) && inter_scalar > 0.0,

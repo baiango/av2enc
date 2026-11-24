@@ -23,11 +23,11 @@ struct Y4mFrameInfo {
 // Reads the first frame of `path`.  Accepts C420/C420jpeg/C420mpeg2/C420paldv
 // (8-bit) and C420p10.
 [[nodiscard]] bool read_y4m_10bit(const std::string& path, fmt::Picture* picture,
-                    Y4mFrameInfo* info, std::string* error);
+                    Y4mFrameInfo* info, std::string& error);
 
 // Writes one C420p10 frame using the visible rectangle of `picture`.
 [[nodiscard]] bool write_y4m_10bit(const std::string& path, const fmt::Picture& picture,
-                     std::string* error);
+                     std::string& error);
 
 // Writes the visible 10-bit planes of an M10 reconstruction.
 [[nodiscard]] bool write_y4m_10bit_planes(const std::string& path, std::uint32_t width,
@@ -36,6 +36,6 @@ struct Y4mFrameInfo {
                             const std::uint16_t* u, int u_stride,
                             const std::uint16_t* v, int v_stride,
                             int chroma_width, int chroma_height,
-                            std::string* error);
+                            std::string& error);
 
 }  // namespace av2enc::high_bitdepth

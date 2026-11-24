@@ -56,11 +56,9 @@ std::size_t table_device_bytes() noexcept {
          align_up_bytes(kCoordsCount * sizeof(GdfCoord));
 }
 
-void set_error(std::string* error, const char* context,
+void set_error(std::string& error, const char* context,
                const std::string& detail) {
-  if (error != nullptr) {
-    *error = std::string(context) + ": " + detail;
-  }
+error = std::string(context) + ": " + detail;
 }
 
 AV2ENC_GDF_HD bool valid_bit_depth(int bit_depth) noexcept {
@@ -234,7 +232,7 @@ std::size_t required_device_bytes(const GdfConfig& config) noexcept {
 
 Status gdf_buffers_init(Arena& arena, const GdfConfig& config,
                         GdfDeviceBuffers* out, std::size_t* required_bytes,
-                        std::string* error) {
+                        std::string& error) {
   if (required_bytes != nullptr) {
     *required_bytes = 0;
   }
@@ -366,7 +364,7 @@ Status gdf_buffers_init(Arena& arena, const GdfConfig& config,
 
 Status gdf_upload_jobs(const GdfDeviceBuffers& buffers,
                        const GdfUnitJob* host_jobs, int job_count,
-                       cudaStream_t stream, std::string* error) {
+                       cudaStream_t stream, std::string& error) {
   if (buffers.jobs == nullptr || buffers.max_units <= 0) {
     set_error(error, "gdf_upload_jobs", "buffers are not initialized");
     return Status::kNotInitialized;
@@ -397,7 +395,7 @@ Status gdf_upload_jobs(const GdfDeviceBuffers& buffers,
 
 Status gdf_upload_use_gdf(const GdfDeviceBuffers& buffers,
                           const std::uint8_t* host_use_gdf, int unit_count,
-                          cudaStream_t stream, std::string* error) {
+                          cudaStream_t stream, std::string& error) {
   if (buffers.use_gdf == nullptr || buffers.max_units <= 0) {
     set_error(error, "gdf_upload_use_gdf", "buffers are not initialized");
     return Status::kNotInitialized;
@@ -428,7 +426,7 @@ Status gdf_upload_use_gdf(const GdfDeviceBuffers& buffers,
 
 Status gdf_derive_indices(const GdfIndexParams* d_params,
                           GdfTableIndices* d_out, int count,
-                          cudaStream_t stream, std::string* error) {
+                          cudaStream_t stream, std::string& error) {
   if (count < 0 || count > kGdfMaxUnits) {
     set_error(error, "gdf_derive_indices", "count out of range");
     return Status::kInvalidArgument;
@@ -454,7 +452,7 @@ Status gdf_derive_indices(const GdfIndexParams* d_params,
 Status gdf_apply_units(const GdfFrameSource& src, const GdfUnitJob* d_jobs,
                        int job_count, int max_unit_size,
                        const GdfTables& tables, cudaStream_t stream,
-                       std::string* error) {
+                       std::string& error) {
   if (!valid_source(src)) {
     set_error(error, "gdf_apply_units", "invalid luma source description");
     return Status::kInvalidArgument;
@@ -488,7 +486,7 @@ Status gdf_apply_units(const GdfFrameSource& src, const GdfUnitJob* d_jobs,
 
 Status gdf_apply_grid(const GdfFrameGrid& frame,
                       const GdfDeviceBuffers& buffers, cudaStream_t stream,
-                      std::string* error) {
+                      std::string& error) {
   if (!valid_source(frame.src)) {
     set_error(error, "gdf_apply_grid", "invalid luma source description");
     return Status::kInvalidArgument;

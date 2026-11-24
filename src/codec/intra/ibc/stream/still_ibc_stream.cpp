@@ -419,14 +419,14 @@ class TileWriter {
           std::string why;
           if (!is_bv_encodable(frame_view(), ibc_config_, buffer_,
                                block.mi_row, block.mi_col, block.bsize,
-                               block.bv, &why)) {
+                               block.bv, why)) {
             error = "IBC block " + std::to_string(block.mi_row) + "," +
                     std::to_string(block.mi_col) + ": " + why;
             return false;
           }
-        } else if (!is_bv_valid(frame_view(), ibc_config_, buffer_,
-                                block.mi_row, block.mi_col, block.bsize,
-                                block.bv, nullptr)) {
+        } else if (std::string ignored; !is_bv_valid(
+                       frame_view(), ibc_config_, buffer_, block.mi_row,
+                       block.mi_col, block.bsize, block.bv, ignored)) {
           error = "IBC block vector is invalid";
           return false;
         }

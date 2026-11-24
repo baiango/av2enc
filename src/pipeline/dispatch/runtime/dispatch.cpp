@@ -9,17 +9,15 @@
 namespace av2enc::multigpu::runtime {
 namespace {
 
-void set_error(std::string* error, const std::string& text) {
-  if (error != nullptr) {
-    *error = text;
-  }
+void set_error(std::string& error, const std::string& text) {
+error = text;
 }
 
 }  // namespace
 
 DispatchTable build_dispatch_table(const MultiGpuPlan& plan,
                                    std::span<const int> gpu_ordinals,
-                                   std::string* error) {
+                                   std::string& error) {
   DispatchTable table;
   if (!plan.valid) {
     table.error = "cannot dispatch an invalid planner result";
@@ -99,15 +97,13 @@ DispatchTable build_dispatch_table(const MultiGpuPlan& plan,
   }
 
   table.valid = true;
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return table;
 }
 
 bool merge_payloads(const MultiGpuPlan& plan,
                     std::span<const TilePayloadView> payloads, MergedFrame& out,
-                    std::string* error) {
+                    std::string& error) {
   out = MergedFrame{};
   if (!plan.valid) {
     out.error = "cannot merge an invalid planner result";
@@ -177,9 +173,7 @@ bool merge_payloads(const MultiGpuPlan& plan,
 
   out.tile_count = tile_count;
   out.valid = true;
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return true;
 }
 

@@ -77,7 +77,7 @@ struct HbdResult {
 
 // True when the *tile payload* writer can code this qindex (1..303).  Returns
 // false with a precise reason for 0 or >MaxQ.
-[[nodiscard]] bool qindex_encodable(std::uint16_t base_q_idx, std::string* reason);
+[[nodiscard]] bool qindex_encodable(std::uint16_t base_q_idx, std::string& reason);
 
 // Encodes a 10-bit 4:2:0 picture.  Visible samples must be in [0,1023] and the
 // geometry must satisfy the M10 fixed partition tree.

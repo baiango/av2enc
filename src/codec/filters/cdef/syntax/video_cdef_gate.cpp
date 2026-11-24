@@ -86,7 +86,7 @@ struct Frame {
 
 bool load_frames(const std::string& path, int count, std::vector<Frame>* out,
                  std::uint32_t* fps_num, std::uint32_t* fps_den,
-                 std::string* error) {
+                 std::string& error) {
   Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   const Y4mHeader& header = reader.header();
@@ -106,7 +106,7 @@ bool load_frames(const std::string& path, int count, std::vector<Frame>* out,
     out->push_back(std::move(copy));
   }
   if (out->empty()) {
-    *error = "input has no frames";
+    error = "input has no frames";
     return false;
   }
   return true;
@@ -114,10 +114,10 @@ bool load_frames(const std::string& path, int count, std::vector<Frame>* out,
 
 bool write_y4m(const std::string& path, const std::vector<Frame>& frames,
                std::uint32_t fps_num, std::uint32_t fps_den,
-               std::string* error) {
+               std::string& error) {
   std::ofstream out(path, std::ios::binary);
   if (!out) {
-    *error = "cannot write " + path;
+    error = "cannot write " + path;
     return false;
   }
   out << "YUV4MPEG2 W" << frames[0].width << " H" << frames[0].height << " F"
@@ -132,7 +132,7 @@ bool write_y4m(const std::string& path, const std::vector<Frame>& frames,
               static_cast<std::streamsize>(frame.v.size()));
   }
   if (!out) {
-    *error = "short write to " + path;
+    error = "short write to " + path;
     return false;
   }
   return true;
@@ -140,11 +140,11 @@ bool write_y4m(const std::string& path, const std::vector<Frame>& frames,
 
 // Copies an M2 reconstruction into the tight planner/stream layout.  M2
 // dimensions are divisible by 8, so the reconstruction is already MI-aligned.
-bool make_frame(const VideoReconFrame& recon, Frame* out, std::string* error) {
+bool make_frame(const VideoReconFrame& recon, Frame* out, std::string& error) {
   const int w = static_cast<int>(recon.width);
   const int h = static_cast<int>(recon.height);
   if (w <= 0 || h <= 0 || (w & 7) != 0 || (h & 7) != 0) {
-    *error = "reconstruction is not divisible by 8";
+    error = "reconstruction is not divisible by 8";
     return false;
   }
   out->width = w;
@@ -313,7 +313,7 @@ bool parse_args(int argc, char** argv, std::string* input, int* frames,
 // deblock and CCSO.  (CCSO itself is not configured here; its order is already
 // pinned by video_post_test.)
 bool check_post_chain_slot(const VideoReconFrame& recon, const Frame& source,
-                           std::string* error) {
+                           std::string& error) {
   using av2enc::video::post::VideoPostFilterConfig;
   using av2enc::video::post::VideoPostFilterFrame;
   using av2enc::video::post::VideoPostFilterReport;
@@ -331,7 +331,7 @@ bool check_post_chain_slot(const VideoReconFrame& recon, const Frame& source,
   }
   if (report.order.size() != 1 || report.order[0] !=
                                       av2enc::video::post::VideoPostFilterStage::kDeblock) {
-    *error = "deblock-only chain ran the wrong stages";
+    error = "deblock-only chain ran the wrong stages";
     return false;
   }
 
@@ -380,7 +380,7 @@ bool check_post_chain_slot(const VideoReconFrame& recon, const Frame& source,
   full_cfg.cdef = plan.options;
   if (static_cast<int>(full.cdef_idx_grid().size()) !=
       plan.n64_cols * plan.n64_rows) {
-    *error = "post chain index grid size mismatch";
+    error = "post chain index grid size mismatch";
     return false;
   }
   for (std::size_t i = 0; i < full.cdef_idx_grid().size(); ++i) {
@@ -393,7 +393,7 @@ bool check_post_chain_slot(const VideoReconFrame& recon, const Frame& source,
   if (full_report.order.size() != 2 ||
       full_report.order[0] != av2enc::video::post::VideoPostFilterStage::kDeblock ||
       full_report.order[1] != av2enc::video::post::VideoPostFilterStage::kCdef) {
-    *error = "deblock+CDEF chain ran the wrong stages";
+    error = "deblock+CDEF chain ran the wrong stages";
     return false;
   }
   for (int plane = 0; plane < 3; ++plane) {
@@ -402,12 +402,12 @@ bool check_post_chain_slot(const VideoReconFrame& recon, const Frame& source,
         plane == 0 ? &adapter_out.y : (plane == 1 ? &adapter_out.u
                                                   : &adapter_out.v);
     if (a.size() != b->size()) {
-      *error = "post chain plane size mismatch";
+      error = "post chain plane size mismatch";
       return false;
     }
     for (std::size_t i = 0; i < a.size(); ++i) {
       if (a[i] != (*b)[i]) {
-        *error = "adapter filter differs from the post-chain CDEF slot";
+        error = "adapter filter differs from the post-chain CDEF slot";
         return false;
       }
     }

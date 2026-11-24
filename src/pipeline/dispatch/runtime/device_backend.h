@@ -60,18 +60,18 @@ class DeviceBackend {
   // Initialize the primary context for one device. Idempotent backends should
   // return kOk on a second call. context_shutdown() must not call
   // cudaDeviceReset(). Both are called from the coordinator thread.
-  virtual Status context_init(int ordinal, std::string* error) = 0;
+  virtual Status context_init(int ordinal, std::string& error) = 0;
   virtual void context_shutdown(int ordinal) = 0;
 
   virtual Status stream_create(int ordinal, StreamHandle* out,
-                               std::string* error) = 0;
+                               std::string& error) = 0;
   virtual void stream_destroy(StreamHandle stream) = 0;
   virtual Status stream_synchronize(StreamHandle stream) = 0;
 
   // Timing events are only required for reporting; scheduling events are
   // created with timing=false.
   virtual Status event_create(int ordinal, bool timing, EventHandle* out,
-                              std::string* error) = 0;
+                              std::string& error) = 0;
   virtual void event_destroy(EventHandle event) = 0;
   virtual Status event_record(EventHandle event, StreamHandle stream) = 0;
   // Enqueue a wait on `stream` for a previously recorded event.
@@ -84,18 +84,18 @@ class DeviceBackend {
   // (or an explicit cap) before calling arena_init(). The backend must not
   // silently apply a different default.
   virtual Status arena_init(int ordinal, std::uint64_t capacity_bytes,
-                            ArenaHandle* out, std::string* error) = 0;
+                            ArenaHandle* out, std::string& error) = 0;
   virtual void arena_release(ArenaHandle arena) = 0;
   virtual Status arena_allocate(ArenaHandle arena, std::size_t bytes,
                                 std::size_t alignment, void** out,
-                                std::string* error) = 0;
+                                std::string& error) = 0;
   virtual std::uint64_t arena_capacity(ArenaHandle arena) const = 0;
   virtual std::uint64_t arena_used(ArenaHandle arena) const = 0;
 
   // Pinned host memory is host RAM, not device VRAM. It is used for source
   // staging, payload/recon downloads, and the full-frame reference assembly.
   virtual Status pinned_alloc(std::size_t bytes, void** out,
-                              std::string* error) = 0;
+                              std::string& error) = 0;
   virtual void pinned_free(void* ptr) = 0;
 
   virtual Status copy_h2d_async(StreamHandle stream, void* device_dst,

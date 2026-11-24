@@ -13,6 +13,6 @@
 namespace av2enc::multigpu::runtime {
 
 // Returns nullptr and sets *error when the CUDA runtime cannot be initialized.
-std::unique_ptr<DeviceBackend> make_cuda_backend(std::string* error = nullptr);
+std::unique_ptr<DeviceBackend> make_cuda_backend(std::string& error);
 
 }  // namespace av2enc::multigpu::runtime

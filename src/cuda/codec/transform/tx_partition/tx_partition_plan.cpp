@@ -55,8 +55,8 @@ std::uint64_t scratch_bytes_for_plans(int plan_count) {
   return total;
 }
 
-bool set_error(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool set_error(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -85,7 +85,7 @@ void Workspace::reset() noexcept {
 }
 
 Status Workspace::init(Arena& arena, const LaunchConfig& config_in,
-                       std::uint64_t* required_bytes, std::string* error) {
+                       std::uint64_t* required_bytes, std::string& error) {
   const std::uint64_t required = required_device_bytes(config_in);
   if (required_bytes != nullptr) *required_bytes = required;
   reset();
@@ -200,7 +200,7 @@ Status Workspace::init(Arena& arena, const LaunchConfig& config_in,
 
 Status acquire_scratch(Arena& arena, const Workspace& workspace, int plan_count,
                        LaunchScratch* scratch,
-                       std::uint64_t* required_bytes, std::string* error) {
+                       std::uint64_t* required_bytes, std::string& error) {
   const std::uint64_t required = required_device_bytes(workspace.config);
   if (required_bytes != nullptr) *required_bytes = required;
   if (scratch == nullptr) {
@@ -271,7 +271,7 @@ void release_scratch(Arena& arena, LaunchScratch& scratch) noexcept {
 }
 
 Status make_batch(const PlanRequest* requests, int count, PlanBatch* batch,
-                  std::string* error) {
+                  std::string& error) {
   if (batch == nullptr) {
     set_error(error, "tx_partition batch: null output");
     return Status::kInvalidArgument;
@@ -331,12 +331,12 @@ Status make_batch(const PlanRequest* requests, int count, PlanBatch* batch,
 }
 
 Status make_batch(const PlanRequest& request, PlanBatch* batch,
-                  std::string* error) {
+                  std::string& error) {
   return make_batch(&request, 1, batch, error);
 }
 
 Status build_host_jobs(const Workspace& workspace, const PlanBatch& batch,
-                       TxBlockJob* jobs, int capacity, std::string* error) {
+                       TxBlockJob* jobs, int capacity, std::string& error) {
   if (jobs == nullptr) {
     set_error(error, "tx_partition jobs: null output");
     return Status::kInvalidArgument;
@@ -360,7 +360,7 @@ Status build_host_jobs(const Workspace& workspace, const PlanBatch& batch,
 }
 
 Status build_host_parts(const PlanBatch& batch, ResolvedPart* parts,
-                        int capacity, std::string* error) {
+                        int capacity, std::string& error) {
   if (parts == nullptr) {
     set_error(error, "tx_partition parts: null output");
     return Status::kInvalidArgument;

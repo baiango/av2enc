@@ -66,7 +66,7 @@ struct VideoBitDepthChecklist {
 // and cropped back to the visible size on output.
 // Returns false with `reason` on a geometry the current writer cannot code.
 [[nodiscard]] bool video_geometry_supported(int width, int height, int sb_size,
-                           std::string* reason = nullptr);
+                           std::string& reason);
 
 // Build the checklist from the frame geometry, format and frame qindex.
 // `depth == k12` is always a failure (reserved in AV2 v1.0.0).

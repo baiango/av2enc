@@ -216,8 +216,8 @@ struct Workspace {
   // config needs so the caller can grow the arena.  Never allocates per
   // launch.  `error` is optional.
   Status init(Arena& arena, const LaunchConfig& config,
-              std::uint64_t* required_bytes = nullptr,
-              std::string* error = nullptr);
+              std::uint64_t* required_bytes,
+              std::string& error);
 
   // Forgets the pointers without freeing (the arena owns the memory).
   void reset() noexcept;

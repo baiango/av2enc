@@ -137,33 +137,25 @@ class PatternWorker final : public FrameWorker {
     }
   }
 
-  Status encode(const GpuFrameContext& context, std::string* error) override {
+  Status encode(const GpuFrameContext& context, std::string& error) override {
     if (context.backend == nullptr || context.layout == nullptr ||
         context.tile_sizes_out == nullptr || context.device_payload == nullptr ||
         context.device_recon == nullptr || context.device_source == nullptr) {
-      if (error != nullptr) {
-        *error = "pattern worker got an incomplete frame context";
-      }
+error = "pattern worker got an incomplete frame context";
       return Status::kInvalidArgument;
     }
     if (context.bit_depth != 8) {
-      if (error != nullptr) {
-        *error = "pattern worker models 8-bit 4:2:0 only";
-      }
+error = "pattern worker models 8-bit 4:2:0 only";
       return Status::kInvalidArgument;
     }
     if (context.payload_stride_bytes != stride_) {
-      if (error != nullptr) {
-        *error = "pattern worker payload stride does not match the runtime";
-      }
+error = "pattern worker payload stride does not match the runtime";
       return Status::kInvalidArgument;
     }
     if (fail_frame_ >= 0 &&
         (context.frame_index == fail_frame_ || fail_frame_ == -2) &&
         (fail_slot_ < 0 || context.slot == fail_slot_)) {
-      if (error != nullptr) {
-        *error = "injected worker failure";
-      }
+error = "injected worker failure";
       return Status::kDispatchFailed;
     }
 
@@ -199,9 +191,7 @@ class PatternWorker final : public FrameWorker {
       backend_ = context.backend;
     }
     if (backend_ != context.backend) {
-      if (error != nullptr) {
-        *error = "pattern worker was used with two different backends";
-      }
+error = "pattern worker was used with two different backends";
       return Status::kInvalidArgument;
     }
     if (!ensure_staging(context.source_bytes, error)) {
@@ -233,9 +223,7 @@ class PatternWorker final : public FrameWorker {
               static_cast<std::size_t>(index) * context.payload_stride_bytes,
           payload_buffer_, copy_bytes);
       if (!is_ok(status)) {
-        if (error != nullptr) {
-          *error = "pattern payload upload failed";
-        }
+error = "pattern payload upload failed";
         return status;
       }
       const tiles::TileRect& rect =
@@ -245,9 +233,7 @@ class PatternWorker final : public FrameWorker {
           context.device_recon, recon_buffer_, 0, *context.layout, rect,
           context.bit_depth);
       if (!is_ok(recon_status)) {
-        if (error != nullptr) {
-          *error = "pattern reconstruction upload failed";
-        }
+error = "pattern reconstruction upload failed";
         return recon_status;
       }
     }
@@ -268,7 +254,7 @@ class PatternWorker final : public FrameWorker {
   void clear_visits() { visits_.clear(); }
 
  private:
-  bool ensure_staging(std::size_t recon_bytes, std::string* error) {
+  bool ensure_staging(std::size_t recon_bytes, std::string& error) {
     if (recon_bytes > recon_capacity_) {
       if (recon_buffer_ != nullptr) {
         backend_->pinned_free(recon_buffer_);

@@ -51,12 +51,12 @@ struct DipCdfState {
 [[nodiscard]] bool write_dip_mode_info(const SyntaxContext& context,
                          const DipModeInfo& info, av2::Encoder& encoder,
                          DipCdfState& cdfs,
-                         std::string* error = nullptr) noexcept;
+                         std::string& error) noexcept;
 
 // Reads one dip_mode_info() syntax structure.  Missing (not signalled) fields
 // are left at their inferred defaults, exactly as in the syntax pseudocode.
 [[nodiscard]] bool read_dip_mode_info(const SyntaxContext& context, av2::Decoder& decoder,
                         DipCdfState& cdfs, DipModeInfo& info,
-                        std::string* error = nullptr) noexcept;
+                        std::string& error) noexcept;
 
 }  // namespace av2enc::dip

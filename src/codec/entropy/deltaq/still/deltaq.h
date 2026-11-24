@@ -89,13 +89,13 @@ int max_segments(bool enable_ext_seg) noexcept;
 // sequence_segment_config() (seq_seg_info_present_flag = 1) and
 // segmentation_params() (when the frame does not reuse the sequence table).
 [[nodiscard]] bool validate_segment_table(const rc::SegmentationParams& params,
-                            int num_segments, std::string* error = nullptr);
+                            int num_segments, std::string& error);
 void write_segment_table(BitWriter& writer,
                          const rc::SegmentationParams& params,
                          int num_segments);
 [[nodiscard]] bool read_segment_table(BitReader& reader, int num_segments,
                         rc::SegmentationParams& params,
-                        std::string* error = nullptr);
+                        std::string& error);
 
 // Clause 6.17.2 slice index.  The input is the *raw* base_q_idx.
 int coeff_cdf_qctx(int base_q_idx) noexcept;
@@ -207,14 +207,14 @@ struct FrameQpHeader {
 std::size_t write_segmentation_params(BitWriter& writer,
                                       const rc::SegmentationParams& params,
                                       const FrameQpHeader& header,
-                                      std::string* error = nullptr);
+                                      std::string& error);
 
 // Writes delta_q_params() (§5.18.7.8).  `base_q_idx == 0` implies
 // delta_q_present = 0 and codes no bits.
 std::size_t write_delta_q_params(BitWriter& writer,
                                  const rc::DeltaQParams& params,
                                  int base_q_idx,
-                                 std::string* error = nullptr);
+                                 std::string& error);
 
 // Writes the three consecutive frame-header pieces in normative order:
 //   segmentation_params(); setup_qm_params(); delta_q_params()
@@ -226,17 +226,17 @@ std::size_t write_segmentation_and_delta_q(BitWriter& writer,
                                            const rc::DeltaQParams& delta_q,
                                            int base_q_idx,
                                            const FrameQpHeader& header,
-                                           std::string* error = nullptr);
+                                           std::string& error);
 
 [[nodiscard]] bool read_segmentation_params(BitReader& reader,
                               const FrameQpHeader& header,
                               rc::SegmentationParams& params,
-                              std::string* error = nullptr);
+                              std::string& error);
 
 [[nodiscard]] bool read_delta_q_params(BitReader& reader,
                          int base_q_idx,
                          rc::DeltaQParams& params,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 // Reads the three pieces in normative order.  `using_qmatrix` is returned so
 // the caller can reject an unsupported QM payload.
@@ -246,7 +246,7 @@ std::size_t write_segmentation_and_delta_q(BitWriter& writer,
                                    rc::SegmentationParams& seg,
                                    rc::DeltaQParams& delta_q,
                                    bool& using_qmatrix,
-                                   std::string* error = nullptr);
+                                   std::string& error);
 
 // ---------------------------------------------------------------------------
 // Derived frame state (§5.18.7.1, §6.17.2, §7.14.2)
@@ -292,7 +292,7 @@ struct FrameSegmentation {
                                int base_q_idx,
                                const FrameQpHeader& header,
                                FrameSegmentation& out,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 // get_qindex(ignoreDeltaQ, segmentId) §7.14.2 for the states this module
 // supports (no UV/DC deltas).
@@ -303,7 +303,7 @@ struct FrameSegmentation {
                       int segment_id,
                       bool ignore_delta_q,
                       int& qindex,
-                      std::string* error = nullptr);
+                      std::string& error);
 
 // ---------------------------------------------------------------------------
 // Tile-level CurrentQIndex / ReadDeltas state (§5.20.1, §5.20.2.1)
@@ -320,7 +320,7 @@ struct TileQp {
 // CurrentQIndex = base_q_idx at the start of each tile.  Call this once per
 // tile; never carry state across a tile boundary.
 [[nodiscard]] bool begin_tile(TileQp& state, int base_q_idx, const rc::DeltaQParams& delta_q,
-                std::string* error = nullptr);
+                std::string& error);
 
 // ReadDeltas = delta_q_present at the start of each superblock.
 void begin_superblock(TileQp& state) noexcept;
@@ -336,7 +336,7 @@ int reduced_delta_for_target(int current_q_index, int target_q_index,
 
 // Applies one coded reduced delta: Clip3(1, 255, cur + (delta << res)).
 [[nodiscard]] bool apply_reduced_delta(TileQp& state, int reduced_delta,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 // Writes/reads the delta_q_abs symbol (alphabet 8, DELTA_Q_SMALL escape) and
 // the §5.20.5.11 sign/state update.  `cdf` is TileDeltaQCdf (9 entries).
@@ -345,19 +345,19 @@ int reduced_delta_for_target(int current_q_index, int target_q_index,
 // `ReadDeltas = 0` statement after read_delta_qindex().
 [[nodiscard]] bool write_delta_qindex(av2::Encoder& encoder, std::uint16_t cdf[9],
                         TileQp& state, bool mi_size_is_sb, bool skip_flag,
-                        int reduced_delta, std::string* error = nullptr);
+                        int reduced_delta, std::string& error);
 
 [[nodiscard]] bool read_delta_qindex(av2::Decoder& decoder, std::uint16_t cdf[9],
                        TileQp& state, bool mi_size_is_sb, bool skip_flag,
-                       int& reduced_delta, std::string* error = nullptr);
+                       int& reduced_delta, std::string& error);
 
 // Low-level symbol coding, exported for tests and for callers that manage
 // ReadDeltas themselves.  `value` is the signed reduced delta
 // (reducedDeltaQIndex), not the shifted qindex offset.
 [[nodiscard]] bool write_delta_q_abs(av2::Encoder& encoder, std::uint16_t cdf[9], int value,
-                       std::string* error = nullptr);
+                       std::string& error);
 [[nodiscard]] bool read_delta_q_abs(av2::Decoder& decoder, std::uint16_t cdf[9], int& value,
-                      std::string* error = nullptr);
+                      std::string& error);
 
 // ---------------------------------------------------------------------------
 // Segmentation map state (§5.20.5.7/.8, §5.20.7.2/.4)
@@ -386,7 +386,7 @@ struct SegmentGrid {
                        int tile_mi_row_start, int tile_mi_row_end,
                        bool enable_ext_seg, int num_segments,
                        std::span<const std::uint8_t> previous_ids,
-                       std::string* error = nullptr);
+                       std::string& error);
 
 // clear_above_context() / clear_left_context() for the segment-prediction
 // arrays.  Call the first once per tile and the second at each superblock row,
@@ -396,7 +396,7 @@ void clear_left_context(SegmentGrid& grid) noexcept;
 
 // Replaces PrevSegmentIds (for example from the previous frame's map).
 [[nodiscard]] bool set_previous_ids(SegmentGrid& grid, std::span<const std::uint8_t> ids,
-                      std::string* error = nullptr);
+                      std::string& error);
 
 // read_segment_id() neighbour prediction from the *current* frame map.
 int segment_prediction(const SegmentGrid& grid, int mi_row, int mi_col) noexcept;
@@ -421,17 +421,17 @@ struct SegmentBlock {
 
 // Fills SegmentIds for the block after its mode info has been decoded.
 [[nodiscard]] bool commit_segment_block(SegmentGrid& grid, const SegmentBlock& block,
-                          int segment_id, std::string* error = nullptr);
+                          int segment_id, std::string& error);
 
 // intra_segment_id() (§5.20.5.7): used by M1 key frames.
 [[nodiscard]] bool write_intra_segment_id(av2::Encoder& encoder, BlockCdfs& cdfs,
                             const FrameSegmentation& seg, SegmentGrid& grid,
                             const SegmentBlock& block, int segment_id,
-                            bool skip_flag, std::string* error = nullptr);
+                            bool skip_flag, std::string& error);
 [[nodiscard]] bool read_intra_segment_id(av2::Decoder& decoder, BlockCdfs& cdfs,
                            const FrameSegmentation& seg, SegmentGrid& grid,
                            const SegmentBlock& block, bool skip_flag,
-                           int& segment_id, std::string* error = nullptr);
+                           int& segment_id, std::string& error);
 
 // inter_segment_id(preSkip) (§5.20.7.2): used by M2 P frames (also for the
 // intra blocks inside a P frame).  `pre_skip` selects the call before or after
@@ -443,13 +443,13 @@ struct SegmentBlock {
                             const SegmentBlock& block, bool pre_skip,
                             int segment_id, bool skip_flag,
                             bool& coded_symbols,
-                            std::string* error = nullptr);
+                            std::string& error);
 [[nodiscard]] bool read_inter_segment_id(av2::Decoder& decoder, BlockCdfs& cdfs,
                            const FrameSegmentation& seg, SegmentGrid& grid,
                            const SegmentBlock& block, bool pre_skip,
                            bool skip_flag, int& segment_id,
                            bool& coded_symbols,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // ---------------------------------------------------------------------------
 // Rate-control planner integration (src/encoder/rc/)
@@ -466,7 +466,7 @@ struct DeltaQPlanView {
 
 [[nodiscard]] bool make_delta_q_plan_view(const rc::DeltaQPlan& plan, int sb_cols,
                             int sb_rows, DeltaQPlanView& view,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 const rc::DeltaQPlanStep* delta_q_plan_step(const DeltaQPlanView& view, int sb_x,
                                             int sb_y) noexcept;
@@ -474,11 +474,11 @@ const rc::DeltaQPlanStep* delta_q_plan_step(const DeltaQPlanView& view, int sb_x
 // Verifies that the current TileQp state matches the plan step's
 // qindex_before and that applying the step yields qindex_after.
 [[nodiscard]] bool check_plan_step(const TileQp& state, const rc::DeltaQPlanStep& step,
-                     std::string* error = nullptr);
+                     std::string& error);
 
 // Copies an rc::SegmentationMap into PrevSegmentIds (the previous-frame map).
 [[nodiscard]] bool load_segmentation_map(const rc::SegmentationMap& map, SegmentGrid& grid,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // Reports the qindex the encoder must use for a block, given the planner's
 // segment id and the current tile QP state.

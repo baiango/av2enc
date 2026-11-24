@@ -34,28 +34,22 @@ bool search_options_valid(const SearchOptions& options) noexcept {
          options.candidate_sse_margin >= 0.0;
 }
 
-bool validate_search_options(const SearchOptions& options, std::string* error) {
+bool validate_search_options(const SearchOptions& options, std::string& error) {
   if (options.min_block_size_px < partition::kMinBlockPixels) {
-    if (error != nullptr) {
-      *error = "SearchOptions.min_block_size_px must be >= 4";
-    }
+error = "SearchOptions.min_block_size_px must be >= 4";
     return false;
   }
   if (options.max_depth < 0) {
-    if (error != nullptr) *error = "SearchOptions.max_depth must be >= 0";
+    error = "SearchOptions.max_depth must be >= 0";
     return false;
   }
   if (options.max_leaf_probes_per_superblock < 0) {
-    if (error != nullptr) {
-      *error = "SearchOptions.max_leaf_probes_per_superblock must be >= 0";
-    }
+error = "SearchOptions.max_leaf_probes_per_superblock must be >= 0";
     return false;
   }
   if (!std::isfinite(options.candidate_sse_margin) ||
       options.candidate_sse_margin < 0.0) {
-    if (error != nullptr) {
-      *error = "SearchOptions.candidate_sse_margin must be finite and >= 0";
-    }
+error = "SearchOptions.candidate_sse_margin must be finite and >= 0";
     return false;
   }
   return true;
@@ -83,19 +77,19 @@ double default_partition_signal_bits(const NodeInfo& info,
 
 bool describe_node(const partition::FrameGeometry& geometry, int mi_row,
                    int mi_col, BlockSize size, int depth, bool has_chroma,
-                   bool chroma_offset, NodeInfo* out, std::string* error) {
+                   bool chroma_offset, NodeInfo* out, std::string& error) {
   if (out == nullptr) {
-    if (error != nullptr) *error = "describe_node: null output";
+    error = "describe_node: null output";
     return false;
   }
   *out = NodeInfo{};
   if (!partition::is_valid_block_size(size)) {
-    if (error != nullptr) *error = "describe_node: invalid block size";
+    error = "describe_node: invalid block size";
     return false;
   }
   if (mi_row < 0 || mi_col < 0 || mi_row >= partition::mi_rows(geometry) ||
       mi_col >= partition::mi_cols(geometry)) {
-    if (error != nullptr) *error = "describe_node: node origin outside the frame";
+    error = "describe_node: node origin outside the frame";
     return false;
   }
   out->mi_row = mi_row;
@@ -154,9 +148,9 @@ bool policy_allows(const SearchOptions& options, int depth, BlockSize size,
 
 int enumerate_node_children(const partition::FrameGeometry& geometry,
                             const NodeInfo& info, PartitionType partition,
-                            ChildRef slots[4], std::string* error) {
+                            ChildRef slots[4], std::string& error) {
   if (slots == nullptr) {
-    if (error != nullptr) *error = "enumerate_node_children: null slots";
+    error = "enumerate_node_children: null slots";
     return 0;
   }
   if (partition == PartitionType::kNone) {
@@ -165,7 +159,7 @@ int enumerate_node_children(const partition::FrameGeometry& geometry,
   const partition_ext::PartitionType ext_partition =
       partition_ext::from_base(partition);
   if (!partition_ext::is_valid_partition(ext_partition)) {
-    if (error != nullptr) *error = "enumerate_node_children: invalid partition";
+    error = "enumerate_node_children: invalid partition";
     return 0;
   }
   partition_ext::ChildSlot ext_slots[4];
@@ -200,22 +194,20 @@ void NodeDecisionLoop::reset(const NodeInfo& info,
   lambda_ = 0.0;
 }
 
-bool NodeDecisionLoop::add(const CandidateCost& candidate, std::string* error) {
+bool NodeDecisionLoop::add(const CandidateCost& candidate, std::string& error) {
   if (!candidate.valid || !partition_sane(candidate.partition)) {
     ++decision_.rejected_count;
-    if (error != nullptr) *error = "NodeDecisionLoop::add: invalid candidate";
+    error = "NodeDecisionLoop::add: invalid candidate";
     return false;
   }
   if (!cost_terms_valid(candidate.cost.terms)) {
     ++decision_.rejected_count;
-    if (error != nullptr) {
-      *error = "NodeDecisionLoop::add: candidate terms are not finite";
-    }
+error = "NodeDecisionLoop::add: candidate terms are not finite";
     return false;
   }
   if (decision_.candidate_count >= kMaxNodeCandidates) {
     ++decision_.rejected_count;
-    if (error != nullptr) *error = "NodeDecisionLoop::add: too many candidates";
+    error = "NodeDecisionLoop::add: too many candidates";
     return false;
   }
 
@@ -223,9 +215,7 @@ bool NodeDecisionLoop::add(const CandidateCost& candidate, std::string* error) {
                                  options_.rate_aware, candidate.cost.leaves);
   if (!node_cost_valid(cost)) {
     ++decision_.rejected_count;
-    if (error != nullptr) {
-      *error = "NodeDecisionLoop::add: candidate cost is not finite";
-    }
+error = "NodeDecisionLoop::add: candidate cost is not finite";
     return false;
   }
 
@@ -255,7 +245,7 @@ bool NodeDecisionLoop::add(const CandidateCost& candidate, std::string* error) {
 
 bool NodeDecisionLoop::add_terms(PartitionType partition,
                                  const CostTerms& terms, int leaves,
-                                 std::string* error) {
+                                 std::string& error) {
   CandidateCost candidate;
   candidate.partition = partition;
   candidate.cost = make_node_cost(terms, lambda_, options_.rate_aware, leaves);
@@ -266,12 +256,10 @@ bool NodeDecisionLoop::add_terms(PartitionType partition,
 
 bool NodeDecisionLoop::add_partition(PartitionType partition,
                                      std::span<const NodeCost> children,
-                                     std::string* error) {
+                                     std::string& error) {
   if (children.empty() || children.size() > kMaxNodeCandidates) {
     ++decision_.rejected_count;
-    if (error != nullptr) {
-      *error = "NodeDecisionLoop::add_partition: invalid child count";
-    }
+error = "NodeDecisionLoop::add_partition: invalid child count";
     return false;
   }
   CostTerms terms;
@@ -279,9 +267,7 @@ bool NodeDecisionLoop::add_partition(PartitionType partition,
   for (const NodeCost& child : children) {
     if (!node_cost_valid(child)) {
       ++decision_.rejected_count;
-      if (error != nullptr) {
-        *error = "NodeDecisionLoop::add_partition: invalid child cost";
-      }
+error = "NodeDecisionLoop::add_partition: invalid child cost";
       return false;
     }
     terms.distortion_sse += child.terms.distortion_sse;
@@ -294,9 +280,7 @@ bool NodeDecisionLoop::add_partition(PartitionType partition,
   double signal = default_partition_signal_bits(info_, partition);
   if (!std::isfinite(signal)) {
     ++decision_.rejected_count;
-    if (error != nullptr) {
-      *error = "NodeDecisionLoop::add_partition: no signal cost";
-    }
+error = "NodeDecisionLoop::add_partition: no signal cost";
     return false;
   }
   // A spec-forced partition codes no symbol.  NONE at an unforced node codes

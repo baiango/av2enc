@@ -72,28 +72,28 @@ struct GdfDeviceBuffers {
 // happens inside any launcher.
 Status gdf_buffers_init(Arena& arena, const GdfConfig& config,
                         GdfDeviceBuffers* out,
-                        std::size_t* required_bytes = nullptr,
-                        std::string* error = nullptr);
+                        std::size_t* required_bytes,
+                        std::string& error);
 
 // Setup-time host-to-device copies into the persistent buffers.  These are
 // not called by the launchers; a frame loop does one copy per frame at most.
 Status gdf_upload_jobs(const GdfDeviceBuffers& buffers,
                        const GdfUnitJob* host_jobs, int job_count,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
 
 Status gdf_upload_use_gdf(const GdfDeviceBuffers& buffers,
                           const std::uint8_t* host_use_gdf, int unit_count,
-                          cudaStream_t stream = nullptr,
-                          std::string* error = nullptr);
+                          cudaStream_t stream,
+                          std::string& error);
 
 // §7.20.1 derivation for a batch of descriptions.  `d_params` is device memory
 // (an array of descriptors, each with device pointers to its two ref arrays)
 // and `d_out` receives one GdfTableIndices per entry.  One thread per entry.
 Status gdf_derive_indices(const GdfIndexParams* d_params,
                           GdfTableIndices* d_out, int count,
-                          cudaStream_t stream = nullptr,
-                          std::string* error = nullptr);
+                          cudaStream_t stream,
+                          std::string& error);
 
 // Filter a batch of units.  `d_jobs` must be device memory; each job's
 // width/height must be even and at most `max_unit_size` (32/64/128, or any
@@ -108,8 +108,8 @@ Status gdf_derive_indices(const GdfIndexParams* d_params,
 Status gdf_apply_units(const GdfFrameSource& src, const GdfUnitJob* d_jobs,
                        int job_count, int max_unit_size,
                        const GdfTables& tables,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
 
 // §5.18.7.9 unit-grid path: derive the unit geometry, split every enabled
 // GdfBlks unit into its §7.20.2 64-line stripe regions, derive the §7.20.1
@@ -120,8 +120,8 @@ Status gdf_apply_units(const GdfFrameSource& src, const GdfUnitJob* d_jobs,
 // gdf_grid_slots(cols, rows) job slots.
 Status gdf_apply_grid(const GdfFrameGrid& frame,
                       const GdfDeviceBuffers& buffers,
-                      cudaStream_t stream = nullptr,
-                      std::string* error = nullptr);
+                      cudaStream_t stream,
+                      std::string& error);
 
 }  // namespace av2enc::cuda::gdf
 

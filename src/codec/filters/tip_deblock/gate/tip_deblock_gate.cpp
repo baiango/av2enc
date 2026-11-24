@@ -186,15 +186,15 @@ struct Y4mFrame {
 };
 
 bool read_y4m(const std::string& path, std::vector<Y4mFrame>* frames,
-              std::string* error) {
+              std::string& error) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
-    *error = "cannot open " + path;
+    error = "cannot open " + path;
     return false;
   }
   std::string line;
   if (!std::getline(in, line) || line.rfind("YUV4MPEG2", 0) != 0) {
-    *error = "not a Y4M file: " + path;
+    error = "not a Y4M file: " + path;
     return false;
   }
   int width = 0;
@@ -213,7 +213,7 @@ bool read_y4m(const std::string& path, std::vector<Y4mFrame>* frames,
     }
   }
   if (width <= 0 || height <= 0 || !c420) {
-    *error = "only 8-bit 4:2:0 Y4M is supported";
+    error = "only 8-bit 4:2:0 Y4M is supported";
     return false;
   }
   const int cw = width / 2;
@@ -236,13 +236,13 @@ bool read_y4m(const std::string& path, std::vector<Y4mFrame>* frames,
     in.read(reinterpret_cast<char*>(frame.v.data()),
             static_cast<std::streamsize>(frame.v.size()));
     if (!in) {
-      *error = "truncated frame in " + path;
+      error = "truncated frame in " + path;
       return false;
     }
     frames->push_back(std::move(frame));
   }
   if (frames->empty()) {
-    *error = "no frames in " + path;
+    error = "no frames in " + path;
     return false;
   }
   return true;
@@ -264,16 +264,16 @@ std::uint64_t leb128(const std::vector<std::uint8_t>& data, std::size_t* pos) {
 
 // Counts TIP OBUs (OBU_LEADING_TIP = 13, OBU_REGULAR_TIP = 14) in an IVF.
 bool count_tip_obus(const std::string& path, int* tip_obus, int* units,
-                    std::string* error) {
+                    std::string& error) {
   std::ifstream in(path, std::ios::binary);
   if (!in) {
-    *error = "cannot open " + path;
+    error = "cannot open " + path;
     return false;
   }
   char header[32] = {};
   in.read(header, 32);
   if (!in || std::memcmp(header, "DKIF", 4) != 0) {
-    *error = "not an IVF file: " + path;
+    error = "not an IVF file: " + path;
     return false;
   }
   *tip_obus = 0;
@@ -289,7 +289,7 @@ bool count_tip_obus(const std::string& path, int* tip_obus, int* units,
     in.read(reinterpret_cast<char*>(payload.data()),
             static_cast<std::streamsize>(size));
     if (!in) {
-      *error = "truncated IVF unit";
+      error = "truncated IVF unit";
       return false;
     }
     ++*units;

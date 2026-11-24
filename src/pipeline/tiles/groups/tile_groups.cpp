@@ -11,8 +11,8 @@ namespace {
 
 constexpr std::uint32_t kMinTileBytes = 2;  // init_symbol() reads 15 bits
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -80,7 +80,7 @@ class PayloadBitReader {
   }
 
   // §5.19 byte_alignment(): zero bits until the next byte boundary.
-  bool align_to_byte_zero(std::string* error) {
+  bool align_to_byte_zero(std::string& error) {
     while ((bit_pos_ & 7U) != 0U) {
       bool bit = false;
       if (!get_bit(&bit)) {
@@ -113,7 +113,7 @@ std::uint32_t read_le(std::span<const std::uint8_t> payload,
 }
 
 bool validate_span(const TileGroupGeometry& geometry,
-                   const TileGroupSpan& span, std::string* error) {
+                   const TileGroupSpan& span, std::string& error) {
   if (span.tg_start < 0 || span.tg_end < 0) {
     return fail(error, "tile group has a negative tg_start/tg_end");
   }
@@ -146,7 +146,7 @@ bool validate_span(const TileGroupGeometry& geometry,
 }
 
 bool validate_payload_size(std::uint32_t size, int tile_size_bytes,
-                           bool require_capacity, std::string* error) {
+                           bool require_capacity, std::string& error) {
   if (size < kMinTileBytes) {
     return fail(error, "every tile payload must be at least 2 bytes");
   }
@@ -166,7 +166,7 @@ bool validate_payload_size(std::uint32_t size, int tile_size_bytes,
 
 bool capture_frame_header_bits(std::span<const std::uint8_t> bytes,
                                std::size_t bit_count, FrameHeaderBits* out,
-                               std::string* error) {
+                               std::string& error) {
   if (out == nullptr) return fail(error, "null frame header output");
   const std::size_t needed = (bit_count + 7U) / 8U;
   if (bit_count == 0) {
@@ -211,7 +211,7 @@ TileGroupGeometry geometry_from_layout(const tiles::TileLayout& layout,
 }
 
 bool validate_tile_group_geometry(const TileGroupGeometry& geometry,
-                                  std::string* error) {
+                                  std::string& error) {
   if (geometry.num_tiles < 1) {
     return fail(error, "NumTiles must be at least 1");
   }
@@ -251,7 +251,7 @@ bool plan_contiguous_tile_groups(const TileGroupGeometry& geometry,
                                  bool copy_frame_header,
                                  bool bru_active_default,
                                  std::vector<TileGroupSpan>* groups,
-                                 std::string* error) {
+                                 std::string& error) {
   if (groups == nullptr) return fail(error, "null tile group output");
   if (!validate_tile_group_geometry(geometry, error)) return false;
   if (tiles_per_group.empty()) {
@@ -296,7 +296,7 @@ bool plan_contiguous_tile_groups(const TileGroupGeometry& geometry,
 }
 
 bool validate_frame_tile_groups(const FrameTileGroupPlan& plan,
-                                std::string* error) {
+                                std::string& error) {
   if (!validate_tile_group_geometry(plan.geometry, error)) return false;
   if (plan.groups.empty()) {
     return fail(error, "a frame needs at least one tile group");
@@ -329,7 +329,7 @@ bool validate_frame_tile_groups(const FrameTileGroupPlan& plan,
   for (std::size_t i = 0; i < plan.groups.size(); ++i) {
     const TileGroupSpan& span = plan.groups[i];
     if (!validate_span(plan.geometry, span, error)) {
-      if (error != nullptr) *error = group_label(i) + ": " + *error;
+      error = group_label(i) + ": " + *error;
       return false;
     }
     if (span.tg_start != expected) {
@@ -365,7 +365,7 @@ bool write_tile_group(const TileGroupGeometry& geometry,
                       const FrameHeaderBits& frame_header,
                       const TileGroupWriteParams& params,
                       std::span<const std::vector<std::uint8_t>> tile_payloads,
-                      std::vector<std::uint8_t>* out, std::string* error) {
+                      std::vector<std::uint8_t>* out, std::string& error) {
   if (out == nullptr) return fail(error, "null tile group output");
   if (!validate_tile_group_geometry(geometry, error)) return false;
 
@@ -430,7 +430,7 @@ bool write_tile_group(const TileGroupGeometry& geometry,
                                /*require_capacity=*/tile != params.span.tg_end,
                                error)) {
       std::ostringstream text;
-      text << "tile " << tile << ": " << (error != nullptr ? *error : "");
+      text << "tile " << tile << ": " << error;
       return fail(error, text.str());
     }
     if (tile != params.span.tg_end) {
@@ -450,7 +450,7 @@ bool write_tile_group(const TileGroupGeometry& geometry,
 bool write_frame_tile_groups(
     const FrameTileGroupPlan& plan,
     std::span<const std::vector<std::uint8_t>> tile_payloads,
-    std::vector<std::vector<std::uint8_t>>* out, std::string* error) {
+    std::vector<std::vector<std::uint8_t>>* out, std::string& error) {
   if (out == nullptr) return fail(error, "null tile group output");
   if (!validate_frame_tile_groups(plan, error)) return false;
 
@@ -464,7 +464,7 @@ bool write_frame_tile_groups(
     std::vector<std::uint8_t> payload;
     if (!write_tile_group(plan.geometry, plan.frame_header, params,
                           tile_payloads, &payload, error)) {
-      if (error != nullptr) *error = group_label(i) + ": " + *error;
+      error = group_label(i) + ": " + *error;
       return false;
     }
     result.push_back(std::move(payload));
@@ -476,7 +476,7 @@ bool write_frame_tile_groups(
 bool read_tile_group(std::span<const std::uint8_t> payload,
                      const TileGroupGeometry& geometry,
                      std::size_t num_frame_header_bits, ParsedTileGroup* out,
-                     std::string* error) {
+                     std::string& error) {
   if (out == nullptr) return fail(error, "null parsed tile group");
   if (!validate_tile_group_geometry(geometry, error)) return false;
   if (payload.empty()) return fail(error, "empty tile group OBU payload");
@@ -632,7 +632,7 @@ bool read_tile_group(std::span<const std::uint8_t> payload,
 bool read_tile_group_sequence(
     std::span<const std::vector<std::uint8_t>> payloads,
     const TileGroupGeometry& geometry, std::size_t num_frame_header_bits,
-    TileGroupSequence* out, std::string* error) {
+    TileGroupSequence* out, std::string& error) {
   if (out == nullptr) return fail(error, "null tile group sequence output");
   if (!validate_tile_group_geometry(geometry, error)) return false;
   if (payloads.empty()) return fail(error, "a frame has no tile group OBUs");
@@ -654,7 +654,7 @@ bool read_tile_group_sequence(
     ParsedTileGroup parsed;
     if (!read_tile_group(payloads[i], geometry, num_frame_header_bits, &parsed,
                          error)) {
-      if (error != nullptr) *error = group_label(i) + ": " + *error;
+      error = group_label(i) + ": " + *error;
       return false;
     }
     if (geometry.bru_inactive && !parsed.bru_inactive) {

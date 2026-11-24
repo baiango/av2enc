@@ -33,10 +33,10 @@ namespace {
 bool WriteY4m(const fs::path& path, int width, int height,
               const std::vector<std::uint8_t>& y,
               const std::vector<std::uint8_t>& u,
-              const std::vector<std::uint8_t>& v, std::string* error) {
+              const std::vector<std::uint8_t>& v, std::string& error) {
   std::ofstream out(path, std::ios::binary);
   if (!out) {
-    *error = "cannot open " + path.string();
+    error = "cannot open " + path.string();
     return false;
   }
   out << "YUV4MPEG2 W" << width << " H" << height
@@ -48,7 +48,7 @@ bool WriteY4m(const fs::path& path, int width, int height,
   out.write(reinterpret_cast<const char*>(v.data()),
             static_cast<std::streamsize>(v.size()));
   if (!out) {
-    *error = "write failed for " + path.string();
+    error = "write failed for " + path.string();
     return false;
   }
   return true;

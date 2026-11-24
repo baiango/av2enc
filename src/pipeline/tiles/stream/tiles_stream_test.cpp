@@ -188,7 +188,7 @@ void test_tile_info() {
 }
 
 void test_tile_size_selection() {
-  const auto select = [](std::initializer_list<std::uint32_t> sizes, std::string* error) {
+  const auto select = [](std::initializer_list<std::uint32_t> sizes, std::string& error) {
     const std::vector<std::uint32_t> values(sizes);
     return av2enc::still::tiles_stream::select_tile_size_bytes(values, error);
   };

@@ -74,18 +74,18 @@ struct ParsedObu {
 };
 
 [[nodiscard]] bool write_obu_header(const ObuHeader& header, std::vector<std::uint8_t>* out,
-                      std::string* error);
+                      std::string& error);
 [[nodiscard]] bool read_obu_header(std::span<const std::uint8_t> bytes, ObuHeader* header,
-                     std::size_t* consumed, std::string* error);
+                     std::size_t* consumed, std::string& error);
 
 // leb128(obu size) | obu_header() | payload  (§5.2.1, Annex B.2).
 [[nodiscard]] bool frame_obu(const ObuHeader& header, std::span<const std::uint8_t> payload,
-               std::vector<std::uint8_t>* out, std::string* error);
+               std::vector<std::uint8_t>* out, std::string& error);
 
 // Parses a whole length-delimited OBU sequence.  Fails on a truncated leb128,
 // a zero length, an OBU that overruns the input, or a truncated extension byte.
 [[nodiscard]] bool parse_obu_sequence(std::span<const std::uint8_t> bytes,
-                        std::vector<ParsedObu>* obus, std::string* error);
+                        std::vector<ParsedObu>* obus, std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.13 quantizer_matrix_obu() payload
@@ -111,27 +111,27 @@ struct QuantizerMatrixObu {
 // BitWriter; the function appends and byte-aligns.
 [[nodiscard]] bool write_quantizer_matrix_payload(BitWriter& writer,
                                     const QuantizerMatrixObu& obu,
-                                    std::string* error);
+                                    std::string& error);
 
 // Parses one complete payload (exactly the bytes after the OBU header).
 // Enforces the trailing-bit syntax, the svlc() range, and the §6.4.11
 // "no UserQm entry is zero" requirement.
 [[nodiscard]] bool read_quantizer_matrix_payload(std::span<const std::uint8_t> payload,
                                    QuantizerMatrixObu* obu,
-                                   std::string* error);
+                                   std::string& error);
 
 // Complete Annex B.2 OBU for the given layer ids.
 [[nodiscard]] bool make_quantizer_matrix_obu(const QuantizerMatrixObu& obu,
                                const ObuHeader* header,
                                std::vector<std::uint8_t>* out,
-                               std::string* error);
+                               std::string& error);
 
 // Convenience: one level, user-defined matrix.  Fills `out` with the complete
 // OBU.  `value` must be non-zero (a constant matrix, 32 == identity).
 [[nodiscard]] bool make_constant_user_qm_obu(int level, std::uint8_t value,
                                bool chroma_info_present,
                                std::vector<std::uint8_t>* out,
-                               std::string* error);
+                               std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.18.6.2 setup_qm_params() frame-header fields
@@ -154,7 +154,7 @@ struct FrameQm {
 // `segmentation_enabled` controls whether pic_qm_num_minus_1 is coded.
 [[nodiscard]] bool write_frame_qm_params(BitWriter& writer, const FrameQm& qm,
                            int num_planes, bool segmentation_enabled,
-                           std::string* error);
+                           std::string& error);
 
 // Reads the same fields from `bytes` starting at bit 0.  `separate_uv_delta_q`
 // comes from the surrounding quantizer_params() syntax, which precedes
@@ -163,7 +163,7 @@ struct FrameQm {
 [[nodiscard]] bool read_frame_qm_params(std::span<const std::uint8_t> bytes, int num_planes,
                           bool segmentation_enabled, bool separate_uv_delta_q,
                           FrameQm* qm, std::size_t* bits_consumed,
-                          std::string* error);
+                          std::string& error);
 
 // Bits that write_frame_qm_params() emits for `qm`; useful for sizing a splice.
 std::size_t frame_qm_params_bits(const FrameQm& qm, int num_planes,
@@ -220,11 +220,11 @@ class QmState {
   // On success updates QmSeen/QmProtected/QmNumPlanes/QmMLayerId/QmTLayerId/
   // QmDataPresent exactly as §5.13 specifies.
   bool apply_obu(const ObuHeader& header, const QuantizerMatrixObu& obu,
-                 std::string* error);
+                 std::string& error);
 
   // Parses one Annex B QM OBU (header + payload) and applies it.
   bool apply_obu_bytes(std::span<const std::uint8_t> bytes,
-                       std::string* error);
+                       std::string& error);
 
   const QmLevelState& level(int level) const;
   bool data_present(int level) const;

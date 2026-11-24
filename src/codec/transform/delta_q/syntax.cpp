@@ -6,8 +6,8 @@
 namespace av2enc::dcdeltaq {
 namespace {
 
-void set_error(std::string* error, const char* what) {
-  if (error != nullptr) *error = what;
+void set_error(std::string& error, const char* what) {
+  error = what;
 }
 
 bool in_range(int value, int lo, int hi) {
@@ -16,7 +16,7 @@ bool in_range(int value, int lo, int hi) {
 
 int base_delta_raw(int value) { return value - kDeltaDcQuantMin; }
 
-bool read_bit(deltaq::BitReader& reader, bool& value, std::string* error,
+bool read_bit(deltaq::BitReader& reader, bool& value, std::string& error,
               const char* what) {
   if (!reader.read_bit(value)) {
     set_error(error, what);
@@ -26,7 +26,7 @@ bool read_bit(deltaq::BitReader& reader, bool& value, std::string* error,
 }
 
 bool read_bits(deltaq::BitReader& reader, unsigned n, std::uint32_t& value,
-               std::string* error, const char* what) {
+               std::string& error, const char* what) {
   if (!reader.read_bits(n, value)) {
     set_error(error, what);
     return false;
@@ -54,7 +54,7 @@ SequenceDeltaQ normalized_sequence_delta_q(const SequenceDeltaQ& seq) {
   return out;
 }
 
-bool validate_sequence_delta_q(const SequenceDeltaQ& seq, std::string* error) {
+bool validate_sequence_delta_q(const SequenceDeltaQ& seq, std::string& error) {
   if (!in_range(seq.base_y_dc_delta_q, kDeltaDcQuantMin, kDeltaDcQuantMax) ||
       !in_range(seq.base_uv_dc_delta_q, kDeltaDcQuantMin, kDeltaDcQuantMax) ||
       !in_range(seq.base_uv_ac_delta_q, kDeltaDcQuantMin, kDeltaDcQuantMax)) {
@@ -88,7 +88,7 @@ bool validate_sequence_delta_q(const SequenceDeltaQ& seq, std::string* error) {
 }
 
 bool validate_frame_delta_q(const SequenceDeltaQ& seq_in,
-                            const FrameDeltaQ& frame, std::string* error) {
+                            const FrameDeltaQ& frame, std::string& error) {
   const SequenceDeltaQ seq = normalized_sequence_delta_q(seq_in);
   const int values[5] = {frame.delta_q_y_dc, frame.delta_q_u_dc,
                          frame.delta_q_v_dc, frame.delta_q_u_ac,
@@ -140,7 +140,7 @@ bool validate_frame_delta_q(const SequenceDeltaQ& seq_in,
 // read_delta_q() (§5.18.6.3)
 // ---------------------------------------------------------------------------
 
-std::size_t write_delta_q(BitWriter& writer, int value, std::string* error) {
+std::size_t write_delta_q(BitWriter& writer, int value, std::string& error) {
   if (!in_range(value, kFrameDeltaMin, kFrameDeltaMax)) {
     set_error(error, "delta_q outside su(7) range [-64, 63]");
     return 0;
@@ -156,7 +156,7 @@ std::size_t write_delta_q(BitWriter& writer, int value, std::string* error) {
 }
 
 bool read_delta_q(deltaq::BitReader& reader, int& value, bool* coded,
-                  std::string* error) {
+                  std::string& error) {
   bool delta_coded = false;
   if (!read_bit(reader, delta_coded, error, "read_delta_q: delta_coded")) {
     return false;
@@ -181,7 +181,7 @@ bool read_delta_q(deltaq::BitReader& reader, int& value, bool* coded,
 
 std::size_t write_sequence_delta_q_fields(BitWriter& writer,
                                           const SequenceDeltaQ& seq_in,
-                                          std::string* error) {
+                                          std::string& error) {
   if (!validate_sequence_delta_q(seq_in, error)) return 0;
   const SequenceDeltaQ seq = normalized_sequence_delta_q(seq_in);
   const std::size_t start = writer.bit_size();
@@ -213,7 +213,7 @@ std::size_t write_sequence_delta_q_fields(BitWriter& writer,
 }
 
 bool read_sequence_delta_q_fields(deltaq::BitReader& reader, bool monochrome,
-                                  SequenceDeltaQ& seq, std::string* error) {
+                                  SequenceDeltaQ& seq, std::string& error) {
   seq = SequenceDeltaQ{};
   seq.monochrome = monochrome;
   bool flag = false;
@@ -272,7 +272,7 @@ bool read_sequence_delta_q_fields(deltaq::BitReader& reader, bool monochrome,
 
 std::size_t write_sequence_transform_quant_entropy_config(
     BitWriter& writer, const SeqTransformQuantEntropyConfig& config,
-    const SequenceDeltaQ& seq, std::string* error) {
+    const SequenceDeltaQ& seq, std::string& error) {
   if (seq.monochrome != config.monochrome) {
     set_error(error, "sequence delta-Q monochrome mismatch");
     return 0;
@@ -315,7 +315,7 @@ std::size_t write_sequence_transform_quant_entropy_config(
 
 bool read_sequence_transform_quant_entropy_config(
     deltaq::BitReader& reader, SeqTransformQuantEntropyConfig& config,
-    SequenceDeltaQ& seq, std::string* error) {
+    SequenceDeltaQ& seq, std::string& error) {
   bool flag = false;
   if (!read_bit(reader, flag, error, "sequence_config: enable_fsc")) {
     return false;
@@ -418,7 +418,7 @@ bool read_sequence_transform_quant_entropy_config(
 std::size_t write_quantization_params(BitWriter& writer, int base_q_idx,
                                       const SequenceDeltaQ& seq_in,
                                       const FrameDeltaQ& frame,
-                                      std::string* error) {
+                                      std::string& error) {
   if (!validate_sequence_delta_q(seq_in, error)) return 0;
   const SequenceDeltaQ seq = normalized_sequence_delta_q(seq_in);
   if (!in_range(base_q_idx, 0, kMaxQ)) {
@@ -467,14 +467,14 @@ std::size_t write_quantization_params(BitWriter& writer, int base_q_idx,
 std::size_t write_disabled_quantization_params(BitWriter& writer,
                                                int base_q_idx,
                                                const SequenceDeltaQ& seq,
-                                               std::string* error) {
+                                               std::string& error) {
   return write_quantization_params(writer, base_q_idx, seq, FrameDeltaQ{},
                                    error);
 }
 
 bool read_quantization_params(deltaq::BitReader& reader,
                               const SequenceDeltaQ& seq_in, int bit_depth,
-                              QuantizationParams& out, std::string* error) {
+                              QuantizationParams& out, std::string& error) {
   if (bit_depth != 8 && bit_depth != 9) {
     set_error(error, "quantization_params: only 8/9-bit qindex is defined");
     return false;

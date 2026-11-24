@@ -16,8 +16,8 @@
 namespace av2enc::still::filters_stream {
 namespace {
 
-bool fail(std::string* error, const std::string& message) {
-  if (error != nullptr) *error = message;
+bool fail(std::string& error, const std::string& message) {
+  error = message;
   return false;
 }
 
@@ -87,7 +87,7 @@ int unsigned_subexp_with_ref_value(int mx, int r, int /*k*/, int v) {
 
 // §5.18.9.5 decode_subexp() inverse.  Writes the raw bit sequence.
 bool encode_subexp(BitWriter& writer, int num_syms, int k, int value,
-                   std::string* error) {
+                   std::string& error) {
   if (num_syms <= 0 || value < 0 || value >= num_syms) {
     return fail(error, "subexp value out of range");
   }
@@ -123,7 +123,7 @@ bool encode_subexp(BitWriter& writer, int num_syms, int k, int value,
 
 // §5.18.9.5 decode_subexp().
 bool decode_subexp(BitReader& reader, int num_syms, int k, int* value,
-                   std::string* error) {
+                   std::string& error) {
   if (value == nullptr || num_syms <= 0) {
     return fail(error, "invalid subexp argument");
   }
@@ -165,7 +165,7 @@ bool decode_subexp(BitReader& reader, int num_syms, int k, int* value,
 // §5.18.9.3 decode_signed_subexp_with_ref(), inverse.
 bool encode_signed_subexp_with_ref(BitWriter& writer, int low, int high,
                                    int r, int k, int target,
-                                   std::string* error) {
+                                   std::string& error) {
   if (high <= low || target < low || target >= high) {
     return fail(error, "signed subexp target out of range");
   }
@@ -182,7 +182,7 @@ bool encode_signed_subexp_with_ref(BitWriter& writer, int low, int high,
 
 bool decode_signed_subexp_with_ref(BitReader& reader, int low, int high,
                                    int r, int k, int* target,
-                                   std::string* error) {
+                                   std::string& error) {
   if (target == nullptr || high <= low) {
     return fail(error, "invalid signed subexp argument");
   }
@@ -221,7 +221,7 @@ int unsigned_4part_value(int k, int r, int v) {
 
 bool encode_signed_4part(std::uint16_t* base_cdf, int low, int k, int r,
                          int target, av2::Encoder& encoder,
-                         std::string* error) {
+                         std::string& error) {
   const int r_off = r - low;
   const int x_off = target - low;
   FourPartCode found;
@@ -258,7 +258,7 @@ bool encode_signed_4part(std::uint16_t* base_cdf, int low, int k, int r,
 
 bool decode_signed_4part(std::uint16_t* base_cdf, int low, int k, int r,
                          av2::Decoder& decoder, int* target,
-                         std::string* error) {
+                         std::string& error) {
   int base = 0;
   av2::Status status = decoder.decode_symbol(base_cdf, 4, &base);
   if (status != av2::Status::kOk) {
@@ -282,7 +282,7 @@ bool decode_signed_4part(std::uint16_t* base_cdf, int low, int k, int r,
   return true;
 }
 
-bool raw_bit(av2::Encoder& encoder, bool bit, std::string* error) {
+bool raw_bit(av2::Encoder& encoder, bool bit, std::string& error) {
   const av2::Status status = encoder.encode_bool(bit);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("raw bit encode failed: ") +
@@ -291,7 +291,7 @@ bool raw_bit(av2::Encoder& encoder, bool bit, std::string* error) {
   return true;
 }
 
-bool raw_bit(av2::Decoder& decoder, bool* bit, std::string* error) {
+bool raw_bit(av2::Decoder& decoder, bool* bit, std::string& error) {
   const av2::Status status = decoder.read_bool(bit);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("raw bit decode failed: ") +
@@ -313,7 +313,7 @@ constexpr int kRestoreSwitchableTypes = kRestoreSwitchable;  // §3 constant
 std::size_t write_sequence_filter_config(BitWriter& writer,
                                          const SequenceFilterConfig& config,
                                          bool single_picture_header_flag,
-                                         std::string* error) {
+                                         std::string& error) {
   if (!single_picture_header_flag && config.cdef_on_skip_txfm_always_on &&
       config.cdef_on_skip_txfm_disabled) {
     fail(error, "invalid cdef_on_skip_txfm flags");
@@ -356,7 +356,7 @@ bool read_sequence_filter_config(BitReader& reader,
                                  bool single_picture_header_flag,
                                  bool sb_64x64,
                                  SequenceFilterConfig* config,
-                                 std::string* error) {
+                                 std::string& error) {
   if (config == nullptr) return fail(error, "null SequenceFilterConfig");
   bool bit = false;
   if (!reader.read_bit(&bit)) return fail(error, "truncated sequence filter");
@@ -427,7 +427,7 @@ bool read_sequence_filter_config(BitReader& reader,
 
 std::size_t write_cdef_params(BitWriter& writer, const CdefParams& params,
                               const CdefHeaderContext& context,
-                              std::string* error) {
+                              std::string& error) {
   if (context.coded_lossless || !context.enable_cdef) return 0;
   if (params.damping_minus_3 < 0 || params.damping_minus_3 > 3) {
     fail(error, "cdef damping outside 3..6");
@@ -489,7 +489,7 @@ std::size_t write_cdef_params(BitWriter& writer, const CdefParams& params,
 }
 
 bool read_cdef_params(BitReader& reader, const CdefHeaderContext& context,
-                      CdefParams* params, std::string* error) {
+                      CdefParams* params, std::string& error) {
   if (params == nullptr) return fail(error, "null CdefParams");
   *params = CdefParams{};
   if (context.coded_lossless || !context.enable_cdef) {
@@ -555,7 +555,7 @@ bool read_cdef_params(BitReader& reader, const CdefHeaderContext& context,
 // ===========================================================================
 
 bool cdef_tile_init(CdefTileState* state, int mi_cols, int mi_rows,
-                    int strengths, int sb_width_log2, std::string* error) {
+                    int strengths, int sb_width_log2, std::string& error) {
   if (state == nullptr || mi_cols <= 0 || mi_rows <= 0) {
     return fail(error, "invalid CDEF tile geometry");
   }
@@ -587,14 +587,14 @@ void cdef_clear_superblock(CdefTileState* state, int mi_row, int mi_col) {
 
 bool cdef_write_block(av2::Encoder& encoder, CdefTileState& state,
                       int tile_mi_col_start, int tile_mi_row_start,
-                      int mi_row, int mi_col, int idx, std::string* error) {
+                      int mi_row, int mi_col, int idx, std::string& error) {
   av2enc::cuda::still::CdefIndexCdfs cdfs;
   cdfs.index0 = &state.index0[0][0];
   cdfs.minus1 = state.minus1;
   const bool ok = av2enc::cuda::still::cdef_encode_block_index(
       &state.grid, state.strengths, state.sb_width_log2, tile_mi_col_start,
       tile_mi_row_start, mi_row, mi_col, idx, cdfs,
-      [&encoder, error](std::uint16_t* cdf, int n, int symbol) {
+      [&encoder, &error](std::uint16_t* cdf, int n, int symbol) {
         const av2::Status status = encoder.encode_symbol(cdf, n, symbol);
         if (status != av2::Status::kOk) {
           fail(error, std::string("cdef symbol encode failed: ") +
@@ -613,14 +613,14 @@ bool cdef_write_block(av2::Encoder& encoder, CdefTileState& state,
 
 bool cdef_read_block(av2::Decoder& decoder, CdefTileState& state,
                      int tile_mi_col_start, int tile_mi_row_start,
-                     int mi_row, int mi_col, int* idx, std::string* error) {
+                     int mi_row, int mi_col, int* idx, std::string& error) {
   av2enc::cuda::still::CdefIndexCdfs cdfs;
   cdfs.index0 = &state.index0[0][0];
   cdfs.minus1 = state.minus1;
   const bool ok = av2enc::cuda::still::cdef_decode_block_index(
       &state.grid, state.strengths, state.sb_width_log2, tile_mi_col_start,
       tile_mi_row_start, mi_row, mi_col, cdfs,
-      [&decoder, error](std::uint16_t* cdf, int n) {
+      [&decoder, &error](std::uint16_t* cdf, int n) {
         int symbol = 0;
         const av2::Status status = decoder.decode_symbol(cdf, n, &symbol);
         if (status != av2::Status::kOk) {
@@ -651,7 +651,7 @@ int ccso_offset_count(const CcsoPlaneParams& params) {
 }
 
 bool ccso_fill_offsets(const CcsoPlaneParams& params,
-                       restoration::CcsoParams* out, std::string* error) {
+                       restoration::CcsoParams* out, std::string& error) {
   if (out == nullptr) return fail(error, "null CcsoParams");
   if (!params.enabled) {
     for (int i = 0; i < restoration::kCcsoOffsetEntries; ++i) {
@@ -711,7 +711,7 @@ int derive_ccso_luma_size_log2(const CcsoHeaderContext& context) {
   return 6;
 }
 
-bool validate_ccso_plane(const CcsoPlaneParams& p, std::string* error) {
+bool validate_ccso_plane(const CcsoPlaneParams& p, std::string& error) {
   if (!p.enabled) return true;
   if (p.scale_idx < 0 || p.scale_idx > 3 || p.quant_idx < 0 ||
       p.quant_idx > 3 || p.ext_filter < 0 || p.ext_filter > 6 ||
@@ -751,7 +751,7 @@ bool validate_ccso_plane(const CcsoPlaneParams& p, std::string* error) {
 
 std::size_t write_ccso_params(BitWriter& writer, CcsoParams& params,
                               const CcsoHeaderContext& context,
-                              std::string* error, CcsoHeaderBits* bits) {
+                              std::string& error, CcsoHeaderBits* bits) {
   if (bits != nullptr) *bits = CcsoHeaderBits{};
   if (context.coded_lossless || !context.enable_ccso) {
     params.frame_flag = false;
@@ -843,7 +843,7 @@ std::size_t write_ccso_params(BitWriter& writer, CcsoParams& params,
 }
 
 bool read_ccso_params(BitReader& reader, const CcsoHeaderContext& context,
-                      CcsoParams* params, std::string* error) {
+                      CcsoParams* params, std::string& error) {
   if (params == nullptr) return fail(error, "null CcsoParams");
   *params = CcsoParams{};
   params->ccso_luma_size_log2 = derive_ccso_luma_size_log2(context);
@@ -943,7 +943,7 @@ bool read_ccso_params(BitReader& reader, const CcsoHeaderContext& context,
 
 bool ccso_tile_init(CcsoTileState* state, const CcsoParams& params,
                     int mi_cols, int mi_rows, int sub_x, int sub_y,
-                    std::string* error) {
+                    std::string& error) {
   if (state == nullptr || mi_cols <= 0 || mi_rows <= 0) {
     return fail(error, "invalid CCSO tile geometry");
   }
@@ -1012,7 +1012,7 @@ int ccso_block_context(const CcsoTileState& state, int plane, int mi_row,
 }  // namespace
 
 bool ccso_write_block(av2::Encoder& encoder, CcsoTileState& state, int mi_row,
-                      int mi_col, const int blk[3], std::string* error) {
+                      int mi_col, const int blk[3], std::string& error) {
   if (!state.params.frame_flag) return true;
   int shift_row = 0;
   int shift_col = 0;
@@ -1049,7 +1049,7 @@ bool ccso_write_block(av2::Encoder& encoder, CcsoTileState& state, int mi_row,
 }
 
 bool ccso_read_block(av2::Decoder& decoder, CcsoTileState& state, int mi_row,
-                     int mi_col, int blk[3], std::string* error) {
+                     int mi_col, int blk[3], std::string& error) {
   for (int plane = 0; plane < 3; ++plane) {
     if (blk != nullptr) blk[plane] = 0;
   }
@@ -1112,7 +1112,7 @@ int lr_unit_size_chroma(const LrParams& params, int sub_x, int sub_y) {
 
 // Writes one lr_luma_use_* / lr_chroma_use_* flag group for a 64x64 SB.
 bool write_lr_size_flags(BitWriter& writer, int shift, int sb_size,
-                         bool luma, std::string* error) {
+                         bool luma, std::string& error) {
   if (shift < 0 || shift > 3) {
     return fail(error, "LoopRestorationSize shift outside 0..3");
   }
@@ -1140,7 +1140,7 @@ bool write_lr_size_flags(BitWriter& writer, int shift, int sb_size,
 }
 
 bool read_lr_size_flags(BitReader& reader, int sb_size, int* shift,
-                        std::string* error) {
+                        std::string& error) {
   bool half = false;
   if (!reader.read_bit(&half)) return fail(error, "truncated lr size flag");
   if (half) {
@@ -1175,7 +1175,7 @@ bool read_lr_size_flags(BitReader& reader, int sb_size, int* shift,
 // the class/group/match logic and coefficient subexp are f()/ns()/L(), not
 // arithmetic-coded symbols.
 bool write_frame_filters(BitWriter& writer, LrParams& params, int plane,
-                         std::string* error) {
+                         std::string& error) {
   const int num_classes =
       (plane == 0) ? params.num_filter_classes : 1;
   const int num_subsets = (plane == 0) ? 4 : 3;
@@ -1321,7 +1321,7 @@ bool write_frame_filters(BitWriter& writer, LrParams& params, int plane,
 }
 
 bool read_frame_filters(BitReader& reader, LrParams* params, int plane,
-                        std::string* error) {
+                        std::string& error) {
   const int num_classes =
       (plane == 0) ? params->num_filter_classes : 1;
   const int num_subsets = (plane == 0) ? 4 : 3;
@@ -1457,7 +1457,7 @@ bool read_frame_filters(BitReader& reader, LrParams* params, int plane,
 
 std::size_t write_lr_params(BitWriter& writer, LrParams& params,
                             const LrHeaderContext& context,
-                            std::string* error) {
+                            std::string& error) {
   if (context.coded_lossless || !context.enable_restoration) {
     for (int p = 0; p < 3; ++p) {
       params.frame_type[p] = kRestoreNone;
@@ -1559,7 +1559,7 @@ std::size_t write_lr_params(BitWriter& writer, LrParams& params,
 }
 
 bool read_lr_params(BitReader& reader, const LrHeaderContext& context,
-                    LrParams* params, std::string* error) {
+                    LrParams* params, std::string& error) {
   if (params == nullptr) return fail(error, "null LrParams");
   *params = LrParams{};
   if (context.coded_lossless || !context.enable_restoration) {
@@ -1648,7 +1648,7 @@ bool read_lr_params(BitReader& reader, const LrHeaderContext& context,
 
 bool lr_state_init(LrState* state, const LrParams& params, int mi_cols,
                    int mi_rows, int sub_x, int sub_y, int sb_size,
-                   std::string* error) {
+                   std::string& error) {
   if (state == nullptr || mi_cols <= 0 || mi_rows <= 0) {
     return fail(error, "invalid LR tile geometry");
   }
@@ -1794,7 +1794,7 @@ void lr_state_store_cdfs(
 bool lr_unit_range(const LrState& state, int plane, int mi_row, int mi_col,
                    int w4, int h4, int tile_mi_row_start,
                    int tile_mi_col_start, LrUnitRange* range,
-                   std::string* error) {
+                   std::string& error) {
   if (range == nullptr || plane < 0 || plane > 2) {
     return fail(error, "invalid read_lr argument");
   }
@@ -1846,8 +1846,9 @@ int lr_block_unit_count(const LrState& state, int mi_row, int mi_col, int w4,
   int count = 0;
   for (int plane = 0; plane < 3; ++plane) {
     LrUnitRange range;
+    std::string ignored;
     if (!lr_unit_range(state, plane, mi_row, mi_col, w4, h4,
-                       tile_mi_row_start, tile_mi_col_start, &range, nullptr)) {
+                       tile_mi_row_start, tile_mi_col_start, &range, ignored)) {
       continue;
     }
     count += (range.row_end - range.row_begin) *
@@ -1860,7 +1861,7 @@ bool lr_build_decisions(const LrState& state, int mi_row, int mi_col, int w4,
                         int h4, int tile_mi_row_start,
                         int tile_mi_col_start,
                         std::vector<LrUnitDecision>* decisions,
-                        std::string* error) {
+                        std::string& error) {
   if (decisions == nullptr) return fail(error, "null LR decision list");
   const int count = lr_block_unit_count(state, mi_row, mi_col, w4, h4,
                                         tile_mi_row_start, tile_mi_col_start);
@@ -1934,7 +1935,7 @@ namespace {
 
 bool write_unit_filter(av2::Encoder& encoder, LrState& state, int plane,
                        int unit_row, int unit_col,
-                       const LrUnitDecision& decision, std::string* error) {
+                       const LrUnitDecision& decision, std::string& error) {
   const bool chroma = plane > 0;
   const int n_coeffs = chroma ? restoration::kWienerNsChromaCoeffs
                               : restoration::kWienerNsLumaCoeffs;
@@ -2054,7 +2055,7 @@ bool write_unit_filter(av2::Encoder& encoder, LrState& state, int plane,
 
 bool read_unit_filter(av2::Decoder& decoder, LrState& state, int plane,
                       int unit_row, int unit_col, LrUnitDecision* decision,
-                      std::string* error) {
+                      std::string& error) {
   const bool chroma = plane > 0;
   const int n_coeffs = chroma ? restoration::kWienerNsChromaCoeffs
                               : restoration::kWienerNsLumaCoeffs;
@@ -2173,7 +2174,7 @@ bool read_unit_filter(av2::Decoder& decoder, LrState& state, int plane,
 }
 
 bool write_unit_filter_frame_mode(LrState& state, int plane, int unit_row,
-                                  int unit_col, std::string* error) {
+                                  int unit_col, std::string& error) {
   // frame_filters_on[plane]: read_wienerns_filter returns immediately, so the
   // per-unit coefficients are the frame filter table.
   const std::size_t base =
@@ -2194,7 +2195,7 @@ bool write_unit_filter_frame_mode(LrState& state, int plane, int unit_row,
 
 bool lr_write_unit(av2::Encoder& encoder, LrState& state, int plane,
                    int unit_row, int unit_col,
-                   const LrUnitDecision& decision, std::string* error) {
+                   const LrUnitDecision& decision, std::string& error) {
   if (plane < 0 || plane > 2) return fail(error, "LR plane out of range");
   if (unit_row < 0 || unit_col < 0 ||
       unit_row >= state.unit_rows[plane] ||
@@ -2263,7 +2264,7 @@ bool lr_write_unit(av2::Encoder& encoder, LrState& state, int plane,
 
 bool lr_read_unit(av2::Decoder& decoder, LrState& state, int plane,
                   int unit_row, int unit_col, LrUnitDecision* decision,
-                  std::string* error) {
+                  std::string& error) {
   if (plane < 0 || plane > 2) return fail(error, "LR plane out of range");
   if (unit_row < 0 || unit_col < 0 ||
       unit_row >= state.unit_rows[plane] ||
@@ -2330,7 +2331,7 @@ bool lr_write_block(av2::Encoder& encoder, LrState& state, int mi_row,
                     int mi_col, int w4, int h4, int tile_mi_row_start,
                     int tile_mi_col_start,
                     const std::vector<LrUnitDecision>& decisions,
-                    std::string* error) {
+                    std::string& error) {
   const int count = lr_block_unit_count(state, mi_row, mi_col, w4, h4,
                                         tile_mi_row_start, tile_mi_col_start);
   if (static_cast<int>(decisions.size()) != count) {
@@ -2362,7 +2363,7 @@ bool lr_read_block(av2::Decoder& decoder, LrState& state, int mi_row,
                    int mi_col, int w4, int h4, int tile_mi_row_start,
                    int tile_mi_col_start,
                    std::vector<LrUnitDecision>* decisions,
-                   std::string* error) {
+                   std::string& error) {
   const int count = lr_block_unit_count(state, mi_row, mi_col, w4, h4,
                                         tile_mi_row_start, tile_mi_col_start);
   if (decisions != nullptr) {

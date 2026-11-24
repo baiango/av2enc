@@ -1405,7 +1405,7 @@ class CudaBackend final : public Backend {
     }
     if (gme::stage_blocks(gme_buffers_, 0, device_blocks.data(),
                           static_cast<int>(device_blocks.size()), stream_,
-                          &error) != gme::GmeStatus::kOk) {
+                          error) != gme::GmeStatus::kOk) {
       return false;
     }
     gme::GmeOptions device_options{};
@@ -1428,13 +1428,13 @@ class CudaBackend final : public Backend {
     device_options.frame_height = options.frame_height;
     if (gme::estimate_blocks(gme_buffers_, 0,
                              static_cast<int>(device_blocks.size()),
-                             device_options, stream_, &error) !=
+                             device_options, stream_, error) !=
         gme::GmeStatus::kOk) {
       return false;
     }
     gme::GmeEstimate device_estimate{};
     if (gme::download_estimate(gme_buffers_, 0, &device_estimate, stream_,
-                               &error) != gme::GmeStatus::kOk) {
+                               error) != gme::GmeStatus::kOk) {
       return false;
     }
     estimate.params.type =
@@ -1593,7 +1593,7 @@ class CudaBackend final : public Backend {
     // Batch 1: every candidate's predictor + SSE (no TX).
     vi::EvaluateOptions search_options;
     if (!is_ok(intra_ws_.evaluate(jobs.data(), 3, search_options, stream_,
-                                  &error))) {
+                                  error))) {
       error = "M2 CUDA: intra search batch failed: " + error;
       return false;
     }
@@ -1617,7 +1617,7 @@ class CudaBackend final : public Backend {
     vi::EvaluateOptions tx_options;
     tx_options.run_tx = true;
     if (!is_ok(intra_ws_.evaluate(tx_jobs.data(), 3, tx_options, stream_,
-                                  &error))) {
+                                  error))) {
       error = "M2 CUDA: intra TX batch failed: " + error;
       return false;
     }
@@ -2524,7 +2524,7 @@ class CudaBackend final : public Backend {
         const int units = gdf_cols * gdf_rows;
         std::vector<std::uint8_t> use_gdf(static_cast<std::size_t>(units), 1);
         if (!is_ok(gdf::gdf_upload_use_gdf(gdf_, use_gdf.data(), units,
-                                           stream_, &error))) {
+                                           stream_, error))) {
           return false;
         }
         gdf::GdfFrameGrid grid{};
@@ -2556,7 +2556,7 @@ class CudaBackend final : public Backend {
         grid.index.frame_distance = d_gdf_frame_distance_;
         grid.index.num_total_refs = plan.gdf.num_total_refs;
         grid.index.restricted_oh = plan.gdf.restricted_oh;
-        if (!is_ok(gdf::gdf_apply_grid(grid, gdf_, stream_, &error))) {
+        if (!is_ok(gdf::gdf_apply_grid(grid, gdf_, stream_, error))) {
           return false;
         }
         u16_to_u8_kernel<<<blocks, threads, 0, stream_>>>(
@@ -2782,7 +2782,7 @@ class CudaBackend final : public Backend {
     request.search.max_tx_size = 64;
 
     videotx::VideoTxPlanData plan;
-    if (!videotx::video_tx_build_plan(&request, 1, &plan, &error)) {
+    if (!videotx::video_tx_build_plan(&request, 1, &plan, error)) {
       return false;
     }
     videotx::VideoTxBuffers buffers;
@@ -3226,7 +3226,7 @@ class CudaBackend final : public Backend {
       desired = std::min(desired, std::max(budget, required_device_bytes_));
     }
     std::string detail;
-    const Status status = arena_.init(desired, Arena::kAlignment, &detail);
+    const Status status = arena_.init(desired, Arena::kAlignment, detail);
     if (!is_ok(status)) {
       last_arena_required_ = required_device_bytes_;
       last_arena_status_ = ArenaStatus::kCudaError;
@@ -3410,7 +3410,7 @@ class CudaBackend final : public Backend {
         gdf_config.max_units = gdf::gdf_grid_slots(gdf_cols, gdf_rows);
         std::string gdf_detail;
         if (gdf::gdf_buffers_init(arena_, gdf_config, &gdf_, nullptr,
-                                  &gdf_detail) != Status::kOk) {
+                                  gdf_detail) != Status::kOk) {
           ok = false;
           error = "M2 CUDA: GDF workspace init failed: " + gdf_detail;
         } else {
@@ -3474,7 +3474,7 @@ class CudaBackend final : public Backend {
     warp_workspace_.reset();
     warpstack::WarpStackConfig ws_config;
     ws_config.max_predict_jobs = kWarpBatchJobs;
-    if (warp_workspace_.create(arena_, ws_config, &error) != Status::kOk) {
+    if (warp_workspace_.create(arena_, ws_config, error) != Status::kOk) {
       arena_.rewind(persistent_mark_);
       clear_persistent();
       last_arena_required_ = required_device_bytes_;
@@ -3484,7 +3484,7 @@ class CudaBackend final : public Backend {
     gme_buffers_ = gme::GmeBuffers{};
     std::uint64_t gme_required = 0;
     if (gme::allocate_checked(arena_, gme_config(), &gme_buffers_,
-                              &gme_required, &error) != gme::GmeStatus::kOk) {
+                              &gme_required, error) != gme::GmeStatus::kOk) {
       arena_.rewind(persistent_mark_);
       clear_persistent();
       last_arena_required_ = required_device_bytes_;
@@ -3497,7 +3497,7 @@ class CudaBackend final : public Backend {
     std::uint64_t intra_required = 0;
     std::string intra_error;
     const Status intra_status = intra_ws_.init(
-        arena_, intra_full_config(), &intra_error, &intra_required);
+        arena_, intra_full_config(), intra_error, &intra_required);
     if (!is_ok(intra_status)) {
       arena_.rewind(persistent_mark_);
       clear_persistent();
@@ -3514,7 +3514,7 @@ class CudaBackend final : public Backend {
     std::uint64_t tx_bytes = 0;
     std::string tx_error;
     const av2enc::cuda::Status tx_status =
-        tx_ws_.init(arena_, kTxSearchWorkspaceConfig, &tx_bytes, &tx_error);
+        tx_ws_.init(arena_, kTxSearchWorkspaceConfig, &tx_bytes, tx_error);
     if (tx_status != av2enc::cuda::Status::kOk) {
       arena_.rewind(persistent_mark_);
       clear_persistent();
@@ -3532,7 +3532,7 @@ class CudaBackend final : public Backend {
     pcw_config.bit_depth = 8;
     pcw_config.unit_size = 64;
     std::string pcw_error;
-    if (pc_wiener_.create(arena_, pcw_config, &pcw_error) != Status::kOk) {
+    if (pc_wiener_.create(arena_, pcw_config, pcw_error) != Status::kOk) {
       arena_.rewind(persistent_mark_);
       clear_persistent();
       last_arena_required_ = required_device_bytes_;
@@ -3562,7 +3562,7 @@ class CudaBackend final : public Backend {
     if (bytes == 0 || bytes > kPinMaxCopy) return PinResult::kFallback;
     if (!pinned_.initialized()) {
       std::string init_error;
-      if (!is_ok(pinned_.init(kPinCapacityBytes, &init_error))) {
+      if (!is_ok(pinned_.init(kPinCapacityBytes, init_error))) {
         // Host staging is an optimization, not a requirement: fall back to the
         // pageable path rather than failing the encode.
         return PinResult::kFallback;

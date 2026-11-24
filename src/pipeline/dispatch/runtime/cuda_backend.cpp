@@ -69,10 +69,8 @@ Status select_device(int ordinal) {
   return from_cuda(cudaSetDevice(ordinal));
 }
 
-void set_error(std::string* error, const std::string& text) {
-  if (error != nullptr) {
-    *error = text;
-  }
+void set_error(std::string& error, const std::string& text) {
+error = text;
 }
 
 struct StreamState {
@@ -173,7 +171,7 @@ class CudaBackend final : public DeviceBackend {
     return status;
   }
 
-  Status context_init(int ordinal, std::string* error) override {
+  Status context_init(int ordinal, std::string& error) override {
     const Status status = select_device(ordinal);
     if (!is_ok(status)) {
       set_error(error, "cudaSetDevice failed");
@@ -193,7 +191,7 @@ class CudaBackend final : public DeviceBackend {
   }
 
   Status stream_create(int ordinal, StreamHandle* out,
-                       std::string* error) override {
+                       std::string& error) override {
     if (out == nullptr) {
       return Status::kInvalidArgument;
     }
@@ -239,7 +237,7 @@ class CudaBackend final : public DeviceBackend {
   }
 
   Status event_create(int ordinal, bool timing, EventHandle* out,
-                      std::string* error) override {
+                      std::string& error) override {
     if (out == nullptr) {
       return Status::kInvalidArgument;
     }
@@ -336,7 +334,7 @@ class CudaBackend final : public DeviceBackend {
   }
 
   Status arena_init(int ordinal, std::uint64_t capacity_bytes,
-                    ArenaHandle* out, std::string* error) override {
+                    ArenaHandle* out, std::string& error) override {
     if (out == nullptr) {
       return Status::kInvalidArgument;
     }
@@ -374,7 +372,7 @@ class CudaBackend final : public DeviceBackend {
 
   Status arena_allocate(ArenaHandle arena, std::size_t bytes,
                         std::size_t alignment, void** out,
-                        std::string* error) override {
+                        std::string& error) override {
     (void)error;
     if (out == nullptr) {
       return Status::kInvalidArgument;
@@ -400,7 +398,7 @@ class CudaBackend final : public DeviceBackend {
   }
 
   Status pinned_alloc(std::size_t bytes, void** out,
-                      std::string* error) override {
+                      std::string& error) override {
     if (out == nullptr || bytes == 0) {
       return Status::kInvalidArgument;
     }
@@ -474,7 +472,7 @@ class CudaBackend final : public DeviceBackend {
 
 }  // namespace
 
-std::unique_ptr<DeviceBackend> make_cuda_backend(std::string* error) {
+std::unique_ptr<DeviceBackend> make_cuda_backend(std::string& error) {
   int count = 0;
   const cudaError_t result = cudaGetDeviceCount(&count);
   if (result != cudaSuccess) {

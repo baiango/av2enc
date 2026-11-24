@@ -53,7 +53,7 @@ struct ArenaBudget {
 [[nodiscard]] bool compute_arena_budget(std::uint64_t total_bytes, std::uint64_t free_bytes,
                           std::uint64_t headroom_bytes,
                           std::uint64_t cap_bytes, ArenaBudget& budget,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 // One tile's dispatch record. All geometry is the validated TileRect; the
 // worker must not recompute tile starts. qindex is the effective per-tile QP
@@ -96,6 +96,6 @@ struct GpuWorkerPlan {
 [[nodiscard]] bool build_gpu_dispatch(const av2enc::pipeline::FramePipelinePlan& plan,
                         std::uint64_t arena_capacity_bytes,
                         std::vector<GpuWorkerPlan>& workers,
-                        std::string* error = nullptr);
+                        std::string& error);
 
 }  // namespace av2enc::cuda::pipeline

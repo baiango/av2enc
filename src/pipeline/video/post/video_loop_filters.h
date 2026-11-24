@@ -209,7 +209,7 @@ class VideoLoopFilterHooks {
   virtual bool apply_stage(VideoFilterStage stage,
                            const VideoFilterPlan& plan,
                            const VideoLoopFilterDeviceFrame& frame,
-                           std::string* error) = 0;
+                           std::string& error) = 0;
 };
 
 // Runs the configured tools in normative order (CDEF -> CCSO -> LR -> GDF) on
@@ -219,7 +219,7 @@ class VideoLoopFilterHooks {
 [[nodiscard]] bool run_video_loop_filters(VideoLoopFilterFrame& frame,
                             const VideoLoopFilterOptions& options,
                             VideoFilterPlan* plan, VideoLoopFilterHooks* hooks,
-                            std::string* error);
+                            std::string& error);
 
 // Applies one stage's pixels with the CPU component cores against the plan's
 // decision.  `frame.plane` is filtered in place.  Used by
@@ -227,7 +227,7 @@ class VideoLoopFilterHooks {
 [[nodiscard]] bool apply_video_filter_stage(VideoFilterStage stage,
                               VideoLoopFilterFrame& frame,
                               const VideoFilterPlan& plan,
-                              std::string* error);
+                              std::string& error);
 
 // §7.20 loop-restoration parameters derived from a plan.  `unit_type` /
 // `unit_coeffs` point into the plan.

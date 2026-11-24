@@ -56,13 +56,13 @@ struct Planes {
   std::vector<std::uint8_t> v;
 };
 
-bool load_first_frame(const std::string& path, Planes* out, std::string* error) {
+bool load_first_frame(const std::string& path, Planes* out, std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
   const av2enc::Y4mReadResult result = reader.read_frame(frame, *error);
   if (result != av2enc::Y4mReadResult::kFrame) {
-    if (error->empty()) *error = "no frame in " + path;
+    if (error.empty()) error = "no frame in " + path;
     return false;
   }
   out->width = static_cast<int>(frame.width());
@@ -74,7 +74,7 @@ bool load_first_frame(const std::string& path, Planes* out, std::string* error) 
 }
 
 bool write_ivf(const std::string& path, int width, int height, std::span<const std::uint8_t> frame,
-               std::string* error) {
+               std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
@@ -87,13 +87,13 @@ bool write_ivf(const std::string& path, int width, int height, std::span<const s
 }
 
 bool run_decoder(const std::string& dav2d, const std::string& ivf, const std::string& y4m,
-                 std::string* error) {
+                 std::string& error) {
   // --strict 1 is the point of this gate: compliance warnings abort.
   const std::string command =
       "'" + dav2d + "' --strict 1 -q -i '" + ivf + "' -o '" + y4m + "' --threads 1 >/dev/null 2>&1";
   const int rc = std::system(command.c_str());
   if (rc != 0) {
-    *error = "dav2d --strict 1 failed on " + ivf;
+    error = "dav2d --strict 1 failed on " + ivf;
     return false;
   }
   return true;

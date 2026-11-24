@@ -114,8 +114,8 @@ struct GmeBuffers {
 // restored.
 GmeStatus allocate_checked(Arena& arena, const GmeConfig& config,
                            GmeBuffers* out,
-                           std::uint64_t* required_bytes = nullptr,
-                           std::string* error = nullptr);
+                           std::uint64_t* required_bytes,
+                           std::string& error);
 
 // Rewinds to the allocation mark and clears the buffer set.  Safe on a
 // default-constructed/unallocated set.
@@ -129,25 +129,25 @@ std::uint64_t gme_mark(const Arena& arena) noexcept;
 // in the module and are never called from a launcher.
 GmeStatus stage_points(const GmeBuffers& buffers, int job,
                        const GmePoint* host_points, int count,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
 GmeStatus stage_blocks(const GmeBuffers& buffers, int job,
                        const GmeBlockMv* host_blocks, int count,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
 GmeStatus stage_warps(const GmeBuffers& buffers, int job,
                       const GmeWarpSample* host_warps, int count,
-                      cudaStream_t stream = nullptr,
-                      std::string* error = nullptr);
+                      cudaStream_t stream,
+                      std::string& error);
 
 // Downloads one result (or `count` results).  Both forms synchronise `stream`
 // so the host output is valid on return.
 GmeStatus download_estimate(const GmeBuffers& buffers, int job,
-                            GmeEstimate* out, cudaStream_t stream = nullptr,
-                            std::string* error = nullptr);
+                            GmeEstimate* out, cudaStream_t stream,
+                            std::string& error);
 GmeStatus download_estimates(const GmeBuffers& buffers, GmeEstimate* out,
-                             int count, cudaStream_t stream = nullptr,
-                             std::string* error = nullptr);
+                             int count, cudaStream_t stream,
+                             std::string& error);
 
 // One estimate per call.  These launch kernels and do not synchronise; the
 // caller downloads with download_estimate() (or synchronises the stream).
@@ -155,16 +155,16 @@ GmeStatus download_estimates(const GmeBuffers& buffers, GmeEstimate* out,
 // capacity.
 GmeStatus estimate_points(const GmeBuffers& buffers, int job, int count,
                           const GmeOptions& options,
-                          cudaStream_t stream = nullptr,
-                          std::string* error = nullptr);
+                          cudaStream_t stream,
+                          std::string& error);
 GmeStatus estimate_blocks(const GmeBuffers& buffers, int job, int count,
                           const GmeOptions& options,
-                          cudaStream_t stream = nullptr,
-                          std::string* error = nullptr);
+                          cudaStream_t stream,
+                          std::string& error);
 GmeStatus estimate_warps(const GmeBuffers& buffers, int job, int count,
                          const GmeOptions& options,
-                         cudaStream_t stream = nullptr,
-                         std::string* error = nullptr);
+                         cudaStream_t stream,
+                         std::string& error);
 
 // Bilinear warp quality proxy over device planes.  `bit_depth` must be 8,
 // matching the CPU helper.  `warp_plane_sse` writes one int64 SSE value to
@@ -174,14 +174,14 @@ GmeStatus warp_plane_bilinear(const GmeBuffers& buffers,
                               int src_w, int src_h, int src_stride,
                               GmeU8* d_dst, int dst_w, int dst_h,
                               int dst_stride, int bit_depth,
-                              cudaStream_t stream = nullptr,
-                              std::string* error = nullptr);
+                              cudaStream_t stream,
+                              std::string& error);
 GmeStatus warp_plane_sse(const GmeBuffers& buffers, const GmeParams& params,
                          const GmeU8* d_ref, int ref_w, int ref_h,
                          int ref_stride, const GmeU8* d_cur, int cur_w,
                          int cur_h, int cur_stride, int bit_depth,
-                         GmeI64* d_sse, cudaStream_t stream = nullptr,
-                         std::string* error = nullptr);
+                         GmeI64* d_sse, cudaStream_t stream,
+                         std::string& error);
 
 }  // namespace av2enc::cuda::gme
 

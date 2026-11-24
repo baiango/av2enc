@@ -583,7 +583,7 @@ int main(int argc, char** argv) {
       options.temporal_layers = std::atoi(argv[++i]);
     } else if (arg == "--subpu-selftest") {
       std::string selftest_error;
-      if (!av2enc::video::post::video_save_subpu_selftest(&selftest_error)) {
+      if (!av2enc::video::post::video_save_subpu_selftest(selftest_error)) {
         std::cerr << "save_subpu selftest FAIL: " << selftest_error << "\n";
         return 1;
       }
@@ -591,7 +591,7 @@ int main(int argc, char** argv) {
       return 0;
     } else if (arg == "--ref-mvs-field-selftest") {
       std::string selftest_error;
-      if (!av2enc::video::ref_mvs_field_selftest(&selftest_error)) {
+      if (!av2enc::video::ref_mvs_field_selftest(selftest_error)) {
         std::cerr << "ref-mvs field selftest FAIL: " << selftest_error << "\n";
         return 1;
       }

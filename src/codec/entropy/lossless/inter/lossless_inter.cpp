@@ -288,9 +288,9 @@ FrameLossless derive_lossless(const FrameQuantInputs& inputs,
 // ---------------------------------------------------------------------------
 
 bool make_geometry(int width, int height, ChromaFormat format, Geometry* out,
-                   std::string* error) {
+                   std::string& error) {
   if (width <= 0 || height <= 0 || (width & 7) != 0 || (height & 7) != 0) {
-    *error = "lossless inter requires width/height positive multiples of 8";
+    error = "lossless inter requires width/height positive multiples of 8";
     return false;
   }
   Geometry g;
@@ -483,11 +483,11 @@ void init_cdfs(CdfState& c) {
 class SymWriter {
  public:
   bool init(std::uint8_t* out, std::size_t capacity, bool adaptive,
-            std::string* error) {
+            std::string& error) {
     enc_.disable_cdf_update = adaptive ? 0 : 1;
     const Status s = enc_.init_symbol(out, capacity);
     if (s != Status::kOk) {
-      *error = std::string("entropy init: ") + av2enc::av2::status_name(s);
+      error = std::string("entropy init: ") + av2enc::av2::status_name(s);
       return false;
     }
     return true;
@@ -537,11 +537,11 @@ class SymWriter {
 class SymReader {
  public:
   bool init(const std::uint8_t* data, std::size_t size, std::size_t sz,
-            bool adaptive, std::string* error) {
+            bool adaptive, std::string& error) {
     dec_.disable_cdf_update = adaptive ? 0 : 1;
     const Status s = dec_.init_symbol(data, size, sz);
     if (s != Status::kOk) {
-      *error = std::string("entropy init: ") + av2enc::av2::status_name(s);
+      error = std::string("entropy init: ") + av2enc::av2::status_name(s);
       return false;
     }
     return true;
@@ -2283,7 +2283,7 @@ class TileWriter {
 
   bool encode_tile(std::uint8_t* out, std::size_t capacity,
                    std::size_t* tile_bytes, std::string& error) {
-    if (!w_.init(out, capacity, opt_.adaptive_cdf, &error)) return false;
+    if (!w_.init(out, capacity, opt_.adaptive_cdf, error)) return false;
     const int sb_mi = 16;
     for (int sb_r = 0; sb_r < g_.sb_rows; ++sb_r) {
       ctx_.clear_left();
@@ -2291,7 +2291,7 @@ class TileWriter {
         const int r = sb_r * sb_mi;
         const int c = sb_c * sb_mi;
         if (r >= g_.mi_rows || c >= g_.mi_cols) continue;
-        if (!write_partition(r, c, BlockSize::k64x64, 0, true, &error)) {
+        if (!write_partition(r, c, BlockSize::k64x64, 0, true, error)) {
           return false;
         }
       }
@@ -2310,7 +2310,7 @@ class TileWriter {
   }
 
   bool write_partition(int r, int c, BlockSize bsize, int chroma_offset,
-                       bool has_chroma, std::string* error) {
+                       bool has_chroma, std::string& error) {
     if (r >= g_.mi_rows || c >= g_.mi_cols) return true;
     const AllowedPartitions allowed =
         init_allowed(r, c, bsize, chroma_offset, has_chroma, g_.mi_rows,
@@ -2346,7 +2346,7 @@ class TileWriter {
       }
       if ((part == PartitionType::kHorz && !allowed.horz) ||
           (part == PartitionType::kVert && !allowed.vert)) {
-        *error = "lossless inter: no legal partition";
+        error = "lossless inter: no legal partition";
         return false;
       }
       emit = true;
@@ -2357,7 +2357,7 @@ class TileWriter {
         const int dc = do_split_context(ctx_, r, c, bsize);
         if (!w_.sym(&cdfs_.do_split[dc][0], 2,
                     part == PartitionType::kNone ? 0 : 1)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       }
@@ -2368,7 +2368,7 @@ class TileWriter {
           const int rc = rect_type_context(ctx_, r, c, bsize);
           if (!w_.sym(&cdfs_.rect_type[rc][0],
                       2, symbol)) {
-            *error = w_.error();
+            error = w_.error();
             return false;
           }
         }
@@ -2468,33 +2468,33 @@ class TileWriter {
   }
 
   bool write_intra_mode(int r, int c, BlockSize bsize, const BlockPlan& plan,
-                        std::string* error) {
+                        std::string& error) {
     const int w4 = partition::num_4x4_blocks_wide(bsize);
     const int h4 = partition::num_4x4_blocks_high(bsize);
     const int sb_mi = 16;
     if (plan.use_dpcm_y) {
       if (!w_.sym(&cdfs_.use_dpcm_y[0], 2, 1)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       if (!w_.sym(&cdfs_.dpcm_mode_y[0], 2, plan.dpcm_y_vertical ? 0 : 1)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     } else {
       if (!w_.sym(&cdfs_.use_dpcm_y[0], 2, 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       const int jctx =
           (ctx_.joint_mode(r, c, w4, h4, 0) >= 5 ? 1 : 0) +
           (ctx_.joint_mode(r, c, w4, h4, 1) >= 5 ? 1 : 0);
       if (!w_.sym(&cdfs_.y_mode_set[0], 4, 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       if (!w_.sym(&cdfs_.y_mode_index[jctx][0], 8, 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
@@ -2502,40 +2502,40 @@ class TileWriter {
       const int fctx = fsc_context(ctx_, r, c, w4, h4, sb_mi, keyframe_);
       const int group = kFscBsizeGroups[static_cast<int>(bsize)];
       if (!w_.sym(&cdfs_.fsc_mode[fctx][group][0], 2, plan.fsc ? 1 : 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
     if (g_.has_chroma) {
       if (plan.use_dpcm_uv) {
         if (!w_.sym(&cdfs_.use_dpcm_uv[0], 2, 1)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
         if (!w_.sym(&cdfs_.dpcm_mode_uv[0], 2,
                     plan.dpcm_uv_vertical ? 0 : 1)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       } else {
         if (!w_.sym(&cdfs_.use_dpcm_uv[0], 2, 0)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
         const int uv_ctx = y_mode_is_directional(plan.y_mode) ? 1 : 0;
         const int idx = uv_mode_index(kDcPred, plan.y_mode);
         if (idx <= 6) {
           if (!w_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, idx)) {
-            *error = w_.error();
+            error = w_.error();
             return false;
           }
         } else {
           if (!w_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, 7)) {
-            *error = w_.error();
+            error = w_.error();
             return false;
           }
           if (!w_.literal(3, static_cast<std::uint32_t>(idx - 7))) {
-            *error = w_.error();
+            error = w_.error();
             return false;
           }
         }
@@ -2545,7 +2545,7 @@ class TileWriter {
       const int group = kSizeGroup[static_cast<int>(bsize)];
       if (!w_.sym(&cdfs_.lossless_tx_size[group][0][0], 2,
                   plan.lossless_tx_size ? 1 : 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
@@ -2553,12 +2553,12 @@ class TileWriter {
   }
 
   bool write_inter_mode(int r, int c, BlockSize bsize, const BlockPlan& plan,
-                        std::string* error) {
+                        std::string& error) {
     const int w4 = partition::num_4x4_blocks_wide(bsize);
     const int h4 = partition::num_4x4_blocks_high(bsize);
     const int sctx = ctx_.skip_context(r, c, w4, h4);
     if (!w_.sym(&cdfs_.skip[sctx][0], 2, 0)) {
-      *error = w_.error();
+      error = w_.error();
       return false;
     }
     const int bw = partition::block_width(bsize);
@@ -2570,7 +2570,7 @@ class TileWriter {
         const int cmctx = ctx_.comp_mode_context(r, c, w4, h4);
         if (!w_.sym(&cdfs_.comp_mode[cmctx][0], 2,
                     plan.compound ? 1 : 0)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       }
@@ -2584,30 +2584,30 @@ class TileWriter {
         const int jctx = ctx_.is_joint_context(ctx_.frame_distance[0],
                                                ctx_.frame_distance[1]);
         if (!w_.sym(&cdfs_.is_joint[jctx][0], 2, 0)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
         const int mctx = ctx_.new_mv_context(r, c, w4, h4);
         if (!w_.sym(&cdfs_.compound_mode_non_joint[mctx][0], 5, 3)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       } else {
         // §5.20.7.12 read_single_ref(): one symbol selects list 0.
         if (!w_.sym(&cdfs_.single_ref[rctx][0][0], 2, 1)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
         const int mctx = ctx_.new_mv_context(r, c, w4, h4);
         if (!w_.sym(&cdfs_.single_mode[mctx][0], 3, 1)) {  // GLOBALMV
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       }
     } else {
       const int mctx = ctx_.new_mv_context(r, c, w4, h4);
       if (!w_.sym(&cdfs_.single_mode[mctx][0], 3, 1)) {  // GLOBALMV
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
@@ -2615,21 +2615,21 @@ class TileWriter {
       const int group = kSizeGroup[static_cast<int>(bsize)];
       if (!w_.sym(&cdfs_.lossless_tx_size[group][0][0], 2,
                   plan.lossless_tx_size ? 1 : 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
     return true;
   }
 
-  bool write_block(int r, int c, BlockSize bsize, std::string* error) {
+  bool write_block(int r, int c, BlockSize bsize, std::string& error) {
     const BlockPlan plan = choose_plan(r, c, bsize);
     if (!keyframe_) {
       const int w4 = partition::num_4x4_blocks_wide(bsize);
       const int h4 = partition::num_4x4_blocks_high(bsize);
       const int ictx = ctx_.is_inter_context(r, c, w4, h4);
       if (!w_.sym(&cdfs_.is_inter[ictx][0], 2, plan.is_inter ? 1 : 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
@@ -2680,7 +2680,7 @@ class TileWriter {
   }
 
   bool write_luma(int r, int c, BlockSize bsize, const BlockPlan& plan,
-                  std::vector<std::uint8_t>* luma_idtx, std::string* error) {
+                  std::vector<std::uint8_t>* luma_idtx, std::string& error) {
     const int bw = partition::block_width(bsize);
     const int bh = partition::block_height(bsize);
     const int x = c * 4;
@@ -2706,7 +2706,7 @@ class TileWriter {
       } else if (!predict_intra_block(*recon_[0], px, py, w, h, plan.y_mode,
                                       px > 0, py > 0, opt_.bit_depth,
                                       s.pred.data(), static_cast<std::size_t>(w))) {
-        *error = "luma intra prediction failed";
+        error = "luma intra prediction failed";
         return false;
       }
       for (int i = 0; i < h; ++i) {
@@ -2739,7 +2739,7 @@ class TileWriter {
                            0);
       }
       if (!w_.ok()) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       reconstruct_block(s.levels.data(), w, h, !idtx, dpcm, vertical,
@@ -2807,7 +2807,7 @@ class TileWriter {
 
   bool write_chroma(int r, int c, BlockSize bsize, const BlockPlan& plan,
                     const std::vector<std::uint8_t>& luma_idtx,
-                    std::string* error) {
+                    std::string& error) {
     if (!g_.has_chroma) return true;
     const int bw = partition::block_width(bsize);
     const int bh = partition::block_height(bsize);
@@ -2847,7 +2847,7 @@ class TileWriter {
           } else if (!predict_intra_block(*recon_[plane], px, py, 4, 4,
                                           plan.uv_mode, px > 0, py > 0,
                                           opt_.bit_depth, s.pred.data(), 4)) {
-            *error = "chroma intra prediction failed";
+            error = "chroma intra prediction failed";
             return false;
           }
           for (int i = 0; i < 4; ++i) {
@@ -2873,7 +2873,7 @@ class TileWriter {
               s.levels.data(), plan.is_inter, plan.fsc, idtx,
               plane == 2 ? prev_eob_u : 0);
           if (!w_.ok()) {
-            *error = w_.error();
+            error = w_.error();
             return false;
           }
           if (plane == 1) {
@@ -2933,7 +2933,7 @@ class TileReader {
 
   bool decode_tile(const std::uint8_t* data, std::size_t size, std::size_t sz,
                    std::string& error) {
-    if (!r_.init(data, size, sz, opt_.adaptive_cdf, &error)) return false;
+    if (!r_.init(data, size, sz, opt_.adaptive_cdf, error)) return false;
     const int sb_mi = 16;
     for (int sb_r = 0; sb_r < g_.sb_rows; ++sb_r) {
       ctx_.clear_left();
@@ -2941,7 +2941,7 @@ class TileReader {
         const int r = sb_r * sb_mi;
         const int c = sb_c * sb_mi;
         if (r >= g_.mi_rows || c >= g_.mi_cols) continue;
-        if (!read_partition(r, c, BlockSize::k64x64, 0, true, &error)) {
+        if (!read_partition(r, c, BlockSize::k64x64, 0, true, error)) {
           return false;
         }
       }
@@ -2956,7 +2956,7 @@ class TileReader {
  private:
 
   bool read_partition(int r, int c, BlockSize bsize, int chroma_offset,
-                      bool has_chroma, std::string* error) {
+                      bool has_chroma, std::string& error) {
     if (r >= g_.mi_rows || c >= g_.mi_cols) return true;
     const AllowedPartitions allowed =
         init_allowed(r, c, bsize, chroma_offset, has_chroma, g_.mi_rows,
@@ -2986,7 +2986,7 @@ class TileReader {
       if (allowed.none) {
         const int dc = do_split_context(ctx_, r, c, bsize);
         if (!r_.sym(&cdfs_.do_split[dc][0], 2, &do_split)) {
-          *error = r_.error();
+          error = r_.error();
           return false;
         }
         if (!do_split) part = PartitionType::kNone;
@@ -2999,7 +2999,7 @@ class TileReader {
           int symbol = 0;
           const int rc = rect_type_context(ctx_, r, c, bsize);
           if (!r_.sym(&cdfs_.rect_type[rc][0], 2, &symbol)) {
-            *error = r_.error();
+            error = r_.error();
             return false;
           }
           part = symbol == 0 ? PartitionType::kHorz : PartitionType::kVert;
@@ -3034,19 +3034,19 @@ class TileReader {
   }
 
   bool read_intra_mode(int r, int c, BlockSize bsize, BlockPlan* plan,
-                       std::string* error) {
+                       std::string& error) {
     const int w4 = partition::num_4x4_blocks_wide(bsize);
     const int h4 = partition::num_4x4_blocks_high(bsize);
     const int sb_mi = 16;
     int use_dpcm_y = 0;
     if (!r_.sym(&cdfs_.use_dpcm_y[0], 2, &use_dpcm_y)) {
-      *error = r_.error();
+      error = r_.error();
       return false;
     }
     if (use_dpcm_y) {
       int mode = 0;
       if (!r_.sym(&cdfs_.dpcm_mode_y[0], 2, &mode)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       plan->use_dpcm_y = true;
@@ -3055,7 +3055,7 @@ class TileReader {
     } else {
       int set = 0;
       if (!r_.sym(&cdfs_.y_mode_set[0], 4, &set) || set != 0) {
-        *error = "lossless inter reader: non-DC y_mode_set unsupported";
+        error = "lossless inter reader: non-DC y_mode_set unsupported";
         return false;
       }
       const int jctx =
@@ -3063,7 +3063,7 @@ class TileReader {
           (ctx_.joint_mode(r, c, w4, h4, 1) >= 5 ? 1 : 0);
       int index = 0;
       if (!r_.sym(&cdfs_.y_mode_index[jctx][0], 8, &index) || index != 0) {
-        *error = "lossless inter reader: non-DC y_mode unsupported";
+        error = "lossless inter reader: non-DC y_mode unsupported";
         return false;
       }
       plan->y_mode = kDcPred;
@@ -3074,7 +3074,7 @@ class TileReader {
       const int group = kFscBsizeGroups[static_cast<int>(bsize)];
       int symbol = 0;
       if (!r_.sym(&cdfs_.fsc_mode[fctx][group][0], 2, &symbol)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       plan->fsc = symbol != 0;
@@ -3082,13 +3082,13 @@ class TileReader {
     if (g_.has_chroma) {
       int use_dpcm_uv = 0;
       if (!r_.sym(&cdfs_.use_dpcm_uv[0], 2, &use_dpcm_uv)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       if (use_dpcm_uv) {
         int mode = 0;
         if (!r_.sym(&cdfs_.dpcm_mode_uv[0], 2, &mode)) {
-          *error = r_.error();
+          error = r_.error();
           return false;
         }
         plan->use_dpcm_uv = true;
@@ -3098,13 +3098,13 @@ class TileReader {
         const int uv_ctx = y_mode_is_directional(plan->y_mode) ? 1 : 0;
         int idx = 0;
         if (!r_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, &idx)) {
-          *error = r_.error();
+          error = r_.error();
           return false;
         }
         if (idx == 7) {
           std::uint32_t extra = 0;
           if (!r_.literal(3, &extra)) {
-            *error = r_.error();
+            error = r_.error();
             return false;
           }
           idx += static_cast<int>(extra);
@@ -3116,7 +3116,7 @@ class TileReader {
       const int group = kSizeGroup[static_cast<int>(bsize)];
       int bit = 0;
       if (!r_.sym(&cdfs_.lossless_tx_size[group][0][0], 2, &bit)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       plan->lossless_tx_size = bit != 0;
@@ -3125,7 +3125,7 @@ class TileReader {
         if (!find_tx_size(partition::block_width(bsize),
                           partition::block_height(bsize), &plan->tx_w,
                           &plan->tx_h)) {
-          *error = "lossless inter reader: bad fsc tx size";
+          error = "lossless inter reader: bad fsc tx size";
           return false;
         }
       } else {
@@ -3141,7 +3141,7 @@ class TileReader {
     return true;
   }
 
-  bool read_block(int r, int c, BlockSize bsize, std::string* error) {
+  bool read_block(int r, int c, BlockSize bsize, std::string& error) {
     BlockPlan plan;
     if (!keyframe_) {
       const int w4 = partition::num_4x4_blocks_wide(bsize);
@@ -3150,18 +3150,18 @@ class TileReader {
       const int ictx = ctx_.is_inter_context(r, c, w4, h4);
       const int sctx = ctx_.skip_context(r, c, w4, h4);
       if (!r_.sym(&cdfs_.is_inter[ictx][0], 2, &is_inter)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       if (is_inter) {
         plan.is_inter = true;
         int skip = 0;
         if (!r_.sym(&cdfs_.skip[sctx][0], 2, &skip)) {
-          *error = r_.error();
+          error = r_.error();
           return false;
         }
         if (skip) {
-          *error = "lossless inter reader: skip_flag=1 not supported";
+          error = "lossless inter reader: skip_flag=1 not supported";
           return false;
         }
         const int bw = partition::block_width(bsize);
@@ -3171,7 +3171,7 @@ class TileReader {
           if (bw >= 8 && bh >= 8) {
             const int cmctx = ctx_.comp_mode_context(r, c, w4, h4);
             if (!r_.sym(&cdfs_.comp_mode[cmctx][0], 2, &comp_mode)) {
-              *error = r_.error();
+              error = r_.error();
               return false;
             }
           }
@@ -3186,7 +3186,7 @@ class TileReader {
             int is_joint = 0;
             if (!r_.sym(&cdfs_.is_joint[jctx][0], 2, &is_joint) ||
                 is_joint != 0) {
-              *error = "lossless inter reader: joint compound is not supported";
+              error = "lossless inter reader: joint compound is not supported";
               return false;
             }
             const int mctx = ctx_.new_mv_context(r, c, w4, h4);
@@ -3194,7 +3194,7 @@ class TileReader {
             if (!r_.sym(&cdfs_.compound_mode_non_joint[mctx][0], 5,
                         &compound_mode) ||
                 compound_mode != 3) {
-              *error = "lossless inter reader: only GLOBAL_GLOBALMV compound "
+              error = "lossless inter reader: only GLOBAL_GLOBALMV compound "
                        "is supported";
               return false;
             }
@@ -3202,7 +3202,7 @@ class TileReader {
             int single_ref = 0;
             if (!r_.sym(&cdfs_.single_ref[rctx][0][0], 2, &single_ref) ||
                 single_ref != 1) {
-              *error = "lossless inter reader: only reference list 0 is "
+              error = "lossless inter reader: only reference list 0 is "
                        "supported for single prediction";
               return false;
             }
@@ -3210,7 +3210,7 @@ class TileReader {
             int single_mode = 0;
             if (!r_.sym(&cdfs_.single_mode[mctx][0], 3, &single_mode) ||
                 single_mode != 1) {
-              *error = "lossless inter reader: only GLOBALMV is supported";
+              error = "lossless inter reader: only GLOBALMV is supported";
               return false;
             }
           }
@@ -3218,11 +3218,11 @@ class TileReader {
           const int mctx = ctx_.new_mv_context(r, c, w4, h4);
           int single_mode = 0;
           if (!r_.sym(&cdfs_.single_mode[mctx][0], 3, &single_mode)) {
-            *error = r_.error();
+            error = r_.error();
             return false;
           }
           if (single_mode != 1) {
-            *error = "lossless inter reader: only GLOBALMV is supported (r=" +
+            error = "lossless inter reader: only GLOBALMV is supported (r=" +
                      std::to_string(r) + " c=" + std::to_string(c) +
                      " mode=" + std::to_string(single_mode) + ")";
             return false;
@@ -3234,7 +3234,7 @@ class TileReader {
           const int group = kSizeGroup[static_cast<int>(bsize)];
           int bit = 0;
           if (!r_.sym(&cdfs_.lossless_tx_size[group][0][0], 2, &bit)) {
-            *error = r_.error();
+            error = r_.error();
             return false;
           }
           plan.lossless_tx_size = bit != 0;
@@ -3242,7 +3242,7 @@ class TileReader {
             if (!find_tx_size(partition::block_width(bsize),
                               partition::block_height(bsize), &plan.tx_w,
                               &plan.tx_h)) {
-              *error = "lossless inter reader: bad inter tx size";
+              error = "lossless inter reader: bad inter tx size";
               return false;
             }
           } else {
@@ -3299,7 +3299,7 @@ class TileReader {
   }
 
   bool read_luma(int r, int c, BlockSize bsize, const BlockPlan& plan,
-                 std::vector<std::uint8_t>* luma_idtx, std::string* error) {
+                 std::vector<std::uint8_t>* luma_idtx, std::string& error) {
     const int bw = partition::block_width(bsize);
     const int bh = partition::block_height(bsize);
     const int x = c * 4;
@@ -3326,14 +3326,14 @@ class TileReader {
       } else if (!predict_intra_block(*recon_[0], px, py, w, h, plan.y_mode,
                                       px > 0, py > 0, opt_.bit_depth,
                                       s.pred.data(), static_cast<std::size_t>(w))) {
-        *error = "luma intra prediction failed";
+        error = "luma intra prediction failed";
         return false;
       }
       CoeffResult cr;
       if (!read_coeff_block(cdfs_, r_, ctx_, 0, px >> 2, py >> 2, w >> 2,
                             h >> 2, bw, bh, w, h, plan.is_inter, plan.fsc,
                             opt_.enable_fsc, idtx, 0, levels.data(), &cr)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       // §5.20.7.27: all_zero leaves TxTypes at DCT_DCT; the inter tx-type
@@ -3388,7 +3388,7 @@ class TileReader {
 
   bool read_chroma(int r, int c, BlockSize bsize, const BlockPlan& plan,
                    const std::vector<std::uint8_t>& luma_idtx,
-                   std::string* error) {
+                   std::string& error) {
     if (!g_.has_chroma) return true;
     const int bw = partition::block_width(bsize);
     const int bh = partition::block_height(bsize);
@@ -3428,7 +3428,7 @@ class TileReader {
           } else if (!predict_intra_block(*recon_[plane], px, py, 4, 4,
                                           plan.uv_mode, px > 0, py > 0,
                                           opt_.bit_depth, s.pred.data(), 4)) {
-            *error = "chroma intra prediction failed";
+            error = "chroma intra prediction failed";
             return false;
           }
           CoeffResult cr;
@@ -3438,7 +3438,7 @@ class TileReader {
                                 opt_.enable_fsc, &idtx,
                                 plane == 2 ? prev_eob_u : 0, levels.data(),
                                 &cr)) {
-            *error = r_.error();
+            error = r_.error();
             return false;
           }
           if (plane == 1) ctx_.eob_u = cr.eob;
@@ -3530,7 +3530,7 @@ struct ObuView {
 };
 
 bool parse_obus(const std::uint8_t* data, std::size_t size,
-                std::vector<ObuView>& out, std::string* error) {
+                std::vector<ObuView>& out, std::string& error) {
   std::size_t pos = 0;
   while (pos < size) {
     std::uint32_t len = 0;
@@ -3538,7 +3538,7 @@ bool parse_obus(const std::uint8_t* data, std::size_t size,
     std::uint8_t byte = 0;
     do {
       if (pos >= size || shift > 28) {
-        *error = "truncated/invalid leb128 OBU size";
+        error = "truncated/invalid leb128 OBU size";
         return false;
       }
       byte = data[pos++];
@@ -3546,7 +3546,7 @@ bool parse_obus(const std::uint8_t* data, std::size_t size,
       shift += 7;
     } while (byte & 0x80);
     if (len == 0 || pos + len > size) {
-      *error = "OBU size exceeds temporal unit";
+      error = "OBU size exceeds temporal unit";
       return false;
     }
     const std::uint8_t header = data[pos];
@@ -3554,7 +3554,7 @@ bool parse_obus(const std::uint8_t* data, std::size_t size,
     const std::uint8_t type = (header >> 2) & 0x1f;
     const std::size_t header_bytes = ext ? 2 : 1;
     if (len < header_bytes) {
-      *error = "OBU shorter than its header";
+      error = "OBU shorter than its header";
       return false;
     }
     ObuView view;
@@ -3804,12 +3804,12 @@ struct BitReader {
     *out = (v << 1) + (b ? 1u : 0u) - m;
     return true;
   }
-  bool align_zero(std::string* error) {
+  bool align_zero(std::string& error) {
     while ((pos & 7) != 0) {
       bool b = false;
       if (!read_bit(&b)) return false;
       if (b) {
-        *error = "non-zero byte alignment bit";
+        error = "non-zero byte alignment bit";
         return false;
       }
     }
@@ -3830,18 +3830,18 @@ struct SeqInfo {
 };
 
 bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
-                           std::string* error) {
+                           std::string& error) {
   BitReader r{obu.payload, obu.size * 8, 0};
   std::uint32_t v = 0;
   if (!r.uvlc(&v) || v != 0) {
-    *error = "sequence header: seq_header_id";
+    error = "sequence header: seq_header_id";
     return false;
   }
   std::uint32_t profile = 0;
   if (!r.read_bits(5, &profile)) return false;
   bool single = false;
   if (!r.read_bit(&single) || single) {
-    *error = "sequence header: expected multi-picture header";
+    error = "sequence header: expected multi-picture header";
     return false;
   }
   if (!r.read_bits(5, &v)) return false;
@@ -3852,14 +3852,14 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   }
   std::uint32_t chroma = 0;
   if (!r.uvlc(&chroma) || chroma > 3) {
-    *error = "sequence header: chroma_format_idc";
+    error = "sequence header: chroma_format_idc";
     return false;
   }
   info->format = static_cast<ChromaFormat>(chroma);
   const bool monochrome = info->format == ChromaFormat::k400;
   std::uint32_t depth = 0;
   if (!r.uvlc(&depth) || depth > 1) {
-    *error = "sequence header: bit_depth_idc";
+    error = "sequence header: bit_depth_idc";
     return false;
   }
   info->bit_depth = depth == 1 ? 8 : 10;
@@ -3870,7 +3870,7 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   info->max_tlayer_id = static_cast<int>(v);
   if (!r.read_bits(3, &v)) return false;
   if (v != 0) {
-    *error = "sequence header: multi-layer streams unsupported";
+    error = "sequence header: multi-layer streams unsupported";
     return false;
   }
   bool monotonic = false;
@@ -3889,19 +3889,19 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
 
   bool crop = false;
   if (!r.read_bit(&crop) || crop) {
-    *error = "sequence header: cropping unsupported";
+    error = "sequence header: cropping unsupported";
     return false;
   }
   bool delay = false;
   bool dmodel = false;
   if (!r.read_bit(&delay) || !r.read_bit(&dmodel) || delay || dmodel) {
-    *error = "sequence header: decoder model unsupported";
+    error = "sequence header: decoder model unsupported";
     return false;
   }
   if (info->max_tlayer_id > 0) {
     bool tlayer_map = false;
     if (!r.read_bit(&tlayer_map) || tlayer_map) {
-      *error = "sequence header: explicit TLayerDependencyMap unsupported";
+      error = "sequence header: explicit TLayerDependencyMap unsupported";
       return false;
     }
   }
@@ -3917,13 +3917,13 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
     return false;
   }
   if (b256 || b128 || sdp || extpart || aspect) {
-    *error = "sequence header: partition config unsupported";
+    error = "sequence header: partition config unsupported";
     return false;
   }
   bool extseg = false, seqseginfo = false;
   if (!r.read_bit(&extseg) || !r.read_bit(&seqseginfo) || extseg ||
       seqseginfo) {
-    *error = "sequence header: segment config unsupported";
+    error = "sequence header: segment config unsupported";
     return false;
   }
   bool dip = false, edge = false, mrls = false, cfl = false, mhccp = false,
@@ -3941,14 +3941,14 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   for (int i = 0; i < 4; ++i) {
     bool mode = false;
     if (!r.read_bit(&mode) || mode) {
-      *error = "sequence header: motion modes unsupported";
+      error = "sequence header: motion modes unsupported";
       return false;
     }
   }
   bool masked = false, refmvs = false;
   if (!r.read_bit(&masked) || !r.read_bit(&refmvs)) return false;
   if (masked || refmvs) {
-    *error = "sequence header: inter config unsupported";
+    error = "sequence header: inter config unsupported";
     return false;
   }
   std::uint32_t oh = 0;
@@ -3963,7 +3963,7 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   bool explicit_map = false, explicit_num = false;
   if (!r.read_bit(&explicit_map) || !r.read_bit(&explicit_num)) return false;
   if (!explicit_map || !explicit_num) {
-    *error = "sequence header: requires explicit ref map/count";
+    error = "sequence header: requires explicit ref map/count";
     return false;
   }
   std::uint32_t nrf = 0;
@@ -3980,7 +3980,7 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   bool tip = false;
   if (!r.read_bit(&tip)) return false;
   if (tip) {
-    *error = "sequence header: TIP unsupported";
+    error = "sequence header: TIP unsupported";
     return false;
   }
   bool mvtraj = false, bawp = false, cwp = false, imp = false, dfsub = false;
@@ -4056,12 +4056,12 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   }
   bool rest = false;
   if (!r.read_bit(&rest) || rest) {
-    *error = "sequence header: restoration unsupported";
+    error = "sequence header: restoration unsupported";
     return false;
   }
   bool ccso = false;
   if (!r.read_bit(&ccso) || ccso) {
-    *error = "sequence header: CCSO unsupported";
+    error = "sequence header: CCSO unsupported";
     return false;
   }
   bool cdefon = false;
@@ -4073,12 +4073,12 @@ bool parse_sequence_header(const ObuView& obu, SeqInfo* info,
   if (!r.read_bits(2, &v)) return false;  // df_par_bits_minus_2
   bool tileinfo = false;
   if (!r.read_bit(&tileinfo) || tileinfo) {
-    *error = "sequence header: seq tile info unsupported";
+    error = "sequence header: seq tile info unsupported";
     return false;
   }
   bool grain = false;
   if (!r.read_bit(&grain) || grain) {
-    *error = "sequence header: film grain unsupported";
+    error = "sequence header: film grain unsupported";
     return false;
   }
   return true;
@@ -4157,27 +4157,27 @@ void write_frame_header(av2enc::BitWriter& w, const Options& opt,
 
 bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
                        const Geometry& g, FrameHeaderInfo* out,
-                       std::size_t* header_bytes, std::string* error) {
+                       std::size_t* header_bytes, std::string& error) {
   BitReader r{obu.payload, obu.size * 8, 0};
   out->keyframe = keyframe;
   bool first_tile_group = false;
   if (!r.read_bit(&first_tile_group) || !first_tile_group) {
-    *error = "frame header: expected is_first_tile_group";
+    error = "frame header: expected is_first_tile_group";
     return false;
   }
   std::uint32_t v = 0;
   if (!r.uvlc(&v) || v != 0) {
-    *error = "frame header: cur_mfh_id";
+    error = "frame header: cur_mfh_id";
     return false;
   }
   if (!r.uvlc(&v) || v != 0) {
-    *error = "frame header: seq_header_id";
+    error = "frame header: seq_header_id";
     return false;
   }
   if (!keyframe) {
     bool inter = false;
     if (!r.read_bit(&inter) || !inter) {
-      *error = "frame header: expected INTER_FRAME";
+      error = "frame header: expected INTER_FRAME";
       return false;
     }
   }
@@ -4188,13 +4188,13 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
     // implicit output picture flag right after it.
     bool implicit = false;
     if (!r.read_bit(&implicit) || !implicit) {
-      *error = "frame header: hidden picture";
+      error = "frame header: hidden picture";
       return false;
     }
   }
   bool override = false;
   if (!r.read_bit(&override) || override) {
-    *error = "frame header: frame_size_override unsupported";
+    error = "frame header: frame_size_override unsupported";
     return false;
   }
   if (!r.read_bits(static_cast<unsigned>(seq.order_hint_bits),
@@ -4204,12 +4204,12 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
   if (!keyframe) {
     bool signal_primary = false;
     if (!r.read_bit(&signal_primary) || signal_primary) {
-      *error = "frame header: primary ref signalling unsupported";
+      error = "frame header: primary ref signalling unsupported";
       return false;
     }
     bool disable_cross = false;
     if (!r.read_bit(&disable_cross) || !disable_cross) {
-      *error = "frame header: cross-frame CDF init unsupported";
+      error = "frame header: cross-frame CDF init unsupported";
       return false;
     }
     if (!r.read_bits(static_cast<unsigned>(seq.num_ref_frames), &v)) {
@@ -4218,13 +4218,13 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
     out->refresh_flags = v;
     bool explicit_map = false;
     if (!r.read_bit(&explicit_map) || !explicit_map) {
-      *error = "frame header: explicit ref map";
+      error = "frame header: explicit ref map";
       return false;
     }
     if (!r.read_bits(3, &v)) return false;
     out->num_total_refs = v;
     if (out->num_total_refs != 1 && out->num_total_refs != 2) {
-      *error = "frame header: only one or two total refs are supported";
+      error = "frame header: only one or two total refs are supported";
       return false;
     }
     const unsigned ref_bits =
@@ -4236,33 +4236,33 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
   if (keyframe) {
     bool intrabc = false;
     if (!r.read_bit(&intrabc) || intrabc) {
-      *error = "frame header: IntrABC unsupported";
+      error = "frame header: IntrABC unsupported";
       return false;
     }
   } else {
     bool intrabc = false;
     if (!r.read_bit(&intrabc) || intrabc) {
-      *error = "frame header: IntrABC unsupported";
+      error = "frame header: IntrABC unsupported";
       return false;
     }
     bool qtr = false;
     if (!r.read_bit(&qtr) || qtr) {
-      *error = "frame header: quarter-pel precision unsupported";
+      error = "frame header: quarter-pel precision unsupported";
       return false;
     }
     bool high = false;
     if (!r.read_bit(&high) || !high) {
-      *error = "frame header: expected 1/8 pel precision";
+      error = "frame header: expected 1/8 pel precision";
       return false;
     }
     bool switchable = false;
     if (!r.read_bit(&switchable) || switchable) {
-      *error = "frame header: switchable interpolation filter";
+      error = "frame header: switchable interpolation filter";
       return false;
     }
     std::uint32_t filt = 0;
     if (!r.read_bits(2, &filt) || filt != 0) {
-      *error = "frame header: expected EIGHTTAP";
+      error = "frame header: expected EIGHTTAP";
       return false;
     }
   }
@@ -4271,20 +4271,20 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
   out->disable_cdf_update = disable_cdf;
   bool uniform = false;
   if (!r.read_bit(&uniform) || !uniform) {
-    *error = "frame header: expected uniform tile spacing";
+    error = "frame header: expected uniform tile spacing";
     return false;
   }
   const int sb_cols = (g.mi_cols + 15) >> 4;
   const int sb_rows = (g.mi_rows + 15) >> 4;
   if (sb_cols > 1) {
     if (!r.read_bits(1, &v) || v != 0) {
-      *error = "frame header: tile cols increment";
+      error = "frame header: tile cols increment";
       return false;
     }
   }
   if (sb_rows > 1) {
     if (!r.read_bits(1, &v) || v != 0) {
-      *error = "frame header: tile rows increment";
+      error = "frame header: tile rows increment";
       return false;
     }
   }
@@ -4295,26 +4295,26 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
   if (!r.read_bit(&seg)) return false;
   out->segmentation_enabled = seg;
   if (seg) {
-    *error = "frame header: segmentation syntax is not written";
+    error = "frame header: segmentation syntax is not written";
     return false;
   }
   bool qm = false;
   if (!r.read_bit(&qm)) return false;
   out->using_qmatrix = qm;
   if (qm) {
-    *error = "frame header: QM unsupported";
+    error = "frame header: QM unsupported";
     return false;
   }
   if (!keyframe) {
     bool reference_select = false;
     if (!r.read_bit(&reference_select)) {
-      *error = "frame header: reference_select";
+      error = "frame header: reference_select";
       return false;
     }
     out->reference_select = reference_select;
     bool skip_mode = false;
     if (!r.read_bit(&skip_mode) || skip_mode) {
-      *error = "frame header: skip_mode_present";
+      error = "frame header: skip_mode_present";
       return false;
     }
   }
@@ -4325,13 +4325,13 @@ bool read_frame_header(const ObuView& obu, bool keyframe, const SeqInfo& seq,
 }
 
 bool planes_from_picture(const Picture& p, const Geometry& g, Plane* out,
-                         std::string* error) {
+                         std::string& error) {
   const std::size_t y_size =
       static_cast<std::size_t>(g.width) * static_cast<std::size_t>(g.height);
   const std::size_t c_size = static_cast<std::size_t>(g.chroma_w) *
                              static_cast<std::size_t>(g.chroma_h);
   if (p.y.size() < y_size) {
-    *error = "picture plane spans are smaller than the geometry";
+    error = "picture plane spans are smaller than the geometry";
     return false;
   }
   out[0].w = g.width;
@@ -4346,7 +4346,7 @@ bool planes_from_picture(const Picture& p, const Geometry& g, Plane* out,
     return true;
   }
   if (p.u.size() < c_size || p.v.size() < c_size) {
-    *error = "picture chroma spans are smaller than the geometry";
+    error = "picture chroma spans are smaller than the geometry";
     return false;
   }
   out[1].w = g.chroma_w;
@@ -4390,14 +4390,14 @@ std::uint64_t plane_error(const Plane& a, const Plane& b) {
 // ---------------------------------------------------------------------------
 
 bool encode_video(std::span<const Picture> pictures, const Options& options,
-                  EncodeResult* result, std::string* error) {
+                  EncodeResult* result, std::string& error) {
   *result = {};
   if (pictures.empty()) {
-    *error = "encode_video requires at least one picture";
+    error = "encode_video requires at least one picture";
     return false;
   }
   if (options.sb_size != 64) {
-    *error = "lossless inter supports sb_size = 64 only";
+    error = "lossless inter supports sb_size = 64 only";
     return false;
   }
   const Picture& first = pictures.front();
@@ -4405,7 +4405,7 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
       first.format != ChromaFormat::k422 &&
       first.format != ChromaFormat::k444 &&
       first.format != ChromaFormat::k400) {
-    *error = "unsupported chroma format";
+    error = "unsupported chroma format";
     return false;
   }
   Geometry g;
@@ -4415,7 +4415,7 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
   for (const Picture& p : pictures) {
     if (p.width != first.width || p.height != first.height ||
         p.format != first.format) {
-      *error = "all pictures must share geometry and format";
+      error = "all pictures must share geometry and format";
       return false;
     }
   }
@@ -4434,7 +4434,7 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     pc.schedule = options.b_schedule ? tl::Schedule::kHierarchicalB
                                      : tl::Schedule::kHierarchicalP;
     if (options.b_schedule && options.temporal_layers > 8) {
-      *error = "lossless B schedule supports a GOP of 4 or 8 pictures";
+      error = "lossless B schedule supports a GOP of 4 or 8 pictures";
       return false;
     }
     pc.dependency = tl::DependencyMode::kAllLower;
@@ -4444,12 +4444,12 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     pc.base_q_idx = 0;
     tl::PlanError plan_error = tl::PlanError::kOk;
     if (!tl::build_plan(pc, layer_plan, &plan_error)) {
-      *error = std::string("temporal-layer plan: ") +
+      error = std::string("temporal-layer plan: ") +
                tl::plan_error_name(plan_error);
       return false;
     }
     if (static_cast<int>(pictures.size()) != options.temporal_layers) {
-      *error = "--video-lossless --video-tlayers codes one closed GOP: the "
+      error = "--video-lossless --video-tlayers codes one closed GOP: the "
                "input must have exactly the GOP size in pictures";
       return false;
     }
@@ -4458,7 +4458,7 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     int bad_coding = -1;
     if (!tl::validate_plan(layer_plan, &validation, &bad_display,
                            &bad_coding)) {
-      *error = std::string("temporal-layer plan invalid: ") +
+      error = std::string("temporal-layer plan invalid: ") +
                tl::plan_error_name(validation);
       return false;
     }
@@ -4517,7 +4517,7 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
         const Picture& ref_picture =
             recon_by_display[static_cast<std::size_t>(ref_display)];
         if (ref_picture.y.empty()) {
-          *error = "lossless reference picture was not coded";
+          error = "lossless reference picture was not coded";
           return false;
         }
         if (!planes_from_picture(ref_picture, g, ref_storage[r], error)) {
@@ -4554,7 +4554,7 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
     std::size_t tile_bytes = 0;
     TileWriter writer(g, options, keyframe, cdfs, ctx, src_ptr, recon_ptr, ref,
                       ref1, num_refs, frame_distance, &stats);
-    if (!writer.encode_tile(tile.data(), tile.size(), &tile_bytes, *error)) {
+    if (!writer.encode_tile(tile.data(), tile.size(), &tile_bytes, error)) {
       return false;
     }
     tile.resize(tile_bytes);
@@ -4621,14 +4621,14 @@ bool encode_video(std::span<const Picture> pictures, const Options& options,
   result->max_abs_recon_error = max_err;
   result->exact = max_err == 0;
   if (options.verify_exact && !result->exact) {
-    *error = "lossless inter reconstruction is not bit exact";
+    error = "lossless inter reconstruction is not bit exact";
     return false;
   }
   return true;
 }
 
 bool decode_video(std::span<const std::vector<std::uint8_t>> units,
-                  DecodeResult* result, std::string* error) {
+                  DecodeResult* result, std::string& error) {
   *result = {};
   SeqInfo seq;
   bool have_seq = false;
@@ -4648,7 +4648,7 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
       }
     }
     if (!have_seq) {
-      *error = "temporal unit is missing a sequence header";
+      error = "temporal unit is missing a sequence header";
       return false;
     }
     if (slots.size() != static_cast<std::size_t>(seq.num_ref_frames)) {
@@ -4672,7 +4672,7 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
       }
     }
     if (frame_obu == nullptr) {
-      *error = "temporal unit is missing a frame OBU";
+      error = "temporal unit is missing a frame OBU";
       return false;
     }
     FrameHeaderInfo header;
@@ -4682,7 +4682,7 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
       return false;
     }
     if (header_bytes > frame_obu->size) {
-      *error = "frame header larger than the OBU payload";
+      error = "frame header larger than the OBU payload";
       return false;
     }
     const std::uint8_t* tile = frame_obu->payload + header_bytes;
@@ -4698,7 +4698,7 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
       for (int r = 0; r < num_refs && r < 2; ++r) {
         const std::uint32_t slot = header.ref_idx[r];
         if (slot >= slots.size() || !slot_valid[slot]) {
-          *error = "frame header references an invalid slot";
+          error = "frame header references an invalid slot";
           return false;
         }
         if (!planes_from_picture(slots[slot], g, ref_storage[r], error)) {
@@ -4736,7 +4736,7 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
     Plane* recon_ptr[3] = {&recon[0], &recon[1], &recon[2]};
     TileReader reader(g, opt, keyframe, cdfs, ctx, recon_ptr, ref, ref1,
                       num_refs, frame_distance, &stats);
-    if (!reader.decode_tile(tile, tile_size, tile_size, *error)) return false;
+    if (!reader.decode_tile(tile, tile_size, tile_size, error)) return false;
 
     Picture pic = picture_from_planes(g, recon, seq.bit_depth);
     stats_out.push_back(stats);
@@ -4775,11 +4775,11 @@ bool decode_video(std::span<const std::vector<std::uint8_t>> units,
 // ---------------------------------------------------------------------------
 
 bool fsc_coeff_roundtrip(const int* levels, const CoeffContext& context,
-                         int* decoded, std::string* error) {
+                         int* decoded, std::string& error) {
   const int w = context.coded_w;
   const int h = context.coded_h;
   if (w <= 0 || h <= 0 || w > 32 || h > 32) {
-    *error = "FSC roundtrip requires a 4x4..32x32 transform";
+    error = "FSC roundtrip requires a 4x4..32x32 transform";
     return false;
   }
   CdfState cdfs;
@@ -4825,12 +4825,12 @@ bool fsc_coeff_roundtrip(const int* levels, const CoeffContext& context,
                        ctx.eob_u);
   }
   if (!sw.ok()) {
-    *error = sw.error();
+    error = sw.error();
     return false;
   }
   std::size_t bytes = 0;
   if (!sw.finish(&bytes)) {
-    *error = sw.error();
+    error = sw.error();
     return false;
   }
 
@@ -4847,19 +4847,19 @@ bool fsc_coeff_roundtrip(const int* levels, const CoeffContext& context,
     if (!read_coeff_block(rcdfs, sr, rtc, ctx.plane, ctx.x4, ctx.y4, w4, h4,
                           w4 * 4, h4 * 4, w, h, ctx.is_inter, ctx.fsc_mode,
                           true, &idtx, ctx.eob_u, got.data(), &cr)) {
-      *error = "FSC reader failed: " + sr.error();
+      error = "FSC reader failed: " + sr.error();
       return false;
     }
   } else {
     if (!read_coeff_block(rcdfs, sr, rtc, ctx.plane, ctx.x4, ctx.y4, w4, h4,
                           w4 * 4, h4 * 4, w, h, ctx.is_inter, ctx.fsc_mode,
                           true, &idtx, ctx.eob_u, got.data(), &cr)) {
-      *error = "FSC reader failed: " + sr.error();
+      error = "FSC reader failed: " + sr.error();
       return false;
     }
   }
   if (!sr.finish()) {
-    *error = sr.error();
+    error = sr.error();
     return false;
   }
   std::memcpy(decoded, got.data(),

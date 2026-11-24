@@ -130,22 +130,22 @@ cudaError_t replicate_plane_16(std::uint16_t* plane, int stride,
 }  // namespace
 
 bool hbd_make_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
-                    std::string* error) {
+                    std::string& error) {
   if (out == nullptr) {
-    if (error != nullptr) *error = "null frame";
+    error = "null frame";
     return false;
   }
   const int depth = depth_value(format.depth);
   if (depth < 8 || depth > 12 || format.width == 0 || format.height == 0 ||
       format.width > 65535U || format.height > 65535U) {
-    if (error != nullptr) *error = "unsupported frame format";
+    error = "unsupported frame format";
     return false;
   }
   const int num_planes = av2enc::fmt::num_planes(format.chroma);
   const int sub_x = av2enc::fmt::subsampling_x(format.chroma);
   const int sub_y = av2enc::fmt::subsampling_y(format.chroma);
   if (num_planes < 1) {
-    if (error != nullptr) *error = "unsupported chroma format";
+    error = "unsupported chroma format";
     return false;
   }
 
@@ -179,21 +179,21 @@ bool hbd_make_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
   frame.total_samples = offset;
   frame.frame_bytes = offset * sizeof(std::uint16_t);
   *out = frame;
-  if (error != nullptr) error->clear();
+  error.clear();
   return true;
 }
 
 bool hbd_make_420_frame(const av2enc::fmt::Format& format, Hbd420Frame* out,
-                        std::string* error) {
+                        std::string& error) {
   if (format.chroma != av2enc::fmt::ChromaFormat::k420) {
-    if (error != nullptr) *error = "hbd_make_420_frame requires 4:2:0";
+    error = "hbd_make_420_frame requires 4:2:0";
     return false;
   }
   return hbd_make_frame(format, out, error);
 }
 
 bool hbd_make_420_frame_10(std::uint32_t width, std::uint32_t height,
-                           Hbd420Frame* out, std::string* error) {
+                           Hbd420Frame* out, std::string& error) {
   const av2enc::fmt::Format format{width, height, av2enc::fmt::ChromaFormat::k420,
                                    av2enc::fmt::BitDepth::k10};
   return hbd_make_420_frame(format, out, error);

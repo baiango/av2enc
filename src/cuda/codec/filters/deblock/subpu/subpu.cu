@@ -20,11 +20,9 @@ namespace {
 
 constexpr int kSubPuThreads = 256;
 
-void set_error(std::string* error, const char* context,
+void set_error(std::string& error, const char* context,
                const std::string& detail) {
-  if (error != nullptr) {
-    *error = std::string(context) + ": " + detail;
-  }
+error = std::string(context) + ": " + detail;
 }
 
 bool buffers_ready(const SubPuBuffers& buffers) noexcept {
@@ -86,7 +84,7 @@ int grid_block_count(int cells) noexcept {
 }  // namespace
 
 SubPuStatus reset_grid(const SubPuBuffers& buffers, cudaStream_t stream,
-                       std::string* error) {
+                       std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "reset_grid", "buffers are not initialized");
     return SubPuStatus::kNotInitialized;
@@ -107,7 +105,7 @@ SubPuStatus reset_grid(const SubPuBuffers& buffers, cudaStream_t stream,
 
 SubPuStatus save_batch(const SubPuBuffers& buffers, const SubPuJob* host_jobs,
                        int count, SubPuResult* host_results,
-                       cudaStream_t stream, std::string* error) {
+                       cudaStream_t stream, std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "save_batch", "buffers are not initialized");
     return SubPuStatus::kNotInitialized;
@@ -165,12 +163,12 @@ SubPuStatus save_batch(const SubPuBuffers& buffers, const SubPuJob* host_jobs,
 
 SubPuStatus save_one(const SubPuBuffers& buffers, const SubPuJob& job,
                      SubPuResult* result, cudaStream_t stream,
-                     std::string* error) {
+                     std::string& error) {
   return save_batch(buffers, &job, 1, result, stream, error);
 }
 
 SubPuStatus build_tx_table(const SubPuBuffers& buffers, cudaStream_t stream,
-                           std::string* error) {
+                           std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "build_tx_table", "buffers are not initialized");
     return SubPuStatus::kNotInitialized;

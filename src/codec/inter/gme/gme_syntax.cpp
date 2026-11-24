@@ -39,8 +39,8 @@ void put_ns(BitWriter& writer, std::uint32_t n, std::uint32_t value) {
   }
 }
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -230,7 +230,7 @@ void scale_warp_model(const std::int32_t base[6], int base_distance, int distanc
 }
 
 bool write_global_param(BitWriter& writer, int /*ref*/, int index, const std::int32_t prev[6],
-                        const GmParams& params, std::string* error) {
+                        const GmParams& params, std::string& error) {
   if (index < 0 || index >= 6) return fail(error, "global param index out of range");
   const int prec_bits = precision_bits(index);
   const int mx = precision_max(index);
@@ -257,7 +257,7 @@ bool write_global_param(BitWriter& writer, int /*ref*/, int index, const std::in
 }
 
 bool read_global_param(GmBitReader& reader, int /*ref*/, int index, const std::int32_t prev[6],
-                       std::int32_t out[6], std::string* error) {
+                       std::int32_t out[6], std::string& error) {
   if (index < 0 || index >= 6) return fail(error, "global param index out of range");
   const int prec_bits = precision_bits(index);
   const int mx = precision_max(index);
@@ -282,7 +282,7 @@ bool read_global_param(GmBitReader& reader, int /*ref*/, int index, const std::i
 }
 
 std::size_t write_global_motion_params(BitWriter& writer, const GmSyntaxContext& context,
-                                       std::string* error) {
+                                       std::string& error) {
   const std::size_t start = writer.bit_size();
   auto fail_write = [&](const std::string& text) {
     fail(error, text);
@@ -383,7 +383,7 @@ std::size_t write_global_motion_params(BitWriter& writer, const GmSyntaxContext&
 
 bool read_global_motion_params(GmBitReader& reader, const GmSyntaxContext& context,
                                std::array<GmParams, kMaxRefsPerFrame>* params_out,
-                               std::string* error, bool* use_global_motion_out) {
+                               std::string& error, bool* use_global_motion_out) {
   if (params_out == nullptr) return fail(error, "global motion: null output");
   for (int ref = 0; ref < kMaxRefsPerFrame; ++ref) {
     (*params_out)[static_cast<std::size_t>(ref)] = make_identity_gm();

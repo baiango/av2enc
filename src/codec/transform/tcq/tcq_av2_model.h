@@ -60,7 +60,7 @@ class Model {
   // and the escape predictor.
   bool init(const BlockInfo& info,
             std::span<const std::int32_t> reference_base_levels_scan,
-            std::string* error = nullptr);
+            std::string& error);
 
   RateModel rate_model() noexcept;
 

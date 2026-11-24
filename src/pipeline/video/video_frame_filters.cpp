@@ -68,7 +68,7 @@ bool InterFrameEncoder::apply_loop_filters(std::string& error) {
       lf.source_stride[plane] = padded.stride[plane];
     }
     if (!post::run_video_loop_filters(lf, options_.loop_filters,
-                                      &filter_plan_, nullptr, &error)) {
+                                      &filter_plan_, nullptr, error)) {
       return false;
     }
   }
@@ -92,7 +92,7 @@ bool InterFrameEncoder::deblock(std::string& error) {
     post::VideoDeblockGrid grid;
     if (!post::build_video_deblock_grid(blocks_, mi_cols_, mi_rows_,
                                         options_.base_q_idx, keyframe_, &grid,
-                                        &error, sub_pus_.data(),
+                                        error, sub_pus_.data(),
                                         static_cast<int>(sub_pus_.size()))) {
       return false;
     }
@@ -124,7 +124,7 @@ bool InterFrameEncoder::deblock(std::string& error) {
                              recon_[2].samples.data()};
     const int stride[3] = {recon_[0].stride, recon_[1].stride,
                            recon_[2].stride};
-    if (!post::apply_video_deblock_host(grid, data, stride, &error)) {
+    if (!post::apply_video_deblock_host(grid, data, stride, error)) {
       return false;
     }
   }

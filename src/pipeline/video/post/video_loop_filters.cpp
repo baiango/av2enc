@@ -25,8 +25,8 @@ namespace {
 
 namespace rest = ::av2enc::restoration;
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -72,7 +72,7 @@ bool parse_env_int(const char* text, int lo, int hi, int* out) {
   return true;
 }
 
-bool parse_perceptual_filter(PerceptualFilterSetting* out, std::string* error) {
+bool parse_perceptual_filter(PerceptualFilterSetting* out, std::string& error) {
   *out = PerceptualFilterSetting{};
   const char* raw = std::getenv("AV2ENC_PERCEPTUAL_FILTER");
   if (raw == nullptr || *raw == '\0') return true;
@@ -144,7 +144,7 @@ bool parse_perceptual_filter(PerceptualFilterSetting* out, std::string* error) {
 }
 
 bool validate_frame(const VideoLoopFilterFrame& frame, bool need_source,
-                    std::string* error) {
+                    std::string& error) {
   if (frame.width <= 0 || frame.height <= 0 || frame.mi_cols <= 0 ||
       frame.mi_rows <= 0) {
     return fail(error, "video loop filters: invalid frame geometry");
@@ -244,7 +244,7 @@ cdef_adapter::FrameView make_cdef_view(const VideoLoopFilterFrame& frame,
 
 bool prepare_cdef(const VideoLoopFilterFrame& frame,
                   const VideoLoopFilterOptions& options,
-                  VideoCdefPlan* plan, std::string* error) {
+                  VideoCdefPlan* plan, std::string& error) {
   *plan = VideoCdefPlan{};
   PerceptualFilterSetting perceptual;
   if (!parse_perceptual_filter(&perceptual, error)) return false;
@@ -434,7 +434,7 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
 }
 
 bool apply_cdef_cpu(VideoLoopFilterFrame& frame, const VideoCdefPlan& plan,
-                    std::string* error, bool* identical) {
+                    std::string& error, bool* identical) {
   if (identical != nullptr) *identical = true;
   if (!plan.enabled) return true;
   if (plan.damping < 3 || plan.damping > 6 || plan.num_strengths < 1 ||
@@ -842,7 +842,7 @@ void trace_ccso_header(const VideoCcsoPlan& plan, bool frame_is_intra,
 
 bool prepare_ccso(const VideoLoopFilterFrame& frame,
                   const VideoLoopFilterOptions& options, VideoCcsoPlan* plan,
-                  std::string* error) {
+                  std::string& error) {
   *plan = VideoCcsoPlan{};
   if (!options.ccso) return true;
   if (options.ccso_bands_log2 < 0 || options.ccso_bands_log2 > 6) {
@@ -1158,8 +1158,8 @@ bool prepare_ccso(const VideoLoopFilterFrame& frame,
   av2enc::still::filters_stream::CcsoHeaderBits bits;
   av2enc::still::filters_stream::write_ccso_params(probe, params, context,
                                                    error, &bits);
-  if (any_plane && probe.bit_size() == 0 && error != nullptr &&
-      !error->empty()) {
+  if (any_plane && probe.bit_size() == 0 &&
+      !error.empty()) {
     return false;
   }
   if (std::getenv("AV2ENC_TRACE_CCSO") != nullptr) {
@@ -1169,7 +1169,7 @@ bool prepare_ccso(const VideoLoopFilterFrame& frame,
 }
 
 bool apply_ccso_cpu(const VideoLoopFilterFrame& frame,
-                    const VideoCcsoPlan& plan, std::string* error) {
+                    const VideoCcsoPlan& plan, std::string& error) {
   if (!plan.enabled) return true;
   rest::CcsoFrameParams params;
   params.ccso_luma_size_log2 = plan.ccso_luma_size_log2;
@@ -1268,7 +1268,7 @@ std::vector<std::uint8_t> build_lr_tx_skip(const VideoLoopFilterFrame& frame) {
 
 bool prepare_lr(const VideoLoopFilterFrame& frame,
                 const VideoLoopFilterOptions& options, VideoLrPlan* plan,
-                std::string* error) {
+                std::string& error) {
   *plan = VideoLrPlan{};
   if (!options.wiener && !options.chroma_lr && !options.pc_wiener) return true;
   if (options.pc_wiener && options.wiener) {
@@ -1311,7 +1311,7 @@ bool prepare_lr(const VideoLoopFilterFrame& frame,
     plan->tx_skip_rows = frame.mi_rows;
     pcw::DecisionResult result;
     std::string pc_error;
-    if (!pcw::DecidePerUnitPcWiener(planes, 0.0, &result, &pc_error)) {
+    if (!pcw::DecidePerUnitPcWiener(planes, 0.0, &result, pc_error)) {
       return fail(error, "video PC-Wiener decision failed: " + pc_error);
     }
     // The sequence header is emitted before the frame is coded, so the tool
@@ -1424,7 +1424,7 @@ bool prepare_lr(const VideoLoopFilterFrame& frame,
 }
 
 bool apply_lr_cpu(const VideoLoopFilterFrame& frame, const VideoLrPlan& plan,
-                  std::string* error) {
+                  std::string& error) {
   if (!plan.enabled) return true;
   std::vector<std::uint8_t> lr_storage[3];
   for (int plane = 0; plane < 3; ++plane) {
@@ -1609,7 +1609,7 @@ void make_gdf_planes(const VideoLoopFilterFrame& frame,
 }
 
 bool prepare_gdf(const VideoLoopFilterFrame& frame, VideoGdfPlan* plan,
-                 std::string* error) {
+                 std::string& error) {
   namespace gdf = ::av2enc::filters::gdf;
   *plan = VideoGdfPlan{};
   if (!frame.frame_is_intra && frame.base_q_idx == 0) {
@@ -1650,7 +1650,7 @@ bool prepare_gdf(const VideoLoopFilterFrame& frame, VideoGdfPlan* plan,
   options.lambda_bits = 0.0;
   gdf::GdfDecision decision;
   if (!gdf::DecideGdf(source, original, context, options, &decision, error)) {
-    return fail(error, "video GDF decision failed: " + *error);
+    return fail(error, "video GDF decision failed: " + error);
   }
   if (!decision.params.frame_enable) return true;
   plan->enabled = true;
@@ -1669,7 +1669,7 @@ bool prepare_gdf(const VideoLoopFilterFrame& frame, VideoGdfPlan* plan,
 }
 
 bool apply_gdf_cpu(const VideoLoopFilterFrame& frame, const VideoGdfPlan& plan,
-                   std::string* error) {
+                   std::string& error) {
   namespace gdf = ::av2enc::filters::gdf;
   if (!plan.enabled) return true;
   std::vector<std::uint16_t> curr16;
@@ -1704,7 +1704,7 @@ bool apply_gdf_cpu(const VideoLoopFilterFrame& frame, const VideoGdfPlan& plan,
   {
     BitWriter scratch;
     std::string derive_error;
-    gdf::WriteFrameGdfParams(scratch, context, &params, &derive_error);
+    gdf::WriteFrameGdfParams(scratch, context, &params, derive_error);
     if (!derive_error.empty()) {
       return fail(error, "video GDF header derivation failed: " + derive_error);
     }
@@ -1712,7 +1712,7 @@ bool apply_gdf_cpu(const VideoLoopFilterFrame& frame, const VideoGdfPlan& plan,
   std::vector<std::uint16_t> out16(lr16);
   if (!gdf::ApplyGdfToFrame(source, inputs, context, params, {}, out16.data(),
                             w, error)) {
-    return fail(error, "video GDF apply failed: " + *error);
+    return fail(error, "video GDF apply failed: " + error);
   }
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
@@ -1732,7 +1732,7 @@ bool apply_gdf_cpu(const VideoLoopFilterFrame& frame, const VideoGdfPlan& plan,
 
 bool apply_stage(VideoFilterStage stage, VideoLoopFilterFrame& frame,
                  const VideoFilterPlan& plan, VideoLoopFilterHooks* hooks,
-                 std::string* error, bool* cdef_identical = nullptr) {
+                 std::string& error, bool* cdef_identical = nullptr) {
   if (hooks != nullptr) {
     std::vector<std::uint8_t> stage_out[3];
     VideoLoopFilterDeviceFrame device;
@@ -1856,14 +1856,14 @@ CcsoFilterOptions ccso_filter_options(const VideoCcsoPlan& plan) {
 bool apply_video_filter_stage(VideoFilterStage stage,
                               VideoLoopFilterFrame& frame,
                               const VideoFilterPlan& plan,
-                              std::string* error) {
+                              std::string& error) {
   return apply_stage(stage, frame, plan, /*hooks=*/nullptr, error);
 }
 
 bool run_video_loop_filters(VideoLoopFilterFrame& frame,
                             const VideoLoopFilterOptions& options,
                             VideoFilterPlan* plan, VideoLoopFilterHooks* hooks,
-                            std::string* error) {
+                            std::string& error) {
   if (plan == nullptr) return fail(error, "video loop filters: null plan");
   *plan = VideoFilterPlan{};
   if (!options.any()) return true;

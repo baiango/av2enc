@@ -656,7 +656,7 @@ bool Writer::code_uv_mode(const BlockSyntax& node, int cw, int ch) {
       }
       if (!cfl::mhccp::write_cfl_alphas(
               enc_, cdfs_.mh_cdfs, syntax, config_.enable_cfl_intra,
-              mhccp_allowed, mh_size_group, &alpha_error)) {
+              mhccp_allowed, mh_size_group, alpha_error)) {
         error_ = "read_cfl_alphas: " + alpha_error;
         return false;
       }
@@ -864,7 +864,7 @@ bool Writer::write_dip(const BlockSyntax& node, int w, int h, std::string& error
   info.dip_mode = node.dip_mode;
   std::string dip_error;
   if (!::av2enc::dip::write_dip_mode_info(context, info, enc_, cdfs_.dip_cdfs,
-                                          &dip_error)) {
+                                          dip_error)) {
     error = "dip_mode_info: " + dip_error;
     return false;
   }
@@ -955,7 +955,7 @@ bool Writer::write_intra_leaf(const BlockSyntax& node, int w, int h, int cw, int
           static_cast<int>(node.mrl_index), node.mrl_sec_index != 0};
       const mrl_stream::MrlSyntaxStatus status = mrl_stream::write_mrl_syntax(
           enc_, cdfs_.mrl, mrl_context_, mrl_block, node.y_mode, mrl_decision,
-          &error_);
+          error_);
       if (status != mrl_stream::MrlSyntaxStatus::kOk) {
         error = "mrl syntax: " +
                 std::string(mrl_stream::mrl_syntax_status_name(status));
@@ -1036,7 +1036,7 @@ bool Writer::write_lr_superblock(const BlockSyntax& node, std::string& error) {
           pcw::UnitDecision decision;
           decision.type = cfg.unit_type[index];
           if (!pcw::WriteUnit(enc_, pc_state_, 0, unit_row, unit_col,
-                              decision, &error)) {
+                              decision, error)) {
             return false;
           }
         }
@@ -1047,13 +1047,13 @@ bool Writer::write_lr_superblock(const BlockSyntax& node, std::string& error) {
       if (!filters_stream::lr_build_decisions(
               lr_state_, node.mi_row, node.mi_col, /*w4=*/16, /*h4=*/16,
               /*tile_mi_row_start=*/0, /*tile_mi_col_start=*/0, &decisions,
-              &error)) {
+              error)) {
         return false;
       }
       if (!filters_stream::lr_write_block(
               enc_, lr_state_, node.mi_row, node.mi_col, /*w4=*/16,
               /*h4=*/16, /*tile_mi_row_start=*/0, /*tile_mi_col_start=*/0,
-              decisions, &error)) {
+              decisions, error)) {
         return false;
       }
     }
@@ -1064,13 +1064,13 @@ bool Writer::write_lr_superblock(const BlockSyntax& node, std::string& error) {
                                           node.mi_col, /*w4=*/16, /*h4=*/16,
                                           /*tile_mi_row_start=*/0,
                                           /*tile_mi_col_start=*/0,
-                                          &decisions, &error)) {
+                                          &decisions, error)) {
     return false;
   }
   if (!filters_stream::lr_write_block(
           enc_, lr_state_, node.mi_row, node.mi_col, /*w4=*/16, /*h4=*/16,
           /*tile_mi_row_start=*/0, /*tile_mi_col_start=*/0, decisions,
-          &error)) {
+          error)) {
     return false;
   }
   return true;
@@ -1097,7 +1097,7 @@ bool Writer::write_cdef_index(const BlockSyntax& node, std::string& error) {
       cost_meter_.active ? enc_.prefix_bits : 0;
   if (!filters_stream::cdef_write_block(
           enc_, cdef_state_, /*tile_mi_col_start=*/0,
-          /*tile_mi_row_start=*/0, node.mi_row, node.mi_col, idx, &error)) {
+          /*tile_mi_row_start=*/0, node.mi_row, node.mi_col, idx, error)) {
     return false;
   }
   if (cost_meter_.active) {
@@ -1127,7 +1127,7 @@ bool Writer::write_ccso_index(const BlockSyntax& node, std::string& error) {
   const std::uint64_t prefix_before =
       cost_meter_.active ? enc_.prefix_bits : 0;
   if (!filters_stream::ccso_write_block(enc_, ccso_state_, node.mi_row,
-                                        node.mi_col, blk, &error)) {
+                                        node.mi_col, blk, error)) {
     return false;
   }
   if (cost_meter_.active) {
@@ -1255,12 +1255,12 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
                                        bool skip_flag,
                                        std::string& step_error) -> bool {
     std::string dq_error;
-    if (!av2enc::deltaq::check_plan_step(dqp_.tile_qp, step, &dq_error)) {
+    if (!av2enc::deltaq::check_plan_step(dqp_.tile_qp, step, dq_error)) {
       step_error = "delta-Q plan: " + dq_error;
       return false;
     }
     if (!video::deltaq::write_delta_qindex(dqp_, enc_, leaf, skip_flag,
-                                           step.reduced_delta, &dq_error)) {
+                                           step.reduced_delta, dq_error)) {
       step_error = "delta_qindex: " + dq_error;
       return false;
     }
@@ -1391,7 +1391,7 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
 #if defined(AV2ENC_VIDEO_DELTAQ)
     if (dqp && seg_pre_skip &&
         !video::deltaq::write_inter_segment_id_pre(
-            dqp_, enc_, node, segment_id, /*skip_flag=*/false, &dq_error)) {
+            dqp_, enc_, node, segment_id, /*skip_flag=*/false, dq_error)) {
       error = "inter_segment_id(preSkip): " + dq_error;
       return false;
     }
@@ -1428,7 +1428,7 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
       if (dqp && !seg_pre_skip &&
           !video::deltaq::write_inter_segment_id_post(
               dqp_, enc_, node, segment_id, node.skip_flag != 0,
-              &dq_error)) {
+              dq_error)) {
         error = "inter_segment_id: " + dq_error;
         return false;
       }
@@ -1477,7 +1477,7 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
 #if defined(AV2ENC_VIDEO_DELTAQ)
       if (dqp && !seg_pre_skip &&
           !video::deltaq::write_inter_segment_id_post(
-              dqp_, enc_, node, segment_id, /*skip_flag=*/false, &dq_error)) {
+              dqp_, enc_, node, segment_id, /*skip_flag=*/false, dq_error)) {
         error = "inter_segment_id: " + dq_error;
         return false;
       }
@@ -1504,7 +1504,7 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
     if (dqp && !chroma_part &&
         !video::deltaq::write_intra_segment_id(
             dqp_, enc_, node, segment_id, /*skip_flag=*/false,
-            &dq_error)) {
+            dq_error)) {
       error = "intra_segment_id: " + dq_error;
       return false;
     }
@@ -1545,7 +1545,7 @@ bool Writer::write_block(const BlockSyntax& node, std::string& error) {
   // §5.20.5.7: record SegmentIds for the following leaves' prediction.
   if (dqp &&
       !video::deltaq::commit_segment_block(dqp_, node, segment_id,
-                                           &dq_error)) {
+                                           dq_error)) {
     error = "commit_segment_block: " + dq_error;
     return false;
   }

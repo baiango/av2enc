@@ -80,7 +80,7 @@ FrameStats stats_for(int tile_count, double mad) {
 }
 
 bool configure_and_plan(const PipelineConfig& config, const FrameStats& stats,
-                        FramePipelinePlan& plan, std::string* error) {
+                        FramePipelinePlan& plan, std::string& error) {
   PipelinePlanner planner;
   if (!planner.configure(config, error)) {
     return false;

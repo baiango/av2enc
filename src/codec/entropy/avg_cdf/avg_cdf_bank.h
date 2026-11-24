@@ -133,12 +133,12 @@ class CdfBank {
   // config.reference_contexts != 0 every table must also provide
   // reference_base with reference_stride == symbols + 1.
   bool init(std::span<const CdfTable> tables, const CdfBankConfig& config,
-            std::string* error = nullptr);
+            std::string& error);
 
   // Owning initialisation: allocates frame/tile/saved/defaults (and reference
   // contexts when requested) and copies the default arrays.
   bool init_owned(std::span<const CdfSpec> specs, const CdfBankConfig& config,
-                  std::string* error = nullptr);
+                  std::string& error);
 
   const CdfBankConfig& config() const noexcept { return config_; }
   std::size_t table_count() const noexcept { return tables_.size(); }
@@ -189,7 +189,7 @@ class CdfBank {
   bool blend_reference(std::uint32_t ctx) noexcept;
 
  private:
-  bool validate(std::string* error) const;
+  bool validate(std::string& error) const;
 
   CdfBankConfig config_{};
   std::vector<CdfTable> tables_;

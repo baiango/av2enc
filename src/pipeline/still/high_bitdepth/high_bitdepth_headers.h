@@ -71,7 +71,7 @@ std::vector<std::uint8_t> assemble_high_bitdepth_still_picture(
 // Returns true when the config is a legal M10 stream configuration:
 // 10-bit 4:2:0 geometry, 1 <= base_q_idx <= 90 (slice-0 tables) and
 // base_q_idx <= fmt::max_quantizer(10) == 303.
-[[nodiscard]] bool validate_config(const HighBitDepthConfig& config, std::string* error);
+[[nodiscard]] bool validate_config(const HighBitDepthConfig& config, std::string& error);
 
 // Exact syntax-bit counts for the sizes exercised by the M10 test/gate.
 struct HeaderBitCounts {

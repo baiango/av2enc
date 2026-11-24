@@ -159,8 +159,9 @@ BvStack build_bv_stack(const FrameView& frame, const IbcConfig& config,
 
   for (int i = 0; i < stack.count; ++i) {
     BvStackEntry& e = stack.entries[static_cast<std::size_t>(i)];
+    std::string ignored;
     e.valid = is_bv_valid(frame, config, state, mi_row, mi_col, bsize, e.bv,
-                          nullptr);
+                          ignored);
   }
   return stack;
 }
@@ -175,10 +176,10 @@ int find_bv_index(const BvStack& stack, BlockVector bv) noexcept {
 bool is_bv_offset_valid(const FrameView& frame, const IbcConfig& config,
                         const IbcBufferState& state, int mi_row, int mi_col,
                         int bsize, BlockVector bv, int dx, int dy,
-                        std::string* reason) {
+                        std::string& reason) {
   const BlockVector offset{bv.row + dy * 8, bv.col + dx * 8};
   if (!bv_in_range(offset)) {
-    if (reason != nullptr) *reason = "offset block vector is outside MV range";
+    reason = "offset block vector is outside MV range";
     return false;
   }
   return is_bv_valid(frame, config, state, mi_row, mi_col, bsize, offset,
@@ -187,7 +188,7 @@ bool is_bv_offset_valid(const FrameView& frame, const IbcConfig& config,
 
 bool is_bv_border_valid(const FrameView& frame, const IbcConfig& config,
                         const IbcBufferState& state, int mi_row, int mi_col,
-                        int bsize, BlockVector bv, std::string* reason) {
+                        int bsize, BlockVector bv, std::string& reason) {
   // §6.19.5.4: is_offset_mv_valid(-1, -1) guarantees the extra reference
   // pixels fetched for morph prediction / block copy are inside the tile.
   return is_bv_offset_valid(frame, config, state, mi_row, mi_col, bsize, bv,
@@ -196,19 +197,19 @@ bool is_bv_border_valid(const FrameView& frame, const IbcConfig& config,
 
 bool is_bv_encodable(const FrameView& frame, const IbcConfig& config,
                      const IbcBufferState& state, int mi_row, int mi_col,
-                     int bsize, BlockVector bv, std::string* reason) {
+                     int bsize, BlockVector bv, std::string& reason) {
   if (!bv_in_range(bv)) {
-    if (reason != nullptr) *reason = "block vector is outside MV range";
+    reason = "block vector is outside MV range";
     return false;
   }
   std::string why;
-  if (!is_bv_valid(frame, config, state, mi_row, mi_col, bsize, bv, &why)) {
-    if (reason != nullptr) *reason = why;
+  if (!is_bv_valid(frame, config, state, mi_row, mi_col, bsize, bv, why)) {
+    reason = why;
     return false;
   }
   if (!is_bv_border_valid(frame, config, state, mi_row, mi_col, bsize, bv,
-                          &why)) {
-    if (reason != nullptr) *reason = "±1 reference border: " + why;
+                          why)) {
+    reason = "±1 reference border: " + why;
     return false;
   }
   return true;

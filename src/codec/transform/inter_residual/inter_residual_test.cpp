@@ -158,14 +158,14 @@ struct OwnedInput {
 // the decision's `recon` is checked against the transform contract rather than
 // against itself.
 bool verify_recon(const OwnedInput& owned, const BlockDecision& decision,
-                  std::string* error) {
+                  std::string& error) {
   for (int plane = 0; plane < kResidualPlaneCount; ++plane) {
     const PlaneResidual& residual = decision.plane[plane];
     const auto params = av2enc::txv::make_tx_params(
         static_cast<av2enc::txv::TxSize>(residual.tx_size),
         static_cast<av2enc::txv::TxType>(residual.tx_type));
     if (!params.has_value()) {
-      *error = "bad tx params";
+      error = "bad tx params";
       return false;
     }
     std::vector<std::int32_t> dequant(
@@ -181,7 +181,7 @@ bool verify_recon(const OwnedInput& owned, const BlockDecision& decision,
                          static_cast<int>(recon_residual[i]),
                      0, 255);
       if (residual.recon[i] != expected) {
-        *error = "recon mismatch on plane " + std::to_string(plane);
+        error = "recon mismatch on plane " + std::to_string(plane);
         return false;
       }
     }

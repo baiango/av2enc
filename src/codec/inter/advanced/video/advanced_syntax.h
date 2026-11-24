@@ -208,16 +208,16 @@ struct BawpSymbols {
 
 // `is_warp` is present iff allow_warpmv_mode && min(w,h) >= 8.
 [[nodiscard]] bool write_is_warp(av2::Encoder& enc, AdvancedCdfState& cdfs, int warp_mv_ctx,
-                   bool value, std::string* error);
+                   bool value, std::string& error);
 
 // `warp_mv` is present only when is_warp == 1 and !force_integer_mv.
 [[nodiscard]] bool write_warp_mv(av2::Encoder& enc, AdvancedCdfState& cdfs, bool value,
-                   std::string* error);
+                   std::string& error);
 
 // BAWP flags, immediately after `single_mode` (§5.20.7.6).
 [[nodiscard]] bool write_bawp_symbols(av2::Encoder& enc, AdvancedCdfState& cdfs,
                         const BawpSymbols& symbols, bool has_chroma,
-                        std::string* error);
+                        std::string& error);
 
 // read_motion_mode(): exactly one of the extended/local/inter-intra paths.
 // `is_warpmv`/`is_warp_newmv` select the WARPMV / WARP_NEWMV branches.
@@ -241,66 +241,66 @@ struct MotionModeSymbols {
 };
 
 [[nodiscard]] bool write_motion_mode(av2::Encoder& enc, AdvancedCdfState& cdfs, int mi_size,
-                       const MotionModeSymbols& symbols, std::string* error);
+                       const MotionModeSymbols& symbols, std::string& error);
 
 // `warp_idx` loop.  `ref_warp_idx` is 0..3; 3 encodes "no candidate" (three
 // one-bits).  Present for YMode == WARPMV or motion_mode == DELTAWARP.
 [[nodiscard]] bool write_warp_idx(av2::Encoder& enc, AdvancedCdfState& cdfs, int ref_warp_idx,
-                    std::string* error);
+                    std::string& error);
 
 // `warpmv_with_mvd` (only YMode == WARPMV && RefWarpIdx < 2).
 [[nodiscard]] bool write_warpmv_with_mvd(av2::Encoder& enc, AdvancedCdfState& cdfs,
-                           bool value, std::string* error);
+                           bool value, std::string& error);
 
 // `read_warp_delta()` (only motion_mode == DELTAWARP and YMode == WARP_NEWMV).
 // `six_param` must equal enable_six_param_warp_delta && warp_idx == 1.
 [[nodiscard]] bool write_warp_delta(av2::Encoder& enc, AdvancedCdfState& cdfs, int mi_size,
                       const WarpDeltaSymbols& symbols, bool six_param,
-                      std::string* error);
+                      std::string& error);
 
 // `read_interintra_mode(isWarp)` when YMode == WARPMV (isWarp = 1) or the
 // INTERINTRA branch of read_motion_mode() (isWarp = 0).  When
 // `symbols.inter_intra` is false nothing else is written.
 [[nodiscard]] bool write_inter_intra(av2::Encoder& enc, AdvancedCdfState& cdfs, bool is_warp,
                        int mi_size, const MotionModeSymbols& symbols,
-                       std::string* error);
+                       std::string& error);
 
 // read_wedge_mode() without the trailing wedge_sign bit.
 [[nodiscard]] bool write_wedge_mode(av2::Encoder& enc, AdvancedCdfState& cdfs,
-                      const WedgeModeSymbols& symbols, std::string* error);
+                      const WedgeModeSymbols& symbols, std::string& error);
 
 // L(1) wedge_sign.  Inter-intra forces 0 and never calls this.
-[[nodiscard]] bool write_wedge_sign(av2::Encoder& enc, bool sign, std::string* error);
+[[nodiscard]] bool write_wedge_sign(av2::Encoder& enc, bool sign, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Staged *readers* — exact inverses, used by the round-trip tests.
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] bool read_is_warp(av2::Decoder& dec, AdvancedCdfState& cdfs, int warp_mv_ctx,
-                  bool* value, std::string* error);
+                  bool* value, std::string& error);
 [[nodiscard]] bool read_warp_mv(av2::Decoder& dec, AdvancedCdfState& cdfs, bool* value,
-                  std::string* error);
+                  std::string& error);
 [[nodiscard]] bool read_bawp_symbols(av2::Decoder& dec, AdvancedCdfState& cdfs,
                        int explicit_ctx, bool has_chroma, BawpSymbols* out,
-                       std::string* error);
+                       std::string& error);
 [[nodiscard]] bool read_motion_mode(av2::Decoder& dec, AdvancedCdfState& cdfs, int size_group,
                       bool is_warp_newmv, bool extend_allowed, bool local_allowed,
                       int extend_warp_ctx, int local_warp_ctx,
                       bool inter_intra_allowed, bool wedge_allowed,
-                      MotionModeSymbols* out, std::string* error);
+                      MotionModeSymbols* out, std::string& error);
 [[nodiscard]] bool read_warp_idx(av2::Decoder& dec, AdvancedCdfState& cdfs, int* ref_warp_idx,
-                   std::string* error);
+                   std::string& error);
 [[nodiscard]] bool read_warpmv_with_mvd(av2::Decoder& dec, AdvancedCdfState& cdfs, bool* value,
-                          std::string* error);
+                          std::string& error);
 [[nodiscard]] bool read_warp_delta(av2::Decoder& dec, AdvancedCdfState& cdfs, int mi_size,
-                     bool six_param, WarpDeltaSymbols* out, std::string* error);
+                     bool six_param, WarpDeltaSymbols* out, std::string& error);
 [[nodiscard]] bool read_inter_intra(av2::Decoder& dec, AdvancedCdfState& cdfs, bool is_warp,
                       int mi_size, bool wedge_allowed, bool* inter_intra,
                       int* interintra_mode, bool* wedge_interintra,
-                      int* wedge_index, std::string* error);
+                      int* wedge_index, std::string& error);
 [[nodiscard]] bool read_wedge_mode(av2::Decoder& dec, AdvancedCdfState& cdfs,
-                     WedgeModeSymbols* out, std::string* error);
-[[nodiscard]] bool read_wedge_sign(av2::Decoder& dec, int* sign, std::string* error);
+                     WedgeModeSymbols* out, std::string& error);
+[[nodiscard]] bool read_wedge_sign(av2::Decoder& dec, int* sign, std::string& error);
 
 
 // ---------------------------------------------------------------------------
@@ -375,12 +375,12 @@ struct AdvancedBlockCoding {
 [[nodiscard]] bool write_advanced_inter_block(av2::Encoder& enc, AdvancedCdfState& cdfs,
                                 const AdvancedBlockCoding& block,
                                 const BaselineInterWriter& baseline,
-                                std::string* error);
+                                std::string& error);
 
 [[nodiscard]] bool read_advanced_inter_block(av2::Decoder& dec, AdvancedCdfState& cdfs,
                                const AdvancedBlockCoding& gates,
                                const BaselineInterReader& baseline,
-                               AdvancedBlockCoding* out, std::string* error);
+                               AdvancedBlockCoding* out, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Sequence/frame header bits.
@@ -412,18 +412,18 @@ struct SequenceAdvancedConfig {
 // Returns false only for a self-inconsistent config.
 [[nodiscard]] bool write_sequence_motion_mode_config(av2enc::BitWriter* writer,
                                        const SequenceAdvancedConfig& config,
-                                       std::string* error);
+                                       std::string& error);
 
 // The three tail fields, in order, placed after `enable_tip`/`enable_mv_traj`.
 [[nodiscard]] bool write_sequence_bawp_cwp_bits(av2enc::BitWriter* writer,
                                   const SequenceAdvancedConfig& config,
-                                  std::string* error);
+                                  std::string& error);
 
 // Placed with `enable_global_motion` in the sequence tail (after
 // enable_flex_mvres).  Kept separate because M2 currently hard-codes 0.
 [[nodiscard]] bool write_sequence_global_motion_bit(av2enc::BitWriter* writer,
                                       const SequenceAdvancedConfig& config,
-                                      std::string* error);
+                                      std::string& error);
 
 struct FrameAdvancedConfig {
   bool frame_is_intra = false;
@@ -443,7 +443,7 @@ struct FrameAdvancedConfig {
 // seq_frame_motion_modes_present_flag is 1.
 [[nodiscard]] bool write_frame_motion_mode_bits(av2enc::BitWriter* writer,
                                   const FrameAdvancedConfig& config,
-                                  std::string* error);
+                                  std::string& error);
 
 // §5.18.2 after skip_mode_params():
 //   if (!FrameIsIntra && enable_bawp) f(1) allow_bawp
@@ -451,7 +451,7 @@ struct FrameAdvancedConfig {
 //       f(1) allow_warpmv_mode
 [[nodiscard]] bool write_frame_bawp_warp_bits(av2enc::BitWriter* writer,
                                 const FrameAdvancedConfig& config,
-                                std::string* error);
+                                std::string& error);
 
 }  // namespace av2enc::video::adv
 

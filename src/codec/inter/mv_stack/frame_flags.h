@@ -72,7 +72,7 @@ struct FrameMotionModes {
 
 FrameStatus derive_frame_enabled_motion_modes(
     const SequenceMotionModes& seq, const bool frame_override[kMotionModes],
-    FrameMotionModes* out, std::string* why = nullptr);
+    FrameMotionModes* out, std::string& why);
 
 struct WarpmvMode {
   bool present = false;  // the f(1) syntax element is in the frame header
@@ -82,7 +82,7 @@ struct WarpmvMode {
 FrameStatus derive_allow_warpmv_mode(const SequenceMotionModes& seq,
                                      const FrameMotionModes& frame,
                                      WarpmvMode* out,
-                                     std::string* why = nullptr);
+                                     std::string& why);
 
 // Block-level gates implied by allow_warpmv_mode.
 struct WarpBlockGates {
@@ -95,41 +95,41 @@ FrameStatus derive_warp_block_gates(bool allow_warpmv_mode,
                                     bool force_integer_mv, int block_width,
                                     int block_height, bool is_warp,
                                     WarpBlockGates* out,
-                                    std::string* why = nullptr);
+                                    std::string& why);
 
 // Checks the emitted/decoded block against the bit's constraints.
 FrameStatus validate_warp_block(bool allow_warpmv_mode, bool force_integer_mv,
                                 int block_width, int block_height, bool is_warp,
                                 bool warp_mv, int y_mode, int motion_mode,
-                                std::string* why = nullptr);
+                                std::string& why);
 
 // Bit-level writer/reader.  `write_allow_warpmv_mode` writes the bit iff `out`
 // says it is present and returns false on a self-inconsistent request.
 [[nodiscard]] bool write_allow_warpmv_mode(BitWriter* writer, const SequenceMotionModes& seq,
                              const FrameMotionModes& frame,
-                             WarpmvMode* out, std::string* error);
+                             WarpmvMode* out, std::string& error);
 [[nodiscard]] bool read_allow_warpmv_mode(BitReader* reader, const SequenceMotionModes& seq,
                             const FrameMotionModes& frame, WarpmvMode* out,
-                            std::string* error);
+                            std::string& error);
 
 // §5.4.6 writer: the four motion-mode bits, the presence flag (only when any
 // mode is enabled) and enable_six_param_warp_delta (only when DELTAWARP is
 // enabled).
 [[nodiscard]] bool write_sequence_motion_modes(BitWriter* writer,
                                  const SequenceMotionModes& config,
-                                 std::string* error);
+                                 std::string& error);
 [[nodiscard]] bool read_sequence_motion_modes(BitReader* reader,
                                 SequenceMotionModes* config,
-                                std::string* error);
+                                std::string& error);
 
 // §5.18.2 writer: one f(1) per sequence-enabled mode when the sequence says
 // the frame may override them.
 [[nodiscard]] bool write_frame_motion_modes(BitWriter* writer,
                               const SequenceMotionModes& seq,
                               const FrameMotionModes& frame,
-                              std::string* error);
+                              std::string& error);
 [[nodiscard]] bool read_frame_motion_modes(BitReader* reader,
                              const SequenceMotionModes& seq,
-                             FrameMotionModes* frame, std::string* error);
+                             FrameMotionModes* frame, std::string& error);
 
 }  // namespace av2enc::inter::mv_stack_full

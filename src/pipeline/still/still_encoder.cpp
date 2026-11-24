@@ -600,7 +600,7 @@ bool encode_still_picture(const StillPicture& picture,
     dcdeltaq::DeltaQSearchResult search_result;
     std::string search_error;
     if (!dcdeltaq::search_frame_delta_q(view, search_config, &search_result,
-                                        &search_error)) {
+                                        search_error)) {
       error = "delta-q search failed: " + search_error;
       return false;
     }
@@ -686,7 +686,7 @@ bool encode_still_picture(const StillPicture& picture,
     segment_params.update_map = true;
     std::string seg_error;
     if (!rc::set_segment_alt_q(segment_params, /*segment_id=*/1,
-                               options.per_segment_q_delta, &seg_error)) {
+                               options.per_segment_q_delta, seg_error)) {
       error = "per-segment Q: " + seg_error;
       return false;
     }
@@ -776,7 +776,7 @@ bool encode_still_picture(const StillPicture& picture,
       }
     }
     if (any_skip) mi_inputs.skip = cdef_skip_grid.data();
-    if (!cuda::still::still_cdef_build_mi_grids(mi_inputs, &cdef_grids, &error)) {
+    if (!cuda::still::still_cdef_build_mi_grids(mi_inputs, &cdef_grids, error)) {
       return false;
     }
 
@@ -839,7 +839,7 @@ bool encode_still_picture(const StillPicture& picture,
     cdef_options.on_skip_txfm = options.cdef_on_skip_txfm;
     cdef_options.include_off = true;
     if (!cuda::still::still_cdef_plan(cdef_frame, cdef_options, &cdef_plan,
-                                &error)) {
+                                error)) {
       error = "cdef plan failed: " + error;
       return false;
     }
@@ -1557,7 +1557,7 @@ bool encode_still_picture(const StillPicture& picture,
     result.lr_tx_skip_rows = encoder.mi_rows();
 
     pcw::DecisionResult pc_result;
-    if (!pcw::DecidePerUnitPcWiener(planes, 0.0, &pc_result, &error)) {
+    if (!pcw::DecidePerUnitPcWiener(planes, 0.0, &pc_result, error)) {
       error = "PC-Wiener decision failed: " + error;
       return false;
     }
@@ -1673,7 +1673,7 @@ bool encode_still_picture(const StillPicture& picture,
     gdf_options.lambda_bits = 0.0;
     gdf::GdfDecision gdf_decision;
     if (!gdf::DecideGdf(source, original, gdf_context, gdf_options,
-                        &gdf_decision, &error)) {
+                        &gdf_decision, error)) {
       error = "GDF decision failed: " + error;
       return false;
     }
@@ -1682,7 +1682,7 @@ bool encode_still_picture(const StillPicture& picture,
       params.per_block = false;  // M1 codes no use_gdf symbols
       std::vector<std::uint16_t> out16(lr16);
       if (!gdf::ApplyGdfToFrame(source, gdf_options.filter, gdf_context, params,
-                                {}, out16.data(), gdf_w, &error)) {
+                                {}, out16.data(), gdf_w, error)) {
         error = "GDF apply failed: " + error;
         return false;
       }
@@ -1741,7 +1741,7 @@ bool encode_still_picture(const StillPicture& picture,
       view.c_stride = encoder.recon(1).width;
       grain::GrainFramePlan plan;
       if (!planner.PlanFrame(view, /*frame_index=*/0, /*tlayer_id=*/0,
-                             /*mlayer_id=*/0, &plan, &error)) {
+                             /*mlayer_id=*/0, &plan, error)) {
         error = "film grain planner failed: " + error;
         return false;
       }
@@ -1752,7 +1752,7 @@ bool encode_still_picture(const StillPicture& picture,
         }
         std::string grain_error;
         config.film_grain_obu =
-            grain::MakeFilmGrainObu(plan.obu, &grain_error);
+            grain::MakeFilmGrainObu(plan.obu, grain_error);
         if (config.film_grain_obu.empty()) {
           error = "film grain OBU failed: " + grain_error;
           return false;
@@ -1791,7 +1791,7 @@ bool encode_still_picture(const StillPicture& picture,
       model = grain::NormalizeModel(model, grain::GrainChromaIdc::k420);
       std::string grain_why;
       if (!grain::ValidateModel(model, grain::GrainChromaIdc::k420,
-                                &grain_why)) {
+                                grain_why)) {
         error = "film grain model is invalid: " + grain_why;
         return false;
       }
@@ -1800,7 +1800,7 @@ bool encode_still_picture(const StillPicture& picture,
       obu.chroma_idc = grain::GrainChromaIdc::k420;
       obu.models[0] = model;
       std::string grain_error;
-      config.film_grain_obu = grain::MakeFilmGrainObu(obu, &grain_error);
+      config.film_grain_obu = grain::MakeFilmGrainObu(obu, grain_error);
       if (config.film_grain_obu.empty()) {
         error = "film grain OBU failed: " + grain_error;
         return false;
@@ -1853,7 +1853,7 @@ bool encode_still_picture(const StillPicture& picture,
     obu.levels[level].is_default = false;
     obu.levels[level].user = config.qm.user_qm[level];
     std::string qm_error;
-    config.qm_obu = qm::make_quantizer_matrix_obu(obu, &qm_error);
+    config.qm_obu = qm::make_quantizer_matrix_obu(obu, qm_error);
     if (config.qm_obu.empty()) {
       error = "quantizer_matrix_obu failed: " + qm_error;
       return false;

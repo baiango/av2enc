@@ -170,7 +170,7 @@ bool encode_long_term_closed(std::span<const VideoInputFrame> frames,
   std::vector<lt::TemporalUnitPlan> units;
   units.reserve(frames.size());
   lt::FrameHeader key;
-  if (!lt::plan_closed_loop_key(config, 0, /*long_term_id=*/0, &key, &error)) {
+  if (!lt::plan_closed_loop_key(config, 0, /*long_term_id=*/0, &key, error)) {
     return false;
   }
   units.emplace_back();
@@ -183,14 +183,14 @@ bool encode_long_term_closed(std::span<const VideoInputFrame> frames,
     const std::vector<std::uint8_t> refs{ref_slot};
     if (!lt::plan_inter_frame(config, lt::FrameRole::kRegular,
                               static_cast<std::uint32_t>(i), refs,
-                              refresh_slot, true, &header, &error)) {
+                              refresh_slot, true, &header, error)) {
       return false;
     }
     units.emplace_back();
     units.back().frames.push_back(lt::PlannedFrame{header, plain.tiles[i]});
   }
   lt::AssembledSequence assembled;
-  if (!lt::assemble_sequence(config, units, &assembled, &error)) return false;
+  if (!lt::assemble_sequence(config, units, &assembled, error)) return false;
   std::vector<std::int32_t> output_index;
   output_index.reserve(frames.size());
   for (std::size_t i = 0; i < frames.size(); ++i) {
@@ -241,17 +241,17 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
 
   lt::FrameHeader clk;
   if (!lt::plan_closed_loop_key(config, 0, /*long_term_id=*/0, &clk,
-                                &error)) {
+                                error)) {
     return false;
   }
   lt::PoolEvents events;
   if (!lt::apply_frame(config, clk, /*first_picture_in_tu=*/true, &pool,
-                       &events, &error)) {
+                       &events, error)) {
     return false;
   }
   lt::FrameHeader olk;
   if (!lt::plan_open_loop_key(config, pool, /*order_hint=*/1, /*olk_slot=*/1,
-                              /*olk_long_term_id=*/-1, {}, &olk, &error)) {
+                              /*olk_long_term_id=*/-1, {}, &olk, error)) {
     return false;
   }
   lt::FrameHeader p2;
@@ -259,7 +259,7 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
     const std::vector<std::uint8_t> refs{1};
     if (!lt::plan_inter_frame(config, lt::FrameRole::kRegular,
                               /*order_hint=*/2, refs, /*refresh_slot=*/2,
-                              true, &p2, &error)) {
+                              true, &p2, error)) {
       return false;
     }
   }
@@ -268,7 +268,7 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
     const std::vector<std::uint8_t> refs{0};
     if (!lt::plan_inter_frame(config, lt::FrameRole::kRegular,
                               /*order_hint=*/3, refs, /*refresh_slot=*/3,
-                              true, &p3_header, &error)) {
+                              true, &p3_header, error)) {
       return false;
     }
   }
@@ -278,7 +278,7 @@ bool encode_olk_sequence(std::span<const VideoInputFrame> frames,
   units[1].frames.push_back(lt::PlannedFrame{p2, olk_p2.tiles[1]});
   units[2].frames.push_back(lt::PlannedFrame{p3_header, p3.tiles[1]});
   lt::AssembledSequence assembled;
-  if (!lt::assemble_sequence(config, units, &assembled, &error)) return false;
+  if (!lt::assemble_sequence(config, units, &assembled, error)) return false;
 
   std::vector<std::int32_t> output_index{0, -1, 1, 2};
   std::vector<std::uint32_t> tile_bytes{key0.tile_bytes[0],

@@ -13,8 +13,8 @@
 namespace av2enc::filters::gdf {
 namespace {
 
-bool fail(std::string* error, const std::string& message) {
-  if (error != nullptr) *error = message;
+bool fail(std::string& error, const std::string& message) {
+  error = message;
   return false;
 }
 
@@ -92,7 +92,7 @@ bool ApplyGdfToFrame(const GdfSourceFrame& source,
                      const FrameGdfContext& context,
                      const FrameGdfParams& params,
                      const std::vector<std::uint8_t>& unit_flags,
-                     std::uint16_t* out, int out_stride, std::string* error) {
+                     std::uint16_t* out, int out_stride, std::string& error) {
   if (source.curr == nullptr || out == nullptr) {
     return fail(error, "GDF: null luma buffer");
   }
@@ -168,7 +168,7 @@ bool MeasureUseGdfSymbols(const GdfUnitLayout& layout,
                           const FrameGdfParams& params, int sb_size,
                           const std::vector<std::uint8_t>& flags,
                           bool disable_cdf_update, std::int64_t* bytes,
-                          std::int64_t* bits, std::string* error) {
+                          std::int64_t* bits, std::string& error) {
   if (bytes == nullptr || bits == nullptr) {
     return fail(error, "GDF: null bit-count output");
   }
@@ -232,7 +232,7 @@ bool MeasureUseGdfSymbols(const GdfUnitLayout& layout,
 bool DecideGdf(const GdfSourceFrame& recon, const GdfPlane& original,
                const FrameGdfContext& context,
                const GdfDecisionOptions& options, GdfDecision* decision,
-               std::string* error) {
+               std::string& error) {
   if (decision == nullptr) return fail(error, "GDF: null decision");
   *decision = GdfDecision{};
   if (!context.enable_gdf) {

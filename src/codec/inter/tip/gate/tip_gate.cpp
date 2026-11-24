@@ -481,7 +481,7 @@ struct Picture {
 };
 
 bool load_y4m(const std::string& path, int max_frames,
-              std::vector<Picture>* out, std::string* error) {
+              std::vector<Picture>* out, std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
@@ -498,7 +498,7 @@ bool load_y4m(const std::string& path, int max_frames,
 
 bool write_ivf(const std::string& path,
                const std::vector<std::vector<std::uint8_t>>& units, int width,
-               int height, std::string* error) {
+               int height, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
@@ -525,13 +525,13 @@ std::string find_dav2d() {
 }
 
 bool run_decoder(const std::string& decoder, const std::string& ivf,
-                 const std::string& y4m, std::string* error) {
+                 const std::string& y4m, std::string& error) {
   const std::string command = "\"" + decoder + "\" -q -i \"" + ivf +
                               "\" -o \"" + y4m +
                               "\" --strict 1 --threads 1 >/dev/null 2>&1";
   const int status = std::system(command.c_str());
   if (status != 0) {
-    *error = "dav2d exited with status " + std::to_string(status);
+    error = "dav2d exited with status " + std::to_string(status);
     return false;
   }
   return true;
@@ -679,7 +679,7 @@ struct TipFrameResult {
 bool build_tip_frame(const Picture& past, const Picture& future,
                      const temporal::MotionFieldConfig& config,
                      const temporal::TipConfig& tip, TipFrameResult* result,
-                     std::string* error) {
+                     std::string& error) {
   const int width = past.width;
   const int height = past.height;
   result->recon.init(width, height);
@@ -713,7 +713,7 @@ bool build_tip_frame(const Picture& past, const Picture& future,
   tip::TipBuildOutput out;
   const temporal::TemporalStatus status = tip::build_tip_frame(in, &out);
   if (status != temporal::TemporalStatus::kOk) {
-    *error = "build_tip_frame failed";
+    error = "build_tip_frame failed";
     return false;
   }
   result->field_result = out.field_result;
@@ -741,7 +741,7 @@ bool build_tip_frame(const Picture& past, const Picture& future,
       temporal::kTipWeightingFactor[tip.tip_global_wtd_index] == 16;
   if (tip::store_tip_frame_motion_field(plan_view, store, &stored) !=
       temporal::TemporalStatus::kOk) {
-    *error = "store_tip_frame_motion_field failed";
+    error = "store_tip_frame_motion_field failed";
     return false;
   }
   return true;
@@ -760,7 +760,7 @@ struct StreamInput {
 
 bool build_stream(const StreamInput& input, bool enable_tip,
                   std::vector<std::vector<std::uint8_t>>* units,
-                  std::string* error) {
+                  std::string& error) {
   (void)error;
   SequenceSpec seq;
   seq.width = input.width;
@@ -846,7 +846,7 @@ bool build_stream(const StreamInput& input, bool enable_tip,
     for (std::size_t i = 0; i < tip_slice_bit_offset(tip1); ++i) {
       bool bit = false;
       if (!reader.get_bit(&bit)) {
-        *error = "truncated TIP1 header";
+        error = "truncated TIP1 header";
         return false;
       }
     }
@@ -867,7 +867,7 @@ bool build_stream(const StreamInput& input, bool enable_tip,
         !(read.tip_global_mv == temporal::Mv(15, 15)) ||
         !read.allow_tip_hole_fill ||
         read.interp_filter != temporal::InterpFilter::kEighttapSharp) {
-      *error = "TIP1 syntax read-back mismatch";
+      error = "TIP1 syntax read-back mismatch";
       return false;
     }
   }
@@ -895,7 +895,7 @@ bool build_stream(const StreamInput& input, bool enable_tip,
     for (std::size_t i = 0; i < tip_slice_bit_offset(tip2); ++i) {
       bool bit = false;
       if (!reader.get_bit(&bit)) {
-        *error = "truncated TIP2 header";
+        error = "truncated TIP2 header";
         return false;
       }
     }
@@ -914,7 +914,7 @@ bool build_stream(const StreamInput& input, bool enable_tip,
         read.mode != temporal::TipFrameMode::kAsOutput ||
         read.tip_global_wtd_index != 3 ||
         !(read.tip_global_mv == temporal::Mv(0, 0))) {
-      *error = "TIP2 syntax read-back mismatch";
+      error = "TIP2 syntax read-back mismatch";
       return false;
     }
   }

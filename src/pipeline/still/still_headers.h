@@ -91,7 +91,7 @@ struct StillDeltaQConfig {
 [[nodiscard]] bool make_delta_q_params(const StillDeltaQConfig& config,
                          ::av2enc::rc::SegmentationParams& segmentation,
                          ::av2enc::rc::DeltaQParams& delta_q,
-                         std::string* error = nullptr);
+                         std::string& error);
 // One plane of the §5.18.7.11 / §5.20.10.4-.6 Wiener-NS decision.  M1 has no
 // inter frames, so temporal frame-filter prediction and bank reuse across
 // frames are not represented.  The per-unit syntax that this stage writes is

@@ -529,7 +529,7 @@ inline void apply_pc_wiener16(
 inline bool apply_wiener16(const HbdLrFrame16& frame,
                            const HbdLrConfig& config,
                            std::uint16_t* const lr[3],
-                           const int lr_stride[3], std::string* error) {
+                           const int lr_stride[3], std::string& error) {
   using namespace av2enc::restoration;
   // Copy step is unconditional (§7.20: LrFrame := CdefFrame).
   for (int p = 0; p < frame.num_planes; ++p) {
@@ -572,9 +572,9 @@ inline bool apply_wiener16(const HbdLrFrame16& frame,
 // the requested flags.  A plane with no winning unit stays disabled.
 inline bool plan_lr(const HbdLrFrame16& frame, bool luma, bool chroma,
                     bool pc_wiener, int base_q_idx, HbdLrPlan* plan,
-                    std::string* error) {
-  auto fail = [error](const std::string& text) {
-    if (error != nullptr) *error = text;
+                    std::string& error) {
+  auto fail = [&error](const std::string& text) {
+    error = text;
     return false;
   };
   if (plan == nullptr) return fail("lr plan: null output");
@@ -665,7 +665,7 @@ inline bool plan_lr(const HbdLrFrame16& frame, bool luma, bool chroma,
     plan->sse_before = 0;
     plan->sse_after = 0;
   }
-  if (error != nullptr) error->clear();
+  error.clear();
   return true;
 }
 

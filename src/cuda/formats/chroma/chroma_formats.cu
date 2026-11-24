@@ -241,16 +241,14 @@ void launch_copy(const CopyJob* jobs, int count, cudaStream_t stream) {
 template <typename Job, typename Launch>
 ChromaStatus run_batch(Arena& arena, const Config& config, const Job* jobs,
                        int count, cudaStream_t stream, const char* what,
-                       Launch launch, std::string* error) {
+                       Launch launch, std::string& error) {
   const std::uint64_t required = required_device_bytes(config);
   if (!config_valid(config)) {
-    if (error != nullptr) *error = std::string(what) + ": invalid config";
+    error = std::string(what) + ": invalid config";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument, 0};
   }
   if (jobs == nullptr || count < 1 || count > config.max_blocks) {
-    if (error != nullptr) {
-      *error = std::string(what) + ": job count outside [1, max_blocks]";
-    }
+error = std::string(what) + ": job count outside [1, max_blocks]";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument, required};
   }
 
@@ -260,11 +258,9 @@ ChromaStatus run_batch(Arena& arena, const Config& config, const Job* jobs,
   const Status allocated = arena.allocate_checked(bytes, &raw);
   if (allocated != Status::kOk) {
     arena.rewind(mark);
-    if (error != nullptr) {
-      *error = std::string(what) + ": arena too small for " +
-               std::to_string(bytes) + " descriptor bytes (need " +
-               std::to_string(required) + ")";
-    }
+error = std::string(what) + ": arena too small for " +
+         std::to_string(bytes) + " descriptor bytes (need " +
+         std::to_string(required) + ")";
     return ChromaStatus{ChromaStatus::Code::kArenaTooSmall, required};
   }
 
@@ -280,9 +276,7 @@ ChromaStatus run_batch(Arena& arena, const Config& config, const Job* jobs,
   arena.rewind(mark);
 
   if (status != cudaSuccess) {
-    if (error != nullptr) {
-      *error = std::string(what) + ": " + cudaGetErrorString(status);
-    }
+error = std::string(what) + ": " + cudaGetErrorString(status);
     return ChromaStatus{ChromaStatus::Code::kCudaError, required};
   }
   return ChromaStatus{};
@@ -291,11 +285,9 @@ ChromaStatus run_batch(Arena& arena, const Config& config, const Job* jobs,
 }  // namespace
 
 ChromaStatus Workspace::launch_error(const char* what, cudaError_t status,
-                                     std::string* error) const {
-  if (error != nullptr) {
-    *error = std::string("chroma_formats ") + what + ": " +
-             cudaGetErrorString(status);
-  }
+                                     std::string& error) const {
+error = std::string("chroma_formats ") + what + ": " +
+         cudaGetErrorString(status);
   return ChromaStatus{ChromaStatus::Code::kCudaError,
                       required_device_bytes(config_)};
 }
@@ -305,14 +297,12 @@ ChromaStatus Workspace::launch_error(const char* what, cudaError_t status,
 // ---------------------------------------------------------------------------
 
 ChromaStatus Workspace::predict(const PredictJob* host_jobs, int count,
-                                cudaStream_t stream, std::string* error) {
+                                cudaStream_t stream, std::string& error) {
   if (!initialized()) {
     return ChromaStatus{ChromaStatus::Code::kNotInitialized, 0};
   }
   if (host_jobs == nullptr || count < 1 || count > config_.max_blocks) {
-    if (error != nullptr) {
-      *error = "chroma_formats: job count outside [1, max_blocks]";
-    }
+error = "chroma_formats: job count outside [1, max_blocks]";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                         required_device_bytes(config_)};
   }
@@ -324,7 +314,7 @@ ChromaStatus Workspace::predict(const PredictJob* host_jobs, int count,
         (job.have_left != 0 && job.x0 < 1) ||
         (job.have_above != 0 && job.y0 < 1) || job.x0 > job.max_x ||
         job.y0 > job.max_y) {
-      if (error != nullptr) *error = "chroma_formats predict: invalid job";
+      error = "chroma_formats predict: invalid job";
       return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                           required_device_bytes(config_)};
     }
@@ -335,14 +325,12 @@ ChromaStatus Workspace::predict(const PredictJob* host_jobs, int count,
 
 ChromaStatus Workspace::make_residuals(const ResidualJob* host_jobs, int count,
                                        cudaStream_t stream,
-                                       std::string* error) {
+                                       std::string& error) {
   if (!initialized()) {
     return ChromaStatus{ChromaStatus::Code::kNotInitialized, 0};
   }
   if (host_jobs == nullptr || count < 1 || count > config_.max_blocks) {
-    if (error != nullptr) {
-      *error = "chroma_formats: job count outside [1, max_blocks]";
-    }
+error = "chroma_formats: job count outside [1, max_blocks]";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                         required_device_bytes(config_)};
   }
@@ -351,9 +339,7 @@ ChromaStatus Workspace::make_residuals(const ResidualJob* host_jobs, int count,
     if (job.src == nullptr || job.residual_adj == nullptr ||
         job.src_stride <= 0 || !shape_ok(job.shape) ||
         !depth_ok(job.bit_depth)) {
-      if (error != nullptr) {
-        *error = "chroma_formats make_residuals: invalid job";
-      }
+error = "chroma_formats make_residuals: invalid job";
       return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                           required_device_bytes(config_)};
     }
@@ -363,14 +349,12 @@ ChromaStatus Workspace::make_residuals(const ResidualJob* host_jobs, int count,
 }
 
 ChromaStatus Workspace::forward(const ForwardJob* host_jobs, int count,
-                                cudaStream_t stream, std::string* error) {
+                                cudaStream_t stream, std::string& error) {
   if (!initialized()) {
     return ChromaStatus{ChromaStatus::Code::kNotInitialized, 0};
   }
   if (host_jobs == nullptr || count < 1 || count > config_.max_blocks) {
-    if (error != nullptr) {
-      *error = "chroma_formats: job count outside [1, max_blocks]";
-    }
+error = "chroma_formats: job count outside [1, max_blocks]";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                         required_device_bytes(config_)};
   }
@@ -378,7 +362,7 @@ ChromaStatus Workspace::forward(const ForwardJob* host_jobs, int count,
     const ForwardJob& job = host_jobs[i];
     if (job.residual_adj == nullptr || job.levels == nullptr ||
         !shape_ok(job.shape)) {
-      if (error != nullptr) *error = "chroma_formats forward: invalid job";
+      error = "chroma_formats forward: invalid job";
       return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                           required_device_bytes(config_)};
     }
@@ -388,14 +372,12 @@ ChromaStatus Workspace::forward(const ForwardJob* host_jobs, int count,
 }
 
 ChromaStatus Workspace::dequantize(const DequantJob* host_jobs, int count,
-                                   cudaStream_t stream, std::string* error) {
+                                   cudaStream_t stream, std::string& error) {
   if (!initialized()) {
     return ChromaStatus{ChromaStatus::Code::kNotInitialized, 0};
   }
   if (host_jobs == nullptr || count < 1 || count > config_.max_blocks) {
-    if (error != nullptr) {
-      *error = "chroma_formats: job count outside [1, max_blocks]";
-    }
+error = "chroma_formats: job count outside [1, max_blocks]";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                         required_device_bytes(config_)};
   }
@@ -403,7 +385,7 @@ ChromaStatus Workspace::dequantize(const DequantJob* host_jobs, int count,
     const DequantJob& job = host_jobs[i];
     if (job.levels == nullptr || job.dequant == nullptr ||
         !shape_ok(job.shape) || !depth_ok(job.bit_depth)) {
-      if (error != nullptr) *error = "chroma_formats dequantize: invalid job";
+      error = "chroma_formats dequantize: invalid job";
       return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                           required_device_bytes(config_)};
     }
@@ -413,14 +395,12 @@ ChromaStatus Workspace::dequantize(const DequantJob* host_jobs, int count,
 }
 
 ChromaStatus Workspace::inverse(const InverseJob* host_jobs, int count,
-                                cudaStream_t stream, std::string* error) {
+                                cudaStream_t stream, std::string& error) {
   if (!initialized()) {
     return ChromaStatus{ChromaStatus::Code::kNotInitialized, 0};
   }
   if (host_jobs == nullptr || count < 1 || count > config_.max_blocks) {
-    if (error != nullptr) {
-      *error = "chroma_formats: job count outside [1, max_blocks]";
-    }
+error = "chroma_formats: job count outside [1, max_blocks]";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                         required_device_bytes(config_)};
   }
@@ -428,7 +408,7 @@ ChromaStatus Workspace::inverse(const InverseJob* host_jobs, int count,
     const InverseJob& job = host_jobs[i];
     if (job.dequant == nullptr || job.residual_adj == nullptr ||
         !shape_ok(job.shape) || !depth_ok(job.bit_depth)) {
-      if (error != nullptr) *error = "chroma_formats inverse: invalid job";
+      error = "chroma_formats inverse: invalid job";
       return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                           required_device_bytes(config_)};
     }
@@ -438,14 +418,12 @@ ChromaStatus Workspace::inverse(const InverseJob* host_jobs, int count,
 }
 
 ChromaStatus Workspace::reconstruct(const ReconstructJob* host_jobs, int count,
-                                    cudaStream_t stream, std::string* error) {
+                                    cudaStream_t stream, std::string& error) {
   if (!initialized()) {
     return ChromaStatus{ChromaStatus::Code::kNotInitialized, 0};
   }
   if (host_jobs == nullptr || count < 1 || count > config_.max_blocks) {
-    if (error != nullptr) {
-      *error = "chroma_formats: job count outside [1, max_blocks]";
-    }
+error = "chroma_formats: job count outside [1, max_blocks]";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                         required_device_bytes(config_)};
   }
@@ -454,7 +432,7 @@ ChromaStatus Workspace::reconstruct(const ReconstructJob* host_jobs, int count,
     if (job.residual_adj == nullptr || job.dst == nullptr ||
         job.dst_stride <= 0 || !shape_ok(job.shape) ||
         !depth_ok(job.bit_depth)) {
-      if (error != nullptr) *error = "chroma_formats reconstruct: invalid job";
+      error = "chroma_formats reconstruct: invalid job";
       return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                           required_device_bytes(config_)};
     }
@@ -464,14 +442,12 @@ ChromaStatus Workspace::reconstruct(const ReconstructJob* host_jobs, int count,
 }
 
 ChromaStatus Workspace::copy_planes(const CopyJob* host_jobs, int count,
-                                    cudaStream_t stream, std::string* error) {
+                                    cudaStream_t stream, std::string& error) {
   if (!initialized()) {
     return ChromaStatus{ChromaStatus::Code::kNotInitialized, 0};
   }
   if (host_jobs == nullptr || count < 1 || count > config_.max_blocks) {
-    if (error != nullptr) {
-      *error = "chroma_formats: job count outside [1, max_blocks]";
-    }
+error = "chroma_formats: job count outside [1, max_blocks]";
     return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                         required_device_bytes(config_)};
   }
@@ -480,7 +456,7 @@ ChromaStatus Workspace::copy_planes(const CopyJob* host_jobs, int count,
     if (job.src == nullptr || job.dst == nullptr || job.src_stride <= 0 ||
         job.dst_stride <= 0 || job.width < 0 || job.height < 0 ||
         !depth_ok(job.bit_depth)) {
-      if (error != nullptr) *error = "chroma_formats copy_planes: invalid job";
+      error = "chroma_formats copy_planes: invalid job";
       return ChromaStatus{ChromaStatus::Code::kInvalidArgument,
                           required_device_bytes(config_)};
     }

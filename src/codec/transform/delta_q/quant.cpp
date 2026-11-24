@@ -14,8 +14,8 @@ constexpr int kAcQlookup[25] = {
     64, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 54, 55,
     57, 59, 60, 62, 64, 66, 68, 70, 72, 74, 76, 78};
 
-void set_error(std::string* error, const char* what) {
-  if (error != nullptr) *error = what;
+void set_error(std::string& error, const char* what) {
+  error = what;
 }
 
 int clip3(int lo, int hi, int value) {
@@ -130,7 +130,7 @@ int dequant_shift(const QuantBlock& block) {
 }
 
 bool build_q2_matrix(const QuantBlock& block, std::int32_t* q2,
-                     std::string* error) {
+                     std::string& error) {
   if (q2 == nullptr) {
     set_error(error, "build_q2_matrix: null q2");
     return false;
@@ -177,7 +177,7 @@ bool build_q2_matrix(const QuantBlock& block, std::int32_t* q2,
 }
 
 bool quantize_block(const double* coeff, const QuantBlock& block,
-                    std::int32_t* levels, std::string* error) {
+                    std::int32_t* levels, std::string& error) {
   if (coeff == nullptr || levels == nullptr) {
     set_error(error, "quantize_block: null buffer");
     return false;
@@ -212,7 +212,7 @@ bool quantize_block(const double* coeff, const QuantBlock& block,
 }
 
 bool dequantize_block(const std::int32_t* levels, const QuantBlock& block,
-                      std::int32_t* dequant, std::string* error) {
+                      std::int32_t* dequant, std::string& error) {
   if (levels == nullptr || dequant == nullptr) {
     set_error(error, "dequantize_block: null buffer");
     return false;

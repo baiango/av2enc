@@ -290,7 +290,7 @@ inline bool trellis_plan(const LevelParams& p, const std::uint8_t* src,
   info.qctx = p.qctx;
   info.is_inter = p.is_inter;
   av2enc::rdoq::av2::Model model;
-  if (!model.init(info, scalar_scan, &error)) return false;
+  if (!model.init(info, scalar_scan, error)) return false;
 
   av2enc::rdoq::Config config;
   config.quant_step = 1.0 / params.quant_factor;

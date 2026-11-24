@@ -11,12 +11,12 @@
 namespace av2enc::hrd {
 namespace {
 
-void set_error(std::string* error, const std::string& message) {
-  if (error != nullptr) *error = message;
+void set_error(std::string& error, const std::string& message) {
+  error = message;
 }
 
 // uvlc() (§4.11.3). Maximum representable value is (1 << 32) - 2.
-bool put_uvlc(BitWriter& writer, std::uint64_t value, std::string* error) {
+bool put_uvlc(BitWriter& writer, std::uint64_t value, std::string& error) {
   if (value > kMaxUvlc) {
     set_error(error, "uvlc() value exceeds (1 << 32) - 2");
     return false;
@@ -36,7 +36,7 @@ bool put_uvlc(BitWriter& writer, std::uint64_t value, std::string* error) {
 // rg(n) (§4.11.10). q is limited to 31, so values >= (32 << n) are not
 // representable. Only used with n = 4 for BRT here.
 bool put_rg(BitWriter& writer, std::uint32_t value, unsigned n,
-            std::string* error) {
+            std::string& error) {
   if (n == 0U || n > 24U) {
     set_error(error, "rg(n) parameter out of range");
     return false;
@@ -62,7 +62,7 @@ std::uint32_t ceil_log2(std::uint32_t value) {
   return bits;
 }
 
-bool consume_trailing_bits(BitReader& reader, std::string* error) {
+bool consume_trailing_bits(BitReader& reader, std::string& error) {
   bool bit = false;
   if (!reader.read_bit(bit)) {
     set_error(error, "truncated trailing_bits()");
@@ -94,7 +94,7 @@ struct SequencePrefix {
 };
 
 bool read_sequence_prefix(BitReader& reader, SequencePrefix& prefix,
-                          std::string* error) {
+                          std::string& error) {
   std::uint32_t value = 0;
   if (!reader.read_uvlc(value, error)) return false;  // seq_header_id
   if (!reader.read_bits(5, value)) {                  // seq_profile_idc
@@ -200,7 +200,7 @@ bool append_payload_bits(BitWriter& writer, std::span<const std::uint8_t> payloa
 // so the last set bit in the payload is the trailing one and the bit before it
 // is the (zero) extension flag.
 bool extensible_syntax_bits(std::span<const std::uint8_t> payload,
-                            std::size_t& syntax_bits, std::string* error) {
+                            std::size_t& syntax_bits, std::string& error) {
   std::size_t last_set = 0;
   bool found = false;
   for (std::size_t bit = 0; bit < payload.size() * 8U; ++bit) {
@@ -236,7 +236,7 @@ std::vector<std::uint8_t> make_obu_bytes(ObuType type, std::uint8_t tlayer_id,
 }
 
 bool single_obu_of_type(std::span<const std::uint8_t> bytes, ObuType expected,
-                        ParsedObu& obu, std::string* error) {
+                        ParsedObu& obu, std::string& error) {
   std::vector<ParsedObu> obus;
   if (!parse_obus(bytes, obus, error)) return false;
   if (obus.size() != 1U) {
@@ -259,7 +259,7 @@ bool single_obu_of_type(std::span<const std::uint8_t> bytes, ObuType expected,
 // Limits / validation
 // ---------------------------------------------------------------------------
 
-bool timing_info_valid(const TimingInfo& timing, std::string* error) {
+bool timing_info_valid(const TimingInfo& timing, std::string& error) {
   if (timing.num_units_in_display_tick == 0U) {
     set_error(error, "num_units_in_display_tick shall be greater than 0");
     return false;
@@ -277,14 +277,14 @@ bool timing_info_valid(const TimingInfo& timing, std::string* error) {
 }
 
 double display_tick_seconds(const TimingInfo& timing,
-                            std::string* error) noexcept {
+                            std::string& error) noexcept {
   if (!timing_info_valid(timing, error)) return 0.0;
   return static_cast<double>(timing.num_units_in_display_tick) /
          static_cast<double>(timing.time_scale);
 }
 
 bool seq_decoder_model_info_valid(const SeqDecoderModelInfo& info,
-                                  std::string* error) {
+                                  std::string& error) {
   if (info.decoder_buffer_delay > kMaxUvlc) {
     set_error(error, "decoder_buffer_delay exceeds uvlc() range");
     return false;
@@ -297,7 +297,7 @@ bool seq_decoder_model_info_valid(const SeqDecoderModelInfo& info,
 }
 
 bool sequence_timing_valid(const SequenceTimingConfig& config,
-                           std::string* error) {
+                           std::string& error) {
   if (config.seq_initial_display_delay_minus_1 > 15U) {
     set_error(error, "seq_initial_display_delay_minus_1 is f(4)");
     return false;
@@ -323,7 +323,7 @@ bool sequence_timing_valid(const SequenceTimingConfig& config,
 }
 
 bool content_interpretation_valid(const ContentInterpretation& ci,
-                                  std::string* error) {
+                                  std::string& error) {
   if (ci.ci_scan_type_idc > 3U) {
     set_error(error, "ci_scan_type_idc is f(2)");
     return false;
@@ -353,7 +353,7 @@ bool content_interpretation_valid(const ContentInterpretation& ci,
 }
 
 bool buffer_removal_timing_valid(const BufferRemovalTiming& brt,
-                                 std::string* error) {
+                                 std::string& error) {
   if (!brt.br_ops_dependent_flag) {
     if (brt.br_time > kMaxBrTime) {
       set_error(error, "br_time does not fit in rg(4) (max 511)");
@@ -382,13 +382,13 @@ bool buffer_removal_timing_valid(const BufferRemovalTiming& brt,
 }
 
 bool validate_brt_tick_ranges(const BufferRemovalTiming& brt,
-                              std::string* error) {
+                              std::string& error) {
   return buffer_removal_timing_valid(brt, error);
 }
 
 bool validate_brt_against_ops(
     const BufferRemovalTiming& brt, std::uint8_t brt_xlayer_id,
-    std::span<const OperatingPointSetSummary> ops, std::string* error) {
+    std::span<const OperatingPointSetSummary> ops, std::string& error) {
   if (!validate_brt_tick_ranges(brt, error)) return false;
   if (!brt.br_ops_dependent_flag) {
     // The correspondence requirement only applies to br_time_op values.
@@ -425,7 +425,7 @@ bool validate_brt_against_ops(
 // ---------------------------------------------------------------------------
 
 bool write_timing_info(BitWriter& writer, const TimingInfo& timing,
-                       std::string* error) {
+                       std::string& error) {
   if (!timing_info_valid(timing, error)) return false;
   writer.put_bits(timing.num_units_in_display_tick, 32U);
   writer.put_bits(timing.time_scale, 32U);
@@ -440,7 +440,7 @@ bool write_timing_info(BitWriter& writer, const TimingInfo& timing,
 
 bool write_seq_decoder_model_info(BitWriter& writer,
                                   const SeqDecoderModelInfo& info,
-                                  std::string* error) {
+                                  std::string& error) {
   if (!seq_decoder_model_info_valid(info, error)) return false;
   if (!put_uvlc(writer, info.decoder_buffer_delay, error)) return false;
   if (!put_uvlc(writer, info.encoder_buffer_delay, error)) return false;
@@ -450,7 +450,7 @@ bool write_seq_decoder_model_info(BitWriter& writer,
 
 bool write_sequence_timing(BitWriter& writer,
                            const SequenceTimingConfig& config,
-                           std::string* error) {
+                           std::string& error) {
   if (!sequence_timing_valid(config, error)) return false;
   writer.put_bit(config.seq_initial_display_delay_present_flag);
   if (config.seq_initial_display_delay_present_flag) {
@@ -472,7 +472,7 @@ bool write_sequence_timing(BitWriter& writer,
 
 bool write_buffer_removal_timing(BitWriter& writer,
                                  const BufferRemovalTiming& brt,
-                                 std::string* error) {
+                                 std::string& error) {
   if (!buffer_removal_timing_valid(brt, error)) return false;
   writer.put_bit(brt.br_ops_dependent_flag);
   if (!brt.br_ops_dependent_flag) {
@@ -490,7 +490,7 @@ bool write_buffer_removal_timing(BitWriter& writer,
 
 bool write_content_interpretation(BitWriter& writer,
                                   const ContentInterpretation& ci,
-                                  std::string* error) {
+                                  std::string& error) {
   if (!content_interpretation_valid(ci, error)) return false;
   writer.put_bits(ci.ci_scan_type_idc, 2U);
   writer.put_bit(ci.ci_color_description_present_flag);
@@ -534,7 +534,7 @@ bool write_content_interpretation(BitWriter& writer,
 // ---------------------------------------------------------------------------
 
 bool read_timing_info(BitReader& reader, TimingInfo& timing,
-                      std::string* error) {
+                      std::string& error) {
   std::uint32_t value = 0;
   if (!reader.read_bits(32, timing.num_units_in_display_tick)) {
     set_error(error, "truncated num_units_in_display_tick");
@@ -560,7 +560,7 @@ bool read_timing_info(BitReader& reader, TimingInfo& timing,
 }
 
 bool read_seq_decoder_model_info(BitReader& reader, SeqDecoderModelInfo& info,
-                                 std::string* error) {
+                                 std::string& error) {
   std::uint32_t value = 0;
   if (!reader.read_uvlc(value, error)) return false;
   info.decoder_buffer_delay = value;
@@ -576,7 +576,7 @@ bool read_seq_decoder_model_info(BitReader& reader, SeqDecoderModelInfo& info,
 }
 
 bool read_sequence_timing(BitReader& reader, SequenceTimingConfig& config,
-                          std::string* error) {
+                          std::string& error) {
   config = SequenceTimingConfig{};
   bool flag = false;
   if (!reader.read_bit(flag)) {
@@ -622,7 +622,7 @@ bool read_sequence_timing(BitReader& reader, SequenceTimingConfig& config,
 }
 
 bool read_buffer_removal_timing(BitReader& reader, BufferRemovalTiming& brt,
-                                std::string* error) {
+                                std::string& error) {
   bool dependent = false;
   if (!reader.read_bit(dependent)) {
     set_error(error, "truncated br_ops_dependent_flag");
@@ -657,7 +657,7 @@ bool read_buffer_removal_timing(BitReader& reader, BufferRemovalTiming& brt,
 }
 
 bool read_content_interpretation(BitReader& reader, ContentInterpretation& ci,
-                                 std::string* error) {
+                                 std::string& error) {
   ci = ContentInterpretation{};
   std::uint32_t scan = 0;
   if (!reader.read_bits(2, scan)) {
@@ -767,7 +767,7 @@ const char* obu_type_name(ObuType type) noexcept {
 }
 
 bool parse_obus(std::span<const std::uint8_t> bytes,
-                std::vector<ParsedObu>& obus, std::string* error) {
+                std::vector<ParsedObu>& obus, std::string& error) {
   obus.clear();
   std::size_t offset = 0;
   while (offset < bytes.size()) {
@@ -841,7 +841,7 @@ bool parse_obus(std::span<const std::uint8_t> bytes,
 }
 
 bool validate_temporal_unit_order(std::span<const ParsedObu> obus,
-                                  std::string* error) {
+                                  std::string& error) {
   if (obus.empty()) {
     set_error(error, "empty temporal unit");
     return false;
@@ -939,7 +939,7 @@ bool validate_temporal_unit_order(std::span<const ParsedObu> obus,
 
 bool build_buffer_removal_timing_obu(const BufferRemovalTiming& brt,
                                      std::vector<std::uint8_t>& out,
-                                     std::string* error) {
+                                     std::string& error) {
   BitWriter writer;
   if (!write_buffer_removal_timing(writer, brt, error)) return false;
   writer.put_bit(true);       // trailing_one_bit (§5.2.3)
@@ -950,7 +950,7 @@ bool build_buffer_removal_timing_obu(const BufferRemovalTiming& brt,
 
 bool build_content_interpretation_obu(const ContentInterpretation& ci,
                                       std::vector<std::uint8_t>& out,
-                                      std::string* error) {
+                                      std::string& error) {
   BitWriter writer;
   if (!write_content_interpretation(writer, ci, error)) return false;
   writer.put_bit(false);  // obu_extension_flag (extensible OBU, §5.2.1)
@@ -962,7 +962,7 @@ bool build_content_interpretation_obu(const ContentInterpretation& ci,
 
 bool read_buffer_removal_timing_obu(std::span<const std::uint8_t> obu,
                                     BufferRemovalTiming& brt,
-                                    std::string* error) {
+                                    std::string& error) {
   ParsedObu parsed;
   if (!single_obu_of_type(obu, ObuType::kBufferRemovalTiming, parsed, error)) {
     return false;
@@ -974,7 +974,7 @@ bool read_buffer_removal_timing_obu(std::span<const std::uint8_t> obu,
 
 bool read_content_interpretation_obu(std::span<const std::uint8_t> obu,
                                      ContentInterpretation& ci,
-                                     std::string* error) {
+                                     std::string& error) {
   ParsedObu parsed;
   if (!single_obu_of_type(obu, ObuType::kContentInterpretation, parsed,
                           error)) {
@@ -1001,7 +1001,7 @@ bool read_content_interpretation_obu(std::span<const std::uint8_t> obu,
 bool splice_sequence_timing(std::span<const std::uint8_t> sequence_header_obu,
                             const SequenceTimingConfig& config,
                             std::vector<std::uint8_t>& out,
-                            std::string* error) {
+                            std::string& error) {
   ParsedObu parsed;
   if (!single_obu_of_type(sequence_header_obu, ObuType::kSequenceHeader,
                           parsed, error)) {
@@ -1069,7 +1069,7 @@ bool splice_sequence_timing(std::span<const std::uint8_t> sequence_header_obu,
 
 bool read_sequence_header_timing(
     std::span<const std::uint8_t> sequence_header_obu,
-    SequenceTimingConfig& config, std::string* error) {
+    SequenceTimingConfig& config, std::string& error) {
   ParsedObu parsed;
   if (!single_obu_of_type(sequence_header_obu, ObuType::kSequenceHeader,
                           parsed, error)) {

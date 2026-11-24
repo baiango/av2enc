@@ -44,7 +44,7 @@ std::uint32_t all_frames_mask(int num_slots) {
 }
 
 void set_error(PlanError* error, PlanError value) {
-  if (error != nullptr) {
+  {
     *error = value;
   }
 }

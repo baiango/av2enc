@@ -171,7 +171,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
                                   plan.order_hint_bits,
                                   static_cast<int>(width),
                                   static_cast<int>(height), 0, ref_deps,
-                                  &implicit, &error)) {
+                                  &implicit, error)) {
         error = "B-frame display " + std::to_string(display) +
                 " implicit ref map: " + error;
         return false;
@@ -358,7 +358,7 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
                             static_cast<int>(width), static_cast<int>(height),
                             base_q, hf.keyframe, /*tlayer_id=*/0,
                             /*mlayer_id=*/0, hf.implicit_output_frame,
-                            hf.immediate_output_frame, -1, &error)) {
+                            hf.immediate_output_frame, -1, error)) {
         error = "B-frame display " + std::to_string(display) +
                 " reference bank: " + error;
         return false;
@@ -940,7 +940,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
                                   static_cast<int>(pc.order_hint_bits),
                                   static_cast<int>(width),
                                   static_cast<int>(height), tlayer_id, deps,
-                                  &implicit, &error)) {
+                                  &implicit, error)) {
         error = "temporal-layer frame " + std::to_string(display) +
                 " implicit ref map: " + error;
         return false;
@@ -1607,7 +1607,7 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
                             static_cast<int>(width), static_cast<int>(height),
                             base_q, pf.is_key, tlayer_id,
                             /*mlayer_id=*/0, pf.implicit_output_frame,
-                            pf.immediate_output_frame, -1, &error)) {
+                            pf.immediate_output_frame, -1, error)) {
         error = "temporal-layer frame " + std::to_string(display) +
                 " reference bank: " + error;
         return false;

@@ -47,13 +47,13 @@ bool set_row(Set set, int* row) {
   return true;
 }
 
-bool fail(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+bool fail(std::string& error, const char* message) {
+  error = message;
   return false;
 }
 
-bool fail_with(std::string* error, std::string message) {
-  if (error != nullptr) *error = std::move(message);
+bool fail_with(std::string& error, std::string message) {
+  error = std::move(message);
   return false;
 }
 
@@ -173,7 +173,7 @@ bool get_tx_set(const Query& query, Set* set) {
   return true;
 }
 
-bool enumerate_types(const Query& query, TypeSet* out, std::string* error) {
+bool enumerate_types(const Query& query, TypeSet* out, std::string& error) {
   if (out == nullptr) return fail(error, "null output set");
   Set set = Set::kDctOnly;
   if (!get_tx_set(query, &set)) {
@@ -263,7 +263,7 @@ bool enumerate_types(const Query& query, TypeSet* out, std::string* error) {
 }
 
 bool plan_type(const Query& query, TxType requested, TypePlan* plan,
-               std::string* error) {
+               std::string& error) {
   if (plan == nullptr) return fail(error, "null plan");
   if (!enumerate_types(query, &plan->set, error)) return false;
   plan->type_syntax = false;

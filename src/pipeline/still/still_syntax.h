@@ -254,7 +254,7 @@ std::size_t cdf_image_words();
 // §9.3 defaults for the coefficient-CDF slice selected by the raw base_q_idx.
 [[nodiscard]] bool cdf_image_defaults_for_base_q_idx(int base_q_idx,
                                        std::vector<std::uint16_t>& out,
-                                       std::string* error = nullptr);
+                                       std::string& error);
 
 // Builds the avg_cdf::CdfBank table list over four equal-sized images.  The
 // bank may then drive `load_tile_cdfs()` / `save_tile_cdfs()` /
@@ -265,7 +265,7 @@ std::size_t cdf_image_words();
                       std::vector<std::uint16_t>& saved,
                       std::vector<std::uint16_t>& defaults,
                       std::vector<entropy::avg_cdf::CdfTable>& tables,
-                      std::string* error = nullptr);
+                      std::string& error);
 
 // IntraJointMode for a (YMode, AngleDeltaY) pair: the reordered non-directional
 // index 0..4, or 5 + directional index for directional modes (§5.20.5.5).  The

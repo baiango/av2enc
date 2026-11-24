@@ -109,11 +109,11 @@ inline bool batch_record_better(const CandidateRecord& a, int position_a,
 // Adds one record.  Returns false and increments rejected on overflow/invalid
 // identity fields.  Measurement validity is checked by finalize_batch().
 [[nodiscard]] bool append_candidate(CandidateBatch& batch, const CandidateRecord& record,
-                      std::string* error = nullptr);
+                      std::string& error);
 
 // Computes every cost and the winner.  Allocation-free and deterministic.
 // Returns false on an invalid batch (no candidates, invalid lambda).
-[[nodiscard]] bool finalize_batch(CandidateBatch& batch, std::string* error = nullptr);
+[[nodiscard]] bool finalize_batch(CandidateBatch& batch, std::string& error);
 
 // Convenience for a caller that only has aggregate terms.
 CandidateRecord make_candidate_record(std::uint32_t group, std::uint16_t index,

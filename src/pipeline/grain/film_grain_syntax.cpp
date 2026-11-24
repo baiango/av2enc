@@ -9,8 +9,8 @@
 namespace av2enc::filters::grain {
 namespace {
 
-bool Fail(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+bool Fail(std::string& error, const char* message) {
+  error = message;
   return false;
 }
 
@@ -66,17 +66,17 @@ bool WriteCoefficients(BitWriter& writer, int count, const int* coeffs,
 
 bool PointRangeOk(int num_points, const int* values, const int* scalings,
                   int increment_bits_minus_1, int scaling_bits_minus_5,
-                  const char* label, std::string* why) {
+                  const char* label, std::string& why) {
   if (num_points < 0 || num_points > kMaxGrainPoints) {
-    if (why != nullptr) *why = std::string(label) + ": num_points > 14";
+    why = std::string(label) + ": num_points > 14";
     return false;
   }
   if (increment_bits_minus_1 < 0 || increment_bits_minus_1 > 7) {
-    if (why != nullptr) *why = std::string(label) + ": increment bits > 8";
+    why = std::string(label) + ": increment bits > 8";
     return false;
   }
   if (scaling_bits_minus_5 < 0 || scaling_bits_minus_5 > 3) {
-    if (why != nullptr) *why = std::string(label) + ": scaling bits > 8";
+    why = std::string(label) + ": scaling bits > 8";
     return false;
   }
   if (num_points == 0) return true;
@@ -86,30 +86,26 @@ bool PointRangeOk(int num_points, const int* values, const int* scalings,
   const int increment_max = (1 << increment_bits) - 1;
   const int scaling_max = (1 << scaling_bits) - 1;
   if (values[0] < 0 || values[0] > increment_max) {
-    if (why != nullptr) *why = std::string(label) + ": first value exceeds bits";
+    why = std::string(label) + ": first value exceeds bits";
     return false;
   }
   for (int i = 0; i < num_points; ++i) {
     if (values[i] < 0 || values[i] > 255) {
-      if (why != nullptr) *why = std::string(label) + ": value outside 0..255";
+      why = std::string(label) + ": value outside 0..255";
       return false;
     }
     if (i > 0) {
       if (values[i] <= values[i - 1]) {
-        if (why != nullptr) {
-          *why = std::string(label) + ": values are not strictly increasing";
-        }
+        why = std::string(label) + ": values are not strictly increasing";
         return false;
       }
       if (values[i] - values[i - 1] > increment_max) {
-        if (why != nullptr) {
-          *why = std::string(label) + ": increment exceeds coded bits";
-        }
+        why = std::string(label) + ": increment exceeds coded bits";
         return false;
       }
     }
     if (scalings[i] < 0 || scalings[i] > scaling_max) {
-      if (why != nullptr) *why = std::string(label) + ": scaling exceeds bits";
+      why = std::string(label) + ": scaling exceeds bits";
       return false;
     }
   }
@@ -117,13 +113,13 @@ bool PointRangeOk(int num_points, const int* values, const int* scalings,
 }
 
 bool CoefficientRangeOk(int count, const int* coeffs, int bits_minus_5,
-                        const char* label, std::string* why) {
+                        const char* label, std::string& why) {
   const int bits = bits_minus_5 + 5;
   const int lo = -(1 << (bits - 1));
   const int hi = (1 << (bits - 1)) - 1;
   for (int i = 0; i < count; ++i) {
     if (coeffs[i] < lo || coeffs[i] > hi) {
-      if (why != nullptr) *why = std::string(label) + ": coefficient out of range";
+      why = std::string(label) + ": coefficient out of range";
       return false;
     }
   }
@@ -132,7 +128,7 @@ bool CoefficientRangeOk(int count, const int* coeffs, int bits_minus_5,
 
 // Reads the trailing_bits() tail and verifies it is exactly one 1 bit followed
 // by zeros through the end of the payload.
-bool ReadTrailingBits(GrainBitReader& reader, std::string* error,
+bool ReadTrailingBits(GrainBitReader& reader, std::string& error,
                       std::size_t* consumed) {
   bool one = false;
   if (!reader.ReadBit(&one)) return Fail(error, "truncated trailing bits");
@@ -286,7 +282,7 @@ GrainModel NormalizeModel(const GrainModel& model, GrainChromaIdc idc) {
   return m;
 }
 
-bool ValidateModel(const GrainModel& raw, GrainChromaIdc idc, std::string* why) {
+bool ValidateModel(const GrainModel& raw, GrainChromaIdc idc, std::string& why) {
   const int raw_idc = static_cast<int>(idc);
   if (raw_idc < 0 || raw_idc > 3) return Fail(why, "fgm_chroma_idc exceeds 3");
   const GrainChromaLayout layout = ChromaLayout(idc);
@@ -379,7 +375,7 @@ bool ValidateModel(const GrainModel& raw, GrainChromaIdc idc, std::string* why) 
 namespace {
 
 bool WriteModel(BitWriter& writer, const GrainModel& raw, GrainChromaIdc idc,
-                std::string* error) {
+                std::string& error) {
   if (!ValidateModel(raw, idc, error)) return false;
   const GrainModel m = NormalizeModel(raw, idc);
   const GrainChromaLayout layout = ChromaLayout(idc);
@@ -470,7 +466,7 @@ bool WriteModel(BitWriter& writer, const GrainModel& raw, GrainChromaIdc idc,
 
 bool ReadPoints(GrainBitReader& reader, int* num_points, int* values,
                 int* scalings, int* increment_bits_minus_1,
-                int* scaling_bits_minus_5, std::string* error) {
+                int* scaling_bits_minus_5, std::string& error) {
   std::uint64_t num = 0;
   if (!reader.ReadBits(4U, &num)) return Fail(error, "truncated num_points");
   if (num > static_cast<std::uint64_t>(kMaxGrainPoints)) {
@@ -513,7 +509,7 @@ bool ReadPoints(GrainBitReader& reader, int* num_points, int* values,
 }
 
 bool ReadCoefficients(GrainBitReader& reader, int count, int* coeffs,
-                      int* bits_minus_5, std::string* error) {
+                      int* bits_minus_5, std::string& error) {
   std::uint64_t bits = 0;
   if (!reader.ReadBits(2U, &bits)) return Fail(error, "truncated AR bit width");
   *bits_minus_5 = static_cast<int>(bits);
@@ -528,7 +524,7 @@ bool ReadCoefficients(GrainBitReader& reader, int count, int* coeffs,
 }
 
 bool ReadModel(GrainBitReader& reader, GrainChromaIdc idc, GrainModel* model,
-               std::string* error) {
+               std::string& error) {
   const GrainChromaLayout layout = ChromaLayout(idc);
   GrainModel m;
   if (!layout.monochrome) {
@@ -634,7 +630,7 @@ bool ReadModel(GrainBitReader& reader, GrainChromaIdc idc, GrainModel* model,
 
 }  // namespace
 
-bool ValidateObu(const FilmGrainObu& obu, std::string* why) {
+bool ValidateObu(const FilmGrainObu& obu, std::string& why) {
   // §6.13: fgm_update_flags != 0.
   if (obu.update_flags == 0) return Fail(why, "fgm_update_flags is zero");
   const int idc = static_cast<int>(obu.chroma_idc);
@@ -647,7 +643,7 @@ bool ValidateObu(const FilmGrainObu& obu, std::string* why) {
 }
 
 bool WriteObuPayload(BitWriter& writer, const FilmGrainObu& obu,
-                     std::string* error) {
+                     std::string& error) {
   if (!ValidateObu(obu, error)) return false;
   writer.put_bits(static_cast<std::uint64_t>(obu.update_flags), 8U);
   PutUvlc(writer, static_cast<std::uint32_t>(obu.chroma_idc));
@@ -662,7 +658,7 @@ bool WriteObuPayload(BitWriter& writer, const FilmGrainObu& obu,
 }
 
 bool ReadObuPayload(std::span<const std::uint8_t> payload, FilmGrainObu* obu,
-                    std::size_t* consumed_bits, std::string* error) {
+                    std::size_t* consumed_bits, std::string& error) {
   if (obu == nullptr) return Fail(error, "null film grain OBU output");
   if (payload.empty()) return Fail(error, "empty film grain OBU payload");
   GrainBitReader reader(payload);
@@ -693,7 +689,7 @@ bool ReadObuPayload(std::span<const std::uint8_t> payload, FilmGrainObu* obu,
 }
 
 std::vector<std::uint8_t> MakeFilmGrainObu(const FilmGrainObu& obu,
-                                           std::string* error) {
+                                           std::string& error) {
   BitWriter writer;
   if (!WriteObuPayload(writer, obu, error)) return {};
   const std::span<const std::uint8_t> payload = writer.bytes();
@@ -704,7 +700,7 @@ std::vector<std::uint8_t> MakeFilmGrainObu(const FilmGrainObu& obu,
 }
 
 bool ReadFilmGrainObu(std::span<const std::uint8_t> data, FilmGrainObu* obu,
-                      std::size_t* consumed, std::string* error) {
+                      std::size_t* consumed, std::string& error) {
   if (data.empty()) return Fail(error, "empty OBU");
   // Annex B.2 leb128 payload size.
   std::size_t pos = 0;
@@ -753,7 +749,7 @@ bool ApplyGrainIsInferred(const FilmGrainConfigContext& ctx, bool* value) {
 
 bool WriteFilmGrainConfig(BitWriter& writer, const FilmGrainConfig& config,
                           const FilmGrainConfigContext& ctx,
-                          std::string* error) {
+                          std::string& error) {
   bool inferred_value = false;
   const bool inferred = ApplyGrainIsInferred(ctx, &inferred_value);
   if (inferred && config.apply_grain != inferred_value) {
@@ -773,7 +769,7 @@ bool WriteFilmGrainConfig(BitWriter& writer, const FilmGrainConfig& config,
 bool ReadFilmGrainConfig(std::span<const std::uint8_t> payload,
                          std::size_t* bit_position,
                          const FilmGrainConfigContext& ctx,
-                         FilmGrainConfig* config, std::string* error) {
+                         FilmGrainConfig* config, std::string& error) {
   if (bit_position == nullptr || config == nullptr) {
     return Fail(error, "null film grain config state");
   }
@@ -804,18 +800,21 @@ bool ReadFilmGrainConfig(std::span<const std::uint8_t> payload,
 std::size_t FilmGrainConfigBits(const FilmGrainConfig& config,
                                 const FilmGrainConfigContext& ctx) {
   BitWriter writer;
-  if (!WriteFilmGrainConfig(writer, config, ctx, nullptr)) return 0;
+  std::string ignored;
+  if (!WriteFilmGrainConfig(writer, config, ctx, ignored)) return 0;
   return writer.bit_size();
 }
 
 std::size_t ModelBits(const GrainModel& model, GrainChromaIdc idc) {
   BitWriter writer;
-  if (!WriteModel(writer, model, idc, nullptr)) return 0;
+  std::string ignored;
+  if (!WriteModel(writer, model, idc, ignored)) return 0;
   return writer.bit_size();
 }
 
 std::size_t FilmGrainObuBytes(const FilmGrainObu& obu) {
-  return MakeFilmGrainObu(obu, nullptr).size();
+  std::string ignored;
+  return MakeFilmGrainObu(obu, ignored).size();
 }
 
 void GrainSlotState::Reset() {
@@ -824,7 +823,7 @@ void GrainSlotState::Reset() {
 
 bool GrainSlotState::SaveModel(int slot, const GrainModel& model,
                                GrainChromaIdc idc, int tlayer_id,
-                               int mlayer_id, std::string* error) {
+                               int mlayer_id, std::string& error) {
   if (slot < 0 || slot >= kNumGrainSlots) {
     return Fail(error, "save_grain_model: slot outside 0..7");
   }
@@ -841,7 +840,7 @@ bool GrainSlotState::SaveModel(int slot, const GrainModel& model,
 }
 
 bool GrainSlotState::LoadModel(int slot, GrainModel* model, GrainChromaIdc* idc,
-                               std::string* error) const {
+                               std::string& error) const {
   if (slot < 0 || slot >= kNumGrainSlots) {
     return Fail(error, "load_grain_model: slot outside 0..7");
   }
@@ -857,7 +856,7 @@ bool ValidateConfigAvailability(const GrainSlotState& state,
                                 const FilmGrainConfig& config,
                                 GrainChromaIdc frame_chroma_idc,
                                 int tlayer_id, int mlayer_id,
-                                std::string* why) {
+                                std::string& why) {
   if (!config.apply_grain) return true;
   if (config.fgm_id < 0 || config.fgm_id >= kNumGrainSlots) {
     return Fail(why, "fgm_id outside 0..7");

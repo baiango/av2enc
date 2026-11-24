@@ -849,7 +849,7 @@ std::size_t write_frame_header_bits(BitWriter& writer,
     context.immediate_output_frame = h.immediate_output_frame;
     std::string grain_error;
     (void)filters::grain::WriteFilmGrainConfig(
-        writer, h.grain, context, &grain_error);
+        writer, h.grain, context, grain_error);
     assert(grain_error.empty());
   }
 
@@ -1693,7 +1693,7 @@ bool read_frame_header(std::span<const std::uint8_t> payload, ObuType obu_type,
     std::size_t position = reader.bits_read();
     std::string grain_error;
     if (!filters::grain::ReadFilmGrainConfig(payload, &position, context,
-                                             &out.grain, &grain_error)) {
+                                             &out.grain, grain_error)) {
       error = "film_grain_config: " + grain_error;
       return false;
     }

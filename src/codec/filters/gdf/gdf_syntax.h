@@ -63,10 +63,10 @@ struct SequenceGdfFlags {
 
 std::size_t WriteSequenceGdfFlags(BitWriter& writer,
                                   const SequenceGdfFlags& flags, int sb_size,
-                                  std::string* error);
+                                  std::string& error);
 
 [[nodiscard]] bool ReadSequenceGdfFlags(av2enc::still::filters_stream::BitReader& reader, int sb_size,
-                          SequenceGdfFlags* flags, std::string* error);
+                          SequenceGdfFlags* flags, std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.18.7.9 gdf_params()
@@ -126,12 +126,12 @@ GdfUnitLayout DeriveGdfUnitLayout(const FrameGdfContext& context);
 // signalled per_block/qc/scale values; the derived fields are filled in.
 std::size_t WriteFrameGdfParams(BitWriter& writer,
                                 const FrameGdfContext& context,
-                                FrameGdfParams* params, std::string* error);
+                                FrameGdfParams* params, std::string& error);
 
 // Independent mirror.  Re-derives GdfBlkSize and validates the field ranges.
 [[nodiscard]] bool ReadFrameGdfParams(av2enc::still::filters_stream::BitReader& reader,
                         const FrameGdfContext& context, FrameGdfParams* params,
-                        std::string* error);
+                        std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.20.10.3 read_gdf(): per-block `use_gdf` S()

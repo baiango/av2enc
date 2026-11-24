@@ -106,8 +106,8 @@ bool Y4mReader::open(std::string& error) {
 }
 
 bool parse_y4m_header(std::string_view line, Y4mHeader* header_out,
-                      std::string* error_out) {
-  std::string& error = *error_out;
+                      std::string& error_out) {
+  std::string& error = error_out;
   std::istringstream stream{std::string(line)};
   std::string token;
   if (!(stream >> token) || token != "YUV4MPEG2") {
@@ -222,7 +222,7 @@ bool parse_y4m_header(std::string_view line, Y4mHeader* header_out,
 
 bool Y4mReader::parse_header_line(const std::string& line, std::string& error) {
   Y4mHeader header;
-  if (!parse_y4m_header(line, &header, &error)) return false;
+  if (!parse_y4m_header(line, &header, error)) return false;
   header_ = std::move(header);
   return true;
 }

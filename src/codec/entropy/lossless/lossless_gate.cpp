@@ -183,7 +183,7 @@ bool run_avmdec(const std::string& decoder, const std::filesystem::path& ivf,
 bool check_case(const Picture& p, av2enc::lossless::FscMode fsc, bool adaptive,
                 const std::string& stem, const std::string& dav2d,
                 const std::string& avmdec, const std::filesystem::path& work,
-                bool keep, int* checks, std::string* error) {
+                bool keep, int* checks, std::string& error) {
   av2enc::lossless::StillPicture pic;
   pic.width = static_cast<std::uint32_t>(p.w);
   pic.height = static_cast<std::uint32_t>(p.h);
@@ -195,7 +195,7 @@ bool check_case(const Picture& p, av2enc::lossless::FscMode fsc, bool adaptive,
   opt.adaptive_cdf = adaptive;
   av2enc::lossless::EncodeResult result;
   if (!av2enc::lossless::encode_still(pic, opt, result, *error)) {
-    *error = "encode: " + *error;
+    error = "encode: " + *error;
     return false;
   }
 
@@ -211,7 +211,7 @@ bool check_case(const Picture& p, av2enc::lossless::FscMode fsc, bool adaptive,
   if (!writer.open(ivf, header, *error) ||
       !writer.write_frame(result.temporal_unit, 0, *error) ||
       !writer.close(*error)) {
-    *error = "IVF: " + *error;
+    error = "IVF: " + *error;
     return false;
   }
   const std::vector<std::uint8_t> expected = source_yuv(p);
@@ -233,7 +233,7 @@ bool check_case(const Picture& p, av2enc::lossless::FscMode fsc, bool adaptive,
              ++i) {
           if (actual[i] != expected[i]) ++diff;
         }
-        *error = "dav2d output differs (" + std::to_string(diff) + "/" +
+        error = "dav2d output differs (" + std::to_string(diff) + "/" +
                  std::to_string(expected.size()) + " samples)";
         ok = false;
       } else {
@@ -259,7 +259,7 @@ bool check_case(const Picture& p, av2enc::lossless::FscMode fsc, bool adaptive,
              ++i) {
           if (actual[i] != expected[i]) ++diff;
         }
-        *error = "avmdec output differs (" + std::to_string(diff) + "/" +
+        error = "avmdec output differs (" + std::to_string(diff) + "/" +
                  std::to_string(expected.size()) + " samples)";
         ok = false;
       } else {

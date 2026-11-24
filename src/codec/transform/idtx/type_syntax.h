@@ -37,8 +37,8 @@ class TypeSyntaxWriter {
   // `tx_size_index` is the AV2 TX_SIZE index (0..24).  `flag` is the
   // is_long_side_dct value; it is coded only when the set codes it.
   bool write(Set set, int tx_size_index, TxType type, int symbol, bool flag,
-             bool adapt = true, std::string* error = nullptr);
-  bool finish(std::vector<std::uint8_t>* bytes, std::string* error = nullptr);
+             bool adapt, std::string& error);
+  bool finish(std::vector<std::uint8_t>* bytes, std::string& error);
   void reset();
 
  private:
@@ -59,13 +59,13 @@ class TypeSyntaxReader {
   // `payload_bytes` is the §8.2 payload size (sz).  `bytes` may be larger; the
   // reader never looks past `payload_bytes`.
   bool init(std::vector<std::uint8_t> bytes, std::size_t payload_bytes,
-            std::string* error = nullptr);
+            std::string& error);
   // `types` is the planner's legal set for this block; the symbol is mapped
   // back to a TX_TYPE through it (INTRA_1/INTRA_2 depend on size class and
   // mode, so the symbol alone is not enough to name the type).
   bool read(const TypeSet& types, int tx_size_index, bool adapt,
-            TypeSymbols* out, std::string* error = nullptr);
-  bool finish(std::string* error = nullptr);
+            TypeSymbols* out, std::string& error);
+  bool finish(std::string& error);
   void reset();
 
  private:

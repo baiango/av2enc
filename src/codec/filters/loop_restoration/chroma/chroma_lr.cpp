@@ -13,8 +13,8 @@
 namespace av2enc::lr_chroma {
 namespace {
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -35,7 +35,7 @@ struct FitCandidate {
 
 bool chroma_select_unit_size(int desired_size, int sb_size, int sub_x,
                              int sub_y, ChromaUnitSize* out,
-                             std::string* error) {
+                             std::string& error) {
   if (out == nullptr) return fail(error, "null ChromaUnitSize");
   if (sb_size != 64 && sb_size != 128 && sb_size != 256) {
     return fail(error, "unsupported superblock size for chroma LR");
@@ -75,7 +75,7 @@ bool chroma_select_unit_size(int desired_size, int sb_size, int sub_x,
 }
 
 bool chroma_write_unit_size(BitWriter& writer, const ChromaUnitSize& size,
-                            std::string* error) {
+                            std::string& error) {
   if (size.shift < 0 || size.shift > 3) {
     return fail(error, "chroma shift outside 0..3");
   }
@@ -107,7 +107,7 @@ bool chroma_write_unit_size(BitWriter& writer, const ChromaUnitSize& size,
 
 bool chroma_read_unit_size(classes::WienerBitReader& reader, int sb_size,
                            int sub_x, int sub_y, ChromaUnitSize* size,
-                           std::string* error) {
+                           std::string& error) {
   if (size == nullptr) return fail(error, "null ChromaUnitSize");
   bool half = false;
   if (!reader.read_bit(&half)) return fail(error, "truncated chroma size flag");
@@ -160,7 +160,7 @@ void ChromaUnitGrid::index(int unit_row, int unit_col, std::size_t* at) const {
 }
 
 bool chroma_make_unit_grid(int plane_width, int plane_height, int unit_size,
-                           ChromaUnitGrid* grid, std::string* error) {
+                           ChromaUnitGrid* grid, std::string& error) {
   if (grid == nullptr) return fail(error, "null ChromaUnitGrid");
   if (plane_width <= 0 || plane_height <= 0 || unit_size <= 0) {
     return fail(error, "invalid chroma grid geometry");
@@ -241,7 +241,7 @@ void chroma_zero_absent_taps(ChromaFilter* filter) {
   }
 }
 
-bool chroma_mirror_filter(ChromaFilter* filter, std::string* error) {
+bool chroma_mirror_filter(ChromaFilter* filter, std::string& error) {
   if (filter == nullptr) return fail(error, "null ChromaFilter");
   if (filter->subset <= 0 || filter->subset > 2) {
     return fail(error, "uv_sym requires chroma subset > 0");
@@ -258,7 +258,7 @@ bool chroma_mirror_filter(ChromaFilter* filter, std::string* error) {
   return true;
 }
 
-bool chroma_filter_validate(const ChromaFilter& filter, std::string* error) {
+bool chroma_filter_validate(const ChromaFilter& filter, std::string& error) {
   if (filter.subset < 0 || filter.subset > 2) {
     return fail(error, "chroma subset outside 0..2");
   }
@@ -478,7 +478,7 @@ void fill_core(const ChromaLrInput& input, int plane, int unit_size,
                std::uint8_t* dst, int dst_stride,
                std::vector<std::uint8_t>* unit_type,
                std::vector<std::int16_t>* unit_coeffs, rest::LrCoreFrame* core,
-               std::string* error) {
+               std::string& error) {
   *core = rest::LrCoreFrame{};
   core->mi_cols = input.mi_cols;
   core->mi_rows = input.mi_rows;
@@ -519,7 +519,7 @@ std::vector<FitCandidate> fit_unit(const ChromaLrInput& input,
                                    const ChromaDecision& decision, int plane,
                                    int unit_row, int unit_col,
                                    const ChromaLrOptions& options,
-                                   std::string* error) {
+                                   std::string& error) {
   std::vector<FitCandidate> out;
   const int chroma = chroma_index(plane);
   const int width = input.plane_width[chroma];
@@ -627,15 +627,15 @@ int find_merge_bank(const fs::LrState& state, int plane,
 
 bool write_chroma_unit_impl(av2::Encoder& encoder, fs::LrState& state,
                             int plane, int unit_row, int unit_col, bool on,
-                            const ChromaFilter& filter, std::string* error);
+                            const ChromaFilter& filter, std::string& error);
 bool read_chroma_unit_impl(av2::Decoder& decoder, fs::LrState& state,
                            int plane, int unit_row, int unit_col,
-                           ChromaUnitPlan* plan, std::string* error);
+                           ChromaUnitPlan* plan, std::string& error);
 
 // Applies a selected unit decision to the simulation state (updates banks and
 // CDFs).  The bytes are discarded; only state matters.
 bool commit_unit(fs::LrState* state, int plane, int unit_row, int unit_col,
-                 const ChromaUnitPlan& plan, std::string* error) {
+                 const ChromaUnitPlan& plan, std::string& error) {
   std::vector<std::uint8_t> buffer(1 << 16);
   av2::Encoder encoder;
   if (encoder.init_symbol(buffer.data(), buffer.size()) != av2::Status::kOk) {
@@ -679,7 +679,7 @@ struct PlaneFit {
 
 namespace {
 
-bool encode_raw_bit(av2::Encoder& encoder, bool bit, std::string* error) {
+bool encode_raw_bit(av2::Encoder& encoder, bool bit, std::string& error) {
   if (encoder.encode_bool(bit) != av2::Status::kOk) {
     return fail(error, "entropy encode_bool failed");
   }
@@ -687,7 +687,7 @@ bool encode_raw_bit(av2::Encoder& encoder, bool bit, std::string* error) {
 }
 
 bool encode_sym(av2::Encoder& encoder, std::uint16_t* cdf, int n, int symbol,
-                std::string* error) {
+                std::string& error) {
   if (encoder.encode_symbol(cdf, n, symbol) != av2::Status::kOk) {
     return fail(error, "entropy encode_symbol failed");
   }
@@ -695,14 +695,14 @@ bool encode_sym(av2::Encoder& encoder, std::uint16_t* cdf, int n, int symbol,
 }
 
 bool decode_sym(av2::Decoder& decoder, std::uint16_t* cdf, int n, int* symbol,
-                std::string* error) {
+                std::string& error) {
   if (decoder.decode_symbol(cdf, n, symbol) != av2::Status::kOk) {
     return fail(error, "entropy decode_symbol failed");
   }
   return true;
 }
 
-bool decode_raw_bit(av2::Decoder& decoder, bool* bit, std::string* error) {
+bool decode_raw_bit(av2::Decoder& decoder, bool* bit, std::string& error) {
   if (decoder.read_bool(bit) != av2::Status::kOk) {
     return fail(error, "entropy read_bool failed");
   }
@@ -711,7 +711,7 @@ bool decode_raw_bit(av2::Decoder& decoder, bool* bit, std::string* error) {
 
 bool write_chroma_unit_impl(av2::Encoder& encoder, fs::LrState& state,
                             int plane, int unit_row, int unit_col, bool on,
-                            const ChromaFilter& filter, std::string* error) {
+                            const ChromaFilter& filter, std::string& error) {
   if (on) {
     ChromaFilter check = filter;
     chroma_zero_absent_taps(&check);
@@ -839,7 +839,7 @@ bool write_chroma_unit_impl(av2::Encoder& encoder, fs::LrState& state,
 
 bool read_chroma_unit_impl(av2::Decoder& decoder, fs::LrState& state,
                            int plane, int unit_row, int unit_col,
-                           ChromaUnitPlan* plan, std::string* error) {
+                           ChromaUnitPlan* plan, std::string& error) {
   const int frame_type = state.params.frame_type[plane];
   int type = rest::kRestoreNone;
   if (frame_type == rest::kRestoreWienerNs) {
@@ -967,7 +967,7 @@ bool chroma_measure_unit_bytes(const fs::LrState& state, int plane,
                                int unit_row, int unit_col,
                                const ChromaFilter& filter, bool on,
                                std::vector<std::uint8_t>* bytes,
-                               std::string* error) {
+                               std::string& error) {
   if (bytes == nullptr) return fail(error, "null byte output");
   if (!plane_is_chroma(plane)) {
     return fail(error, "chroma_measure_unit_bytes expects U or V");
@@ -995,7 +995,7 @@ bool chroma_measure_unit_bytes(const fs::LrState& state, int plane,
 bool chroma_measure_decision_bytes(const ChromaDecision& decision,
                                    const ChromaLrInput& input,
                                    std::vector<std::uint8_t>* bytes,
-                                   std::string* error) {
+                                   std::string& error) {
   if (bytes == nullptr) return fail(error, "null byte output");
   fs::LrState state;
   if (!chroma_init_tile_state(decision, input, &state, error)) return false;
@@ -1039,7 +1039,7 @@ bool chroma_measure_decision_bytes(const ChromaDecision& decision,
 
 bool chroma_write_unit(av2::Encoder& encoder, fs::LrState& state, int plane,
                        int unit_row, int unit_col, const ChromaUnitPlan& plan,
-                       std::string* error) {
+                       std::string& error) {
   if (!plane_is_chroma(plane)) {
     return fail(error, "chroma unit write expects U or V");
   }
@@ -1053,7 +1053,7 @@ bool chroma_write_unit(av2::Encoder& encoder, fs::LrState& state, int plane,
 bool chroma_write_unit_decision(av2::Encoder& encoder, fs::LrState& state,
                                 int plane, int unit_row, int unit_col,
                                 const ChromaFilter& filter, bool on,
-                                std::string* error) {
+                                std::string& error) {
   ChromaUnitPlan plan;
   plan.plane = plane;
   plan.unit_row = unit_row;
@@ -1066,7 +1066,7 @@ bool chroma_write_unit_decision(av2::Encoder& encoder, fs::LrState& state,
 
 bool chroma_read_unit(av2::Decoder& decoder, fs::LrState& state, int plane,
                       int unit_row, int unit_col, ChromaUnitPlan* plan,
-                      std::string* error) {
+                      std::string& error) {
   if (plan == nullptr) return fail(error, "null unit plan");
   if (!plane_is_chroma(plane)) {
     return fail(error, "chroma unit read expects U or V");
@@ -1108,7 +1108,7 @@ ChromaUnitPlan* find_plan_mut(ChromaDecision* decision, int plane,
 bool chroma_write_read_lr(av2::Encoder& encoder, fs::LrState& state,
                           int mi_row, int mi_col, int w4, int h4,
                           int tile_mi_row_start, int tile_mi_col_start,
-                          const ChromaDecision& decision, std::string* error) {
+                          const ChromaDecision& decision, std::string& error) {
   for (int plane = 1; plane <= 2; ++plane) {
     fs::LrUnitRange range;
     if (!fs::lr_unit_range(state, plane, mi_row, mi_col, w4, h4,
@@ -1137,7 +1137,7 @@ bool chroma_write_read_lr(av2::Encoder& encoder, fs::LrState& state,
 bool chroma_read_read_lr(av2::Decoder& decoder, fs::LrState& state, int mi_row,
                          int mi_col, int w4, int h4, int tile_mi_row_start,
                          int tile_mi_col_start, ChromaDecision* decision,
-                         std::string* error) {
+                         std::string& error) {
   if (decision == nullptr) return fail(error, "null ChromaDecision");
   for (int plane = 1; plane <= 2; ++plane) {
     fs::LrUnitRange range;
@@ -1171,7 +1171,7 @@ bool chroma_read_read_lr(av2::Decoder& decoder, fs::LrState& state, int mi_row,
 // ---------------------------------------------------------------------------
 
 bool chroma_make_lr_params(const ChromaDecision& decision, fs::LrParams* params,
-                           std::string* error) {
+                           std::string& error) {
   if (params == nullptr) return fail(error, "null LrParams");
   *params = fs::LrParams{};
   params->frame_type[0] = rest::kRestoreNone;
@@ -1189,7 +1189,7 @@ bool chroma_make_lr_params(const ChromaDecision& decision, fs::LrParams* params,
 
 bool chroma_init_tile_state(const ChromaDecision& decision,
                             const ChromaLrInput& input, fs::LrState* state,
-                            std::string* error) {
+                            std::string& error) {
   fs::LrParams params;
   if (!chroma_make_lr_params(decision, &params, error)) return false;
   if (!fs::lr_state_init(state, params, input.mi_cols, input.mi_rows,
@@ -1200,7 +1200,7 @@ bool chroma_init_tile_state(const ChromaDecision& decision,
 }
 
 bool chroma_measure_header_bits(const ChromaDecision& decision, int sb_size,
-                                int base_q_idx, int* bits, std::string* error) {
+                                int base_q_idx, int* bits, std::string& error) {
   if (bits == nullptr) return fail(error, "null bit output");
   classes::WienerLrHeaderConfig config;
   config.coded_lossless = false;
@@ -1245,7 +1245,7 @@ namespace {
 
 bool decide_for_shift(const ChromaLrInput& input,
                       const ChromaLrOptions& options, int shift,
-                      ChromaDecision* decision, std::string* error) {
+                      ChromaDecision* decision, std::string& error) {
   ChromaUnitSize unit;
   const int width = std::max(input.plane_width[0], input.plane_width[1]);
   const int height = std::max(input.plane_height[0], input.plane_height[1]);
@@ -1572,7 +1572,7 @@ bool decide_for_shift(const ChromaLrInput& input,
 }  // namespace
 
 bool chroma_decide(const ChromaLrInput& input, const ChromaLrOptions& options,
-                   ChromaDecision* decision, std::string* error) {
+                   ChromaDecision* decision, std::string& error) {
   if (decision == nullptr) return fail(error, "null ChromaDecision");
   if (input.sub_x != 1 || input.sub_y != 1) {
     return fail(error, "this module targets 8-bit 4:2:0 chroma");

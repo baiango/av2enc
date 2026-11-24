@@ -507,7 +507,7 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   } else {
     std::string delta_error;
     if (dcdeltaq::write_sequence_delta_q_fields(writer, c.seq_delta_q,
-                                                &delta_error) == 0) {
+                                                delta_error) == 0) {
       assert(false && "invalid §5.4.8 delta-Q sequence fields");
     }
   }
@@ -794,7 +794,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
         context.implicit_output_frame = h.implicit_output_frame;
         std::string grain_error;
         (void)grain::WriteFilmGrainConfig(writer, config, context,
-                                          &grain_error);
+                                          grain_error);
         assert(grain_error.empty());
       }
       emit_ref_bit_probe(probe, h, writer.bit_size() - start);
@@ -852,7 +852,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     if (dcdeltaq::write_quantization_params(writer, c.base_q_idx,
                                             c.seq_delta_q,
                                             h.qp.frame_delta_q,
-                                            &delta_error) == 0) {
+                                            delta_error) == 0) {
       assert(false && "invalid §5.18.6.1 quantization_params()");
     }
   }
@@ -874,7 +874,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     plan.seq_allow_seg_info_change = h.qp.seq_allow_seg_info_change;
     plan.reuse_seg_info = h.qp.reuse_seg_info;
     std::string qp_error;
-    if (deltaq::write_frame_qp_syntax(writer, plan, h, &qp_error) == 0) {
+    if (deltaq::write_frame_qp_syntax(writer, plan, h, qp_error) == 0) {
       // The header writer has no error channel; the planner validates the
       // table before this point, so a failure is a programming error.
       assert(false && "invalid segmentation/delta-Q frame syntax");
@@ -897,7 +897,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       std::string qm_error;
       (void)qm::write_setup_qm_params(writer, qm_state, /*num_planes=*/3,
                                       /*segmentation_enabled=*/false,
-                                      &qm_error);
+                                      qm_error);
       assert(qm_error.empty());
     }
     writer.put_bit(false);              // delta_q_present (base_q_idx > 0)
@@ -928,7 +928,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
       const bool present[4] = {false, false, false, false};
       std::string deblock_error;
       const std::size_t deblock_bits = post::write_video_deblock_params(
-          writer, apply, present, &deblock_error);
+          writer, apply, present, deblock_error);
       assert(deblock_error.empty());
       assert(deblock_bits == 8U);  // 4 apply flags + 4 df_delta_q_present
       (void)deblock_bits;
@@ -968,7 +968,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     gdf_params.pic_qc_idx = h.gdf.qc_idx;
     gdf_params.pic_scale_idx = h.gdf.scale_idx;
     std::string gdf_error;
-    gdf::WriteFrameGdfParams(writer, gdf_context, &gdf_params, &gdf_error);
+    gdf::WriteFrameGdfParams(writer, gdf_context, &gdf_params, gdf_error);
     assert(gdf_error.empty());
   }
   // §5.18.7.10 cdef_params(): after deblocking_filter_params(), before
@@ -993,7 +993,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.cdef_on_skip_txfm = c.cdef_on_skip_txfm_mode;
     context.num_planes = fmt::has_chroma(c.chroma) ? 3 : 1;
     std::string cdef_error;
-    filters_stream::write_cdef_params(writer, params, context, &cdef_error);
+    filters_stream::write_cdef_params(writer, params, context, cdef_error);
     assert(cdef_error.empty());
   }
   // §5.18.7.11 lr_params(): between cdef_params() and ccso_params().  Only the
@@ -1033,7 +1033,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
                                                 : h.lr.plane[2].shift;
     std::string lr_error;
     const std::size_t bits =
-        pcw::WriteLrParams(writer, &params, context, &lr_error);
+        pcw::WriteLrParams(writer, &params, context, lr_error);
     assert(lr_error.empty());
     (void)bits;
   } else if (c.enable_restoration) {
@@ -1073,7 +1073,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
                                          : c.lr_disable_luma_wiener_ns;
     context.lr_tools_disable[1][3] = false;
     std::string lr_error;
-    filters_stream::write_lr_params(writer, params, context, &lr_error);
+    filters_stream::write_lr_params(writer, params, context, lr_error);
     assert(lr_error.empty());
   }
   // §5.18.7.12 ccso_params(): after lr_params(), before tx_mode_select.
@@ -1103,7 +1103,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.ccso_unit_matches_sb_size = c.ccso_unit_matches_sb_size;
     context.tile_start_or = 0;
     std::string ccso_error;
-    filters_stream::write_ccso_params(writer, params, context, &ccso_error);
+    filters_stream::write_ccso_params(writer, params, context, ccso_error);
     assert(ccso_error.empty());  }
   writer.put_bit(c.tx_mode_select);  // 0 = TX_MODE_LARGEST, 1 = TX_MODE_SELECT
   if (!key) {
@@ -1137,7 +1137,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     }
     gm.use_global_motion = h.gm.use_global_motion;
     std::string gm_error;
-    inter::gme::write_global_motion_params(writer, gm, &gm_error);
+    inter::gme::write_global_motion_params(writer, gm, gm_error);
   }
 #else
   // Standalone component gates compile this writer without the GME syntax
@@ -1160,7 +1160,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     context.immediate_output_frame = h.immediate_output_frame;
     context.implicit_output_frame = h.implicit_output_frame;
     std::string grain_error;
-    (void)grain::WriteFilmGrainConfig(writer, config, context, &grain_error);
+    (void)grain::WriteFilmGrainConfig(writer, config, context, grain_error);
     assert(grain_error.empty());
   }
 

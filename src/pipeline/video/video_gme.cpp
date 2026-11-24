@@ -287,12 +287,12 @@ void gm_sub_block_warp_mv(const inter::gme::GmParams& params, int pixel_x,
       std::clamp<std::int64_t>(yc, INT32_MIN, INT32_MAX), 13));
 }
 
-bool ref_mvs_field_selftest(std::string* error) {
+bool ref_mvs_field_selftest(std::string& error) {
   using inter::gme::GmParams;
   using inter::gme::GmType;
   using inter::gme::kGmOne;
-  const auto fail = [error](const char* msg) {
-    if (error != nullptr) *error = msg;
+  const auto fail = [&error](const char* msg) {
+    error = msg;
     return false;
   };
   const auto model = [](GmType type, std::array<std::int32_t, 6> p) {

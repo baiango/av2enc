@@ -77,13 +77,13 @@ class VideoPostFilterFrame {
   VideoPostFilterFrame() = default;
 
   // Copies an M2 reconstruction into MI-aligned planes and allocates metadata.
-  bool init_from_recon(const VideoReconFrame& recon, int base_q_idx = 90,
-                       bool frame_is_intra = true,
-                       std::string* error = nullptr);
+  bool init_from_recon(const VideoReconFrame& recon, int base_q_idx,
+                       bool frame_is_intra,
+                       std::string& error);
 
   // Tile-aware variant: also fills deblock/CDEF tile starts and the
   // restoration MiCol/MiRow start/end grids.
-  bool set_tile_layout(const tiles::TileLayout& layout, std::string* error);
+  bool set_tile_layout(const tiles::TileLayout& layout, std::string& error);
 
   // Describe one coding block in the deblock metadata of one plane.  `mi_row`
   // and `mi_col` are luma MI units; w4/h4 are Num_4x4_Blocks_Wide/High.
@@ -158,7 +158,7 @@ class VideoPostFilterFrame {
  private:
   friend bool run_video_post_filters(VideoPostFilterFrame&,
                                   const VideoPostFilterConfig&,
-                                  VideoPostFilterReport&, std::string*);
+                                  VideoPostFilterReport&, std::string&);
 
   int mi_cols_ = 0;
   int mi_rows_ = 0;
@@ -204,7 +204,7 @@ class VideoPostFilterFrame {
 [[nodiscard]] bool run_video_post_filters(VideoPostFilterFrame& frame,
                          const VideoPostFilterConfig& config,
                          VideoPostFilterReport& report,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 // ---------------------------------------------------------------------------
 // Frame/sequence header flags (syntax only)
@@ -231,13 +231,13 @@ class VideoPostFilterFrame {
 std::size_t write_video_deblock_params(
     BitWriter& writer, const bool apply_deblocking_filter[4],
     const bool df_delta_q_present[4], const int df_delta_q[4],
-    int df_par_bits_minus_2, std::string* error);
+    int df_par_bits_minus_2, std::string& error);
 
 // Convenience overload for callers that only signal DfDeltaQ == 0.  It writes
 // the same syntax with a zero delta for every present plane (dfParBits = 2,
 // coded value 2).
 std::size_t write_video_deblock_params(
     BitWriter& writer, const bool apply_deblocking_filter[4],
-    const bool df_delta_q_present[4], std::string* error);
+    const bool df_delta_q_present[4], std::string& error);
 
 }  // namespace av2enc::video::post

@@ -169,7 +169,7 @@ void test_mapping_matches_cli() {
 void test_default_supported() {
   av2enc::cuda::still_gpu::GpuOptions gpu;
   std::string error;
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "default options are supported");
   check(error.empty(), "default options report no error");
 }
@@ -177,7 +177,7 @@ void test_default_supported() {
 void expect_rejected(const av2enc::cuda::still_gpu::GpuOptions& gpu,
                      const char* flag, const char* what) {
   std::string error;
-  const bool ok = av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error);
+  const bool ok = av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error);
   if (ok) {
     std::fprintf(stderr, "FAIL: %s was accepted\n", what);
     ++failures;
@@ -207,7 +207,7 @@ void test_wired_filters_accepted() {
   GpuOptions gpu;
   gpu.enable_cdef = true;
   std::string error;
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-cdef is wired into the GPU pipeline");
   check(error.empty(), "--still-cdef reports no rejection");
 
@@ -216,7 +216,7 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.enable_grain = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-grain is supported on the GPU path (metadata only)");
   check(error.empty(), "--still-grain reports no rejection");
 
@@ -227,7 +227,7 @@ void test_wired_filters_accepted() {
   gpu.grain_adaptive = true;
   gpu.content_interpretation = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-grain-adaptive and --still-content-interpretation are wired");
   check(error.empty(), "metadata-only tools report no rejection");
 
@@ -236,7 +236,7 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.enable_ccso = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-ccso is wired into the GPU pipeline");
   check(error.empty(), "--still-ccso reports no rejection");
 
@@ -244,7 +244,7 @@ void test_wired_filters_accepted() {
   gpu.enable_ccso = true;
   gpu.ccso_edge = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-ccso-edge is wired into the GPU pipeline");
   check(error.empty(), "--still-ccso-edge reports no rejection");
 
@@ -253,14 +253,14 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.enable_wiener = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-wiener is wired into the GPU pipeline");
   check(error.empty(), "--still-wiener reports no rejection");
 
   gpu = GpuOptions{};
   gpu.enable_chroma_lr = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-chroma-lr is wired into the GPU pipeline");
   check(error.empty(), "--still-chroma-lr reports no rejection");
 
@@ -268,7 +268,7 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.enable_pc_wiener = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-pc-wiener is wired into the GPU pipeline");
   check(error.empty(), "--still-pc-wiener reports no rejection");
 
@@ -276,7 +276,7 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.enable_gdf = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-gdf is wired into the GPU pipeline");
   check(error.empty(), "--still-gdf reports no rejection");
 
@@ -285,7 +285,7 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.qm = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-qm is wired into the GPU pipeline");
   check(error.empty(), "--still-qm reports no rejection");
 
@@ -294,7 +294,7 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.enable_segmentation = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-segmentation is wired into the GPU pipeline");
   check(error.empty(), "--still-segmentation reports no rejection");
 
@@ -302,7 +302,7 @@ void test_wired_filters_accepted() {
   gpu.enable_delta_q = true;
   gpu.delta_q_res = 1;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-delta-q is wired into the GPU pipeline");
   check(error.empty(), "--still-delta-q reports no rejection");
 
@@ -312,7 +312,7 @@ void test_wired_filters_accepted() {
   gpu.per_segment_q = true;
   gpu.per_segment_q_delta = 8;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-per-segment-q is wired into the GPU pipeline");
   check(error.empty(), "--still-per-segment-q reports no rejection");
   // §7.13.5 full-UV chroma search: the device candidate loop consumes the
@@ -320,7 +320,7 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.uv_full = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-uv-full is wired into the GPU pipeline");
   check(error.empty(), "--still-uv-full reports no rejection");
 
@@ -329,14 +329,14 @@ void test_wired_filters_accepted() {
   gpu = GpuOptions{};
   gpu.palette = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-palette is wired into the GPU pipeline");
   check(error.empty(), "--still-palette reports no rejection");
 
   gpu = GpuOptions{};
   gpu.ibc = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-ibc is wired into the GPU pipeline");
   check(error.empty(), "--still-ibc reports no rejection");}
 
@@ -349,7 +349,7 @@ void test_every_m3_flag_rejected_by_name() {
   gpu = GpuOptions{};
   gpu.rdoq = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-rdoq is wired into the GPU pipeline");
   check(error.empty(), "--still-rdoq reports no rejection");
 
@@ -377,24 +377,24 @@ void test_every_m3_flag_rejected_by_name() {
 
   gpu = GpuOptions{};
   gpu.tx_type = true;
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-tx-type is wired into the GPU pipeline");
 
   gpu = GpuOptions{};
   gpu.idtx = true;
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-idtx is wired into the GPU pipeline");
 
   gpu = GpuOptions{};
   gpu.ist = true;
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-ist is wired into the GPU pipeline");
 
   // §5.4.8 enable_tcq / §7.14.4: the device trellis + rate model are wired.
   gpu = GpuOptions{};
   gpu.tcq = true;
   error.clear();
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-tcq is wired into the GPU pipeline");
   check(error.empty(), "--still-tcq reports no rejection");
 
@@ -432,7 +432,7 @@ void test_every_m3_flag_rejected_by_name() {
 
   gpu = GpuOptions{};
   gpu.cctx = true;
-  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, &error),
+  check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu, error),
         "--still-cctx is wired into the GPU pipeline");
 
   gpu = GpuOptions{};
@@ -450,7 +450,7 @@ void test_every_m3_flag_rejected_by_name() {
   gpu.delta_q = true;
   std::string combined_error;
   check(av2enc::cuda::still_gpu::gpu_m3_options_supported(gpu,
-                                                          &combined_error),
+                                                          combined_error),
         "--still-per-segment-q composes with --still-dc-ac-delta-q");
   check(combined_error.empty(), "combined delta-Q reports no rejection");
 }

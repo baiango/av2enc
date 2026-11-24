@@ -50,9 +50,9 @@ bool VideoBitDepthChecklist::ok_for_8bit_video_tile_path() const noexcept {
 }
 
 bool video_geometry_supported(int width, int height, int sb_size,
-                           std::string* reason) {
-  const auto fail = [reason](const std::string& text) {
-    if (reason != nullptr) *reason = text;
+                           std::string& reason) {
+  const auto fail = [&reason](const std::string& text) {
+    reason = text;
     return false;
   };
   if (width <= 0 || height <= 0) return fail("frame dimensions must be > 0");
@@ -65,7 +65,7 @@ bool video_geometry_supported(int width, int height, int sb_size,
   if ((width & 1) != 0 || (height & 1) != 0) {
     return fail("M2 4:2:0 requires even dimensions");
   }
-  if (reason != nullptr) reason->clear();
+  reason.clear();
   return true;
 }
 
@@ -132,7 +132,7 @@ VideoBitDepthChecklist make_video_bit_depth_checklist(int width, int height,
 
   // --- geometry ----------------------------------------------------------
   std::string reason;
-  const bool geom_ok = video_geometry_supported(width, height, sb_size, &reason);
+  const bool geom_ok = video_geometry_supported(width, height, sb_size, reason);
   std::ostringstream geom;
   if (geom_ok) {
     geom << width << "x" << height << ", sb " << sb_size << "x" << sb_size

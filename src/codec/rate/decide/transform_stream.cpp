@@ -126,45 +126,39 @@ void build_diagonal_scan(int w, int h, std::int32_t* scan) noexcept {
 }  // namespace
 
 bool TransformStreamRate::init(const TransformStreamBlock& block,
-                               std::string* error) {
+                               std::string& error) {
   valid_ = false;
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   if (block.plane < 0 || block.plane > 2) {
-    if (error != nullptr) *error = "transform stream plane must be 0, 1 or 2";
+    error = "transform stream plane must be 0, 1 or 2";
     return false;
   }
   if (block.tx_size < 0 || block.tx_size >= 25) {
-    if (error != nullptr) *error = "transform stream tx_size must be 0..24";
+    error = "transform stream tx_size must be 0..24";
     return false;
   }
   if (block.w <= 0 || block.h <= 0 ||
       block.w * block.h > kMaxTransformArea) {
-    if (error != nullptr) {
-      *error = "transform stream geometry must be a non-empty <= 32x32 block";
-    }
+error = "transform stream geometry must be a non-empty <= 32x32 block";
     return false;
   }
   const int area = block.w * block.h;
   if (block.levels_scan.size() != static_cast<std::size_t>(area)) {
-    if (error != nullptr) {
-      *error = "transform stream level span must equal w*h";
-    }
+error = "transform stream level span must equal w*h";
     return false;
   }
   if (block.eob < 0 || block.eob > area) {
-    if (error != nullptr) *error = "transform stream eob must be in [0, w*h]";
+    error = "transform stream eob must be in [0, w*h]";
     return false;
   }
   const int skip_limit = block.plane == 2 ? 12 : 10;
   if (block.txb_skip_context < 0 ||
       block.txb_skip_context >= skip_limit) {
-    if (error != nullptr) *error = "txb_skip context out of range";
+    error = "txb_skip context out of range";
     return false;
   }
   if (block.dc_sign_context < 0 || block.dc_sign_context > 2) {
-    if (error != nullptr) *error = "DC sign context must be 0..2";
+    error = "DC sign context must be 0..2";
     return false;
   }
 
@@ -316,15 +310,15 @@ bool TransformStreamRate::init(const TransformStreamBlock& block,
     const Position& p = positions_[static_cast<std::size_t>(c)];
     if (plane_ == 0) {
       if (p.is_lf != 0 ? p.base_ctx > 32 : p.base_ctx > 19) {
-        if (error != nullptr) *error = "coeff_base context out of range";
+        error = "coeff_base context out of range";
         return false;
       }
       if (p.is_lf != 0 ? p.br_ctx > 13 : p.br_ctx > 6) {
-        if (error != nullptr) *error = "coeff_br context out of range";
+        error = "coeff_br context out of range";
         return false;
       }
     } else if (p.base_ctx > 11) {
-      if (error != nullptr) *error = "chroma coeff_base context out of range";
+      error = "chroma coeff_base context out of range";
       return false;
     }
   }

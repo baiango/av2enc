@@ -83,6 +83,6 @@ struct MorphPredGate {
 // Syntax condition + use_intrabc + the §6.19.5.4 conformance condition
 // is_offset_mv_valid(-1, -1) == 1.
 [[nodiscard]] bool morph_pred_allowed(const MorphPredGate& gate, bool offset_mv_valid,
-                        std::string* reason = nullptr);
+                        std::string& reason);
 
 }  // namespace av2enc::inter::morph

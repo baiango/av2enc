@@ -194,7 +194,7 @@ struct BatchOutput {
 // for every block's offsets; `status` receives one entry per block and the
 // function returns false if any block failed (per-block status is still set).
 [[nodiscard]] bool decide_inter_batch(const BatchInput& input, BatchOutput& output,
-                        std::string* error);
+                        std::string& error);
 
 // Rate estimate in bits for one plane's syntax (TX type symbol, EOB, base/br
 // codes, signs, escapes).  This is the documented bring-up model: it is a

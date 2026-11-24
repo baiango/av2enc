@@ -369,7 +369,7 @@ GmEstimate finalize_once(const GmParams& candidate, const GmOptions& options, bo
   out.diag.shear_mismatch_q16 =
       std::max(abs_int(out.params.p[3] + out.params.p[4]),
                abs_int(out.params.p[5] - out.params.p[2]));
-  out.diag.codable = gm_params_codable(out.params, &out.diag.reason);
+  out.diag.codable = gm_params_codable(out.params, out.diag.reason);
   out.diag.ok = true;
   if (out.diag.identity) {
     out.diag.accepted = true;
@@ -604,9 +604,9 @@ GmEstimate fit_gm_warps(std::span<const GmWarpSample> warps, const GmOptions& op
   return fit_gm_points(points, options);
 }
 
-bool gm_params_codable(const GmParams& params, std::string* reason) {
+bool gm_params_codable(const GmParams& params, std::string& reason) {
   auto fail = [&](const char* text) {
-    if (reason != nullptr) *reason = text;
+    reason = text;
     return false;
   };
   for (int i = 0; i < 6; ++i) {
@@ -646,7 +646,7 @@ bool validate_gm_params(const GmParams& params, const GmOptions& options,
   local.ok = true;
   local.identity = is_identity_model(params);
   std::string reason;
-  local.codable = gm_params_codable(params, &reason);
+  local.codable = gm_params_codable(params, reason);
   local.shear_valid = setup_shear_valid(params.p.data());
   local.shear_mismatch_q16 =
       std::max(abs_int(params.p[4] + params.p[3]), abs_int(params.p[5] - params.p[2]));

@@ -12,8 +12,8 @@
 namespace av2enc::inter::longterm {
 namespace {
 
-bool set_error(std::string* error, const std::string& message) {
-  if (error != nullptr) *error = message;
+bool set_error(std::string& error, const std::string& message) {
+  error = message;
   return false;
 }
 
@@ -67,7 +67,7 @@ int find_slot_with_long_term_id(const PoolState& pool, std::int32_t id) {
 //     says only named long-term references survive).
 bool validate_olk_long_term_list(const SequenceConfig& config,
                                  const FrameHeader& olk,
-                                 const PoolState& pool, std::string* error) {
+                                 const PoolState& pool, std::string& error) {
   for (const std::uint8_t value : olk.ref_long_term_id) {
     const std::int32_t id = static_cast<std::int32_t>(value);
     if (find_slot_with_long_term_id(pool, id) < 0) {
@@ -124,7 +124,7 @@ void reset_pool(const SequenceConfig& config, PoolState* pool) {
 // Static frame-header conformance (§5.18.2, §6.4.6, §6.17)
 // ---------------------------------------------------------------------------
 bool validate_frame_header(const SequenceConfig& config,
-                           const FrameHeader& header, std::string* error) {
+                           const FrameHeader& header, std::string& error) {
   if (config.long_term_frame_id_bits > 7U) {
     return set_error(error, "long_term_frame_id_bits exceeds f(3)");
   }
@@ -243,7 +243,7 @@ bool validate_frame_header(const SequenceConfig& config,
 // ---------------------------------------------------------------------------
 bool apply_frame(const SequenceConfig& config, const FrameHeader& header,
                  bool first_picture_in_tu, PoolState* pool,
-                 PoolEvents* events, std::string* error) {
+                 PoolEvents* events, std::string& error) {
   if (pool == nullptr || events == nullptr) {
     return set_error(error, "apply_frame: null pool/events");
   }
@@ -402,7 +402,7 @@ bool apply_frame(const SequenceConfig& config, const FrameHeader& header,
 // ---------------------------------------------------------------------------
 bool validate_temporal_unit(const SequenceConfig& config,
                             std::span<const FrameHeader> frames,
-                            std::string* error) {
+                            std::string& error) {
   if (frames.empty()) return set_error(error, "empty temporal unit");
   for (std::size_t i = 0; i < frames.size(); ++i) {
     if (!validate_frame_header(config, frames[i], error)) return false;
@@ -459,7 +459,7 @@ bool validate_temporal_unit(const SequenceConfig& config,
 }
 
 bool validate_closed_random_access(const SequenceConfig& config,
-                                   const FrameHeader& clk, std::string* error) {
+                                   const FrameHeader& clk, std::string& error) {
   if (clk.role != FrameRole::kClosedLoopKey) {
     return set_error(error, "closed random access requires OBU_CLOSED_LOOP_KEY");
   }
@@ -476,7 +476,7 @@ bool validate_closed_random_access(const SequenceConfig& config,
 bool validate_open_random_access(
     const SequenceConfig& config, const FrameHeader& olk,
     const PoolState& pool, std::span<const std::int32_t> required_long_term_ids,
-    std::string* error) {
+    std::string& error) {
   if (olk.role != FrameRole::kOpenLoopKey) {
     return set_error(error, "open random access requires OBU_OPEN_LOOP_KEY");
   }
@@ -505,7 +505,7 @@ bool is_leading_candidate(const PoolState& pool, std::uint32_t order_hint) {
 // ---------------------------------------------------------------------------
 bool plan_closed_loop_key(const SequenceConfig& config,
                           std::uint32_t order_hint, std::int32_t long_term_id,
-                          FrameHeader* header, std::string* error) {
+                          FrameHeader* header, std::string& error) {
   if (header == nullptr) return set_error(error, "null header");
   *header = FrameHeader{};
   header->role = FrameRole::kClosedLoopKey;
@@ -521,7 +521,7 @@ bool plan_open_loop_key(const SequenceConfig& config, const PoolState& pool,
                         std::uint32_t order_hint, std::uint8_t olk_slot,
                         std::int32_t olk_long_term_id,
                         std::span<const std::int32_t> retain_long_term_ids,
-                        FrameHeader* header, std::string* error) {
+                        FrameHeader* header, std::string& error) {
   if (header == nullptr) return set_error(error, "null header");
   if (olk_slot >= config.num_ref_frames) {
     return set_error(error, "OLK refresh slot >= NumRefFrames");
@@ -561,7 +561,7 @@ bool plan_inter_frame(const SequenceConfig& config, FrameRole role,
                       std::uint32_t order_hint,
                       std::span<const std::uint8_t> ref_slots,
                       std::uint8_t refresh_slot, bool immediate_output_frame,
-                      FrameHeader* header, std::string* error) {
+                      FrameHeader* header, std::string& error) {
   if (header == nullptr) return set_error(error, "null header");
   if (role != FrameRole::kRegular && role != FrameRole::kLeading) {
     return set_error(error, "plan_inter_frame needs a regular/leading role");

@@ -102,7 +102,7 @@ std::string find_decoder() {
 
 bool write_ivf(const std::string& path,
                const std::vector<std::vector<std::uint8_t>>& units, int width,
-               int height, std::string* error) {
+               int height, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
@@ -190,7 +190,7 @@ bool write_frame_header_lr(BitWriter& writer, const VideoConfig& config,
                            const av2enc::tiles::TileLayout& layout,
                            const fs::LrParams& lr_params,
                            const fs::LrHeaderContext& lr_context,
-                           int tile_size_bytes, std::string* error) {
+                           int tile_size_bytes, std::string& error) {
   put_uvlc(writer, 0);  // cur_mfh_id
   put_uvlc(writer, 0);  // seq_header_id_in_frame_header
   const bool key = header.keyframe;
@@ -259,11 +259,11 @@ bool encode_stream(const StreamOptions& options, const TileData& key,
                    const lr::ChromaDecision* key_decision,
                    fs::LrState* inter_state,
                    const lr::ChromaDecision* inter_decision,
-                   const std::string& path, std::string* error) {
+                   const std::string& path, std::string& error) {
   const auto tile_plan =
       av2enc::video::post::plan_video_tiles(key.plan.width, key.plan.height, 1, 1);
   if (!tile_plan.ok) {
-    *error = tile_plan.error;
+    error = tile_plan.error;
     return false;
   }
   const auto& layout = tile_plan.layout;
@@ -279,7 +279,7 @@ bool encode_stream(const StreamOptions& options, const TileData& key,
   auto build = [&](bool keyframe, const TileData& tile, const fs::LrParams& lr,
                    const fs::LrHeaderContext& context, fs::LrState* state,
                    const lr::ChromaDecision* decision,
-                   std::vector<std::uint8_t>* obu, std::string* err) -> bool {
+                   std::vector<std::uint8_t>* obu, std::string& err) -> bool {
     std::vector<std::uint8_t> payload;
     std::size_t tile_bytes = 0;
     if (!av2enc::lr_chroma::gate::assemble_video_frame_lr(
@@ -288,13 +288,13 @@ bool encode_stream(const StreamOptions& options, const TileData& key,
       return false;
     }
     if (payload.size() < 2) {
-      *err = "tile payload shorter than 2 bytes";
+      err = "tile payload shorter than 2 bytes";
       return false;
     }
     const int tile_size_bytes = av2enc::tiles::tile_size_bytes_for(
         static_cast<std::uint32_t>(payload.size()));
     if (tile_size_bytes == 0) {
-      *err = "tile size not representable";
+      err = "tile size not representable";
       return false;
     }
     av2enc::video::post::VideoTiledFrameHeader header;
@@ -338,19 +338,19 @@ bool encode_stream(const StreamOptions& options, const TileData& key,
 // ---------------------------------------------------------------------------
 
 bool decode(const std::string& decoder, const std::string& ivf,
-            const std::string& y4m, std::string* error) {
+            const std::string& y4m, std::string& error) {
   const std::string command = "\"" + decoder + "\" -q -i \"" + ivf + "\" -o \"" +
                               y4m + "\" --threads 1 --strict 1";
   const int status = std::system(command.c_str());
   if (status != 0) {
-    *error = "dav2d failed: " + command;
+    error = "dav2d failed: " + command;
     return false;
   }
   return true;
 }
 
 bool read_all_frames(const std::string& path, std::vector<Frame>* frames,
-                     std::string* error) {
+                     std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;

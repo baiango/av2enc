@@ -20,31 +20,31 @@ bool record_terms_valid(const CandidateRecord& record) noexcept {
 }  // namespace
 
 bool append_candidate(CandidateBatch& batch, const CandidateRecord& record,
-                      std::string* error) {
+                      std::string& error) {
   if (batch.count < 0 || batch.count >= kMaxBatchCandidates) {
     ++batch.rejected;
-    if (error != nullptr) *error = "candidate batch is full";
+    error = "candidate batch is full";
     return false;
   }
   if (record.domain != static_cast<std::uint8_t>(batch.domain)) {
     ++batch.rejected;
-    if (error != nullptr) *error = "candidate domain does not match batch";
+    error = "candidate domain does not match batch";
     return false;
   }
   batch.records[batch.count++] = record;
   return true;
 }
 
-bool finalize_batch(CandidateBatch& batch, std::string* error) {
+bool finalize_batch(CandidateBatch& batch, std::string& error) {
   batch.best_index = -1;
   batch.best_cost = kInfiniteCost;
   batch.evaluated = 0;
   if (batch.count <= 0 || batch.count > kMaxBatchCandidates) {
-    if (error != nullptr) *error = "candidate batch has no candidates";
+    error = "candidate batch has no candidates";
     return false;
   }
   if (!std::isfinite(batch.lambda) || batch.lambda < 0.0) {
-    if (error != nullptr) *error = "candidate batch lambda is invalid";
+    error = "candidate batch lambda is invalid";
     return false;
   }
   const bool rate_aware = batch.rate_aware != 0;
@@ -77,7 +77,7 @@ bool finalize_batch(CandidateBatch& batch, std::string* error) {
     }
   }
   if (best_position < 0) {
-    if (error != nullptr) *error = "candidate batch has no valid candidate";
+    error = "candidate batch has no valid candidate";
     return false;
   }
   batch.best_index = best_position;

@@ -1322,9 +1322,9 @@ Status compute_warp_context(const StackParams& p, WarpContextResult* out) {
 // Validation
 // ---------------------------------------------------------------------------
 
-Status validate(const StackParams& p, std::string* why) {
+Status validate(const StackParams& p, std::string& why) {
   const auto fail = [&](Status s, const char* message) {
-    if (why != nullptr) *why = message;
+    why = message;
     return s;
   };
   if (p.grid.mi == nullptr || p.grid.cols <= 0 || p.grid.rows <= 0) {

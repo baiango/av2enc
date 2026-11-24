@@ -13,8 +13,8 @@ void copy_cdf(std::uint16_t (&dst)[kMrlIndexSymbols + 1],
   std::memcpy(dst, src, sizeof(dst));
 }
 
-bool set_error(std::string* error, const char* text) {
-  if (error != nullptr) *error = text;
+bool set_error(std::string& error, const char* text) {
+  error = text;
   return false;
 }
 
@@ -153,8 +153,8 @@ MrlSyntaxStatus write_mrl_syntax(av2::Encoder& encoder, MrlCdfs& cdfs,
                                  MrlContext& context,
                                  const MrlBlockSyntax& block, int y_mode,
                                  const MrlDecision& decision,
-                                 std::string* error) {
-  if (error != nullptr) error->clear();
+                                 std::string& error) {
+  error.clear();
 
   if (!is_directional_y_mode(y_mode)) {
     if (decision.mrl_index != 0 || decision.mrl_sec_index) {
@@ -203,8 +203,8 @@ MrlSyntaxStatus write_mrl_syntax(av2::Encoder& encoder, MrlCdfs& cdfs,
 MrlSyntaxStatus read_mrl_syntax(av2::Decoder& decoder, MrlCdfs& cdfs,
                                 MrlContext& context,
                                 const MrlBlockSyntax& block, int y_mode,
-                                MrlDecision* decision, std::string* error) {
-  if (error != nullptr) error->clear();
+                                MrlDecision* decision, std::string& error) {
+  error.clear();
   if (decision == nullptr) {
     set_error(error, "null decision output");
     return MrlSyntaxStatus::kInvalidMode;

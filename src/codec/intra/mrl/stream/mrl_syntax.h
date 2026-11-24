@@ -173,7 +173,7 @@ MrlSyntaxStatus write_mrl_syntax(av2::Encoder& encoder, MrlCdfs& cdfs,
                                  MrlContext& context,
                                  const MrlBlockSyntax& block, int y_mode,
                                  const MrlDecision& decision,
-                                 std::string* error);
+                                 std::string& error);
 
 // Exact reader.  Mirrors the syntax above and rebuilds the same UsesMrls
 // state.  At 4x4 a decoded mrl_sec_index == 1 is *accepted* (the bit is
@@ -182,6 +182,6 @@ MrlSyntaxStatus write_mrl_syntax(av2::Encoder& encoder, MrlCdfs& cdfs,
 MrlSyntaxStatus read_mrl_syntax(av2::Decoder& decoder, MrlCdfs& cdfs,
                                 MrlContext& context,
                                 const MrlBlockSyntax& block, int y_mode,
-                                MrlDecision* decision, std::string* error);
+                                MrlDecision* decision, std::string& error);
 
 }  // namespace av2enc::still::mrl_stream

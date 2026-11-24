@@ -388,20 +388,20 @@ int dc_sign_context(const CoeffContextView& contexts, int plane, int x4, int y4,
 bool build_coeff_plan(int plane, int eob, int adj_w, int adj_h,
                       std::span<const std::int32_t> levels_scan,
                       int dc_sign_ctx, std::vector<CoeffPlanEntry>* plan,
-                      std::string* error) {
+                      std::string& error) {
   if (plan == nullptr) {
-    if (error != nullptr) *error = "null plan";
+    error = "null plan";
     return false;
   }
   plan->clear();
   const int area = adj_w * adj_h;
   if (eob < 0 || eob > area) {
-    if (error != nullptr) *error = "eob outside the adjusted transform area";
+    error = "eob outside the adjusted transform area";
     return false;
   }
   if (eob == 0) return true;
   if (levels_scan.size() < static_cast<std::size_t>(eob)) {
-    if (error != nullptr) *error = "level array is shorter than the EOB";
+    error = "level array is shorter than the EOB";
     return false;
   }
   std::vector<std::uint16_t> scan(static_cast<std::size_t>(area));

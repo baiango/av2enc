@@ -265,9 +265,9 @@ double hook_eob_rate(void* context, std::int32_t eob,
 }
 
 bool hook_build(void* user, const ts::RateModelRequest& request,
-                av2enc::rdoq::RateModel* model, std::string* error) {
+                av2enc::rdoq::RateModel* model, std::string& error) {
   (void)request;
-  if (error != nullptr) error->clear();
+  error.clear();
   ++static_cast<HookState*>(user)->builds;
   model->context = user;
   model->coefficient_rate = &hook_coefficient_rate;

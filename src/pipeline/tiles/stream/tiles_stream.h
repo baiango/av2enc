@@ -158,12 +158,12 @@ struct Reconstruction {
 // non-representable grids (for example 16x2 at 640x360, whose 10 superblock
 // columns cannot be split into 16 tiles).
 [[nodiscard]] bool build_layout(int width, int height, tiles::TileLayoutPreset preset, int sb_size,
-                  int seq_level_idx, tiles::TileLayout* layout, std::string* error);
+                  int seq_level_idx, tiles::TileLayout* layout, std::string& error);
 
 // Minimal TileSizeBytes that can hold the largest payload, or 0 with `error`
 // when a payload is < 2 bytes (init_symbol() reads up to 15 bits) or does not
 // fit in 4 bytes.
-int select_tile_size_bytes(std::span<const std::uint32_t> sizes, std::string* error);
+int select_tile_size_bytes(std::span<const std::uint32_t> sizes, std::string& error);
 
 // §5.18.7.2/§5.18.7.3 tile_info() with uniform_tile_spacing_flag = 1. When
 // `layout.tile_count() > 1` this also writes tile_size_bytes_minus_1 f(2).
@@ -194,13 +194,13 @@ struct TilePayloadView {
 [[nodiscard]] bool make_tile_group_payload(const tiles::TileLayout& layout, const Config& config,
                              std::span<const TilePayloadView> payloads,
                              std::vector<std::uint8_t>* clk_payload, int* tile_size_bytes,
-                             std::string* error);
+                             std::string& error);
 
 // Self-check: compares this writer's 1x1 frame header and its
 // disable_loopfilters_across_tiles = 0 sequence header with the M1 core
 // writers. encode() runs this before doing any work, so a core header change
 // can never silently desynchronise the tiled stream.
-[[nodiscard]] bool core_header_parity(const Config& config, std::string* error);
+[[nodiscard]] bool core_header_parity(const Config& config, std::string& error);
 
 // Per-tile output for a caller-supplied tile encoder.
 struct TileEncodeOutput {
@@ -222,17 +222,17 @@ struct TileEncodeOutput {
 using TileEncoder = std::function<bool(
     const StillPicture&, const StillOptions&,
     std::span<const std::uint16_t> cdf_seed, TileEncodeOutput* out,
-    std::string* error)>;
+    std::string& error)>;
 
 // Encode a tiled still picture: plan, crop, encode every tile with the public
 // M1 reference (or `tile_encoder` when supplied), assemble the tile group, and
 // return the OBU stream plus the per-tile visible reconstructions.
 bool encode(const StillPicture& source, const Config& config, Frame* frame,
-            std::string* error, const TileEncoder& tile_encoder = {});
+            std::string& error, const TileEncoder& tile_encoder = {});
 
 // Paste the per-tile visible reconstructions into one full frame. Validates
 // coverage and plane sizes; used by the gate and by any caller that wants the
 // expected decoder output.
-[[nodiscard]] bool assemble_reconstruction(const Frame& frame, Reconstruction* out, std::string* error);
+[[nodiscard]] bool assemble_reconstruction(const Frame& frame, Reconstruction* out, std::string& error);
 
 }  // namespace av2enc::still::tiles_stream

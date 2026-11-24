@@ -113,7 +113,7 @@ bool count_bool(void* context, bool /*bit*/) {
 // estimate, but it is the writer's own symbol sequence rather than a model.
 bool measure_block_bits(const InterResidualBlock& block,
                         std::span<const std::int32_t> levels, double* bits,
-                        std::string* error) {
+                        std::string& error) {
   const int luma_cols = block.mi_col + block.luma_w / 4 + 1;
   const int luma_rows = block.mi_row + block.luma_h / 4 + 1;
   const int chroma_cols = block.mi_col / 2 + block.chroma_w / 4 + 1;
@@ -704,15 +704,15 @@ bool make_syntax_block(const BlockGeometry& geometry,
 }
 
 bool decide_inter_batch(const BatchInput& input, BatchOutput& output,
-                        std::string* error) {
-  if (error != nullptr) error->clear();
+                        std::string& error) {
+  error.clear();
   const std::size_t count = input.blocks.size();
   if (output.status.size() < count || output.skip.size() < count ||
       output.distortion.size() < count || output.cost.size() < count ||
       output.eob.size() < count * kPlaneCount ||
       output.tx_size.size() < count * kPlaneCount ||
       output.tx_type.size() < count * kPlaneCount) {
-    if (error != nullptr) *error = "batch output spans are too small";
+    error = "batch output spans are too small";
     return false;
   }
   bool all_ok = true;
@@ -763,8 +763,8 @@ bool decide_inter_batch(const BatchInput& input, BatchOutput& output,
     std::string block_error;
     if (!decide_inter_block(block, options, decision, block_error)) {
       output.status[b] = -1;
-      if (error != nullptr && error->empty()) {
-        *error = "block " + std::to_string(b) + ": " + block_error;
+      if (error.empty()) {
+        error = "block " + std::to_string(b) + ": " + block_error;
       }
       all_ok = false;
       continue;
@@ -793,8 +793,8 @@ bool decide_inter_batch(const BatchInput& input, BatchOutput& output,
           static_cast<std::size_t>(item.recon_offset[plane]) + recon_area >
               output.recon.size()) {
         output.status[b] = -1;
-        if (error != nullptr && error->empty()) {
-          *error = "block " + std::to_string(b) + ": output buffer overflow";
+        if (error.empty()) {
+          error = "block " + std::to_string(b) + ": output buffer overflow";
         }
         all_ok = false;
         break;

@@ -73,7 +73,7 @@ struct SearchOptions {
 
 [[nodiscard]] bool search_options_valid(const SearchOptions& options) noexcept;
 [[nodiscard]] bool validate_search_options(const SearchOptions& options,
-                             std::string* error = nullptr);
+                             std::string& error);
 
 // One node's spec-derived state.  `allowed` is the four-value M1 subset; the
 // extended partition family is intentionally not probed by this loop.
@@ -103,7 +103,7 @@ double default_partition_signal_bits(
 [[nodiscard]] bool describe_node(const partition::FrameGeometry& geometry,
                    int mi_row, int mi_col, partition::BlockSize size,
                    int depth, bool has_chroma, bool chroma_offset,
-                   NodeInfo* out, std::string* error = nullptr);
+                   NodeInfo* out, std::string& error);
 
 // True when the encoder policy allows `partition` at this node (depth and
 // minimum block size).  Spec legality is separate: check NodeInfo::allowed.
@@ -127,7 +127,7 @@ struct ChildRef {
 int enumerate_node_children(const partition::FrameGeometry& geometry,
                             const NodeInfo& info,
                             partition::PartitionType partition,
-                            ChildRef slots[4], std::string* error = nullptr);
+                            ChildRef slots[4], std::string& error);
 
 struct CandidateCost {
   partition::PartitionType partition = partition::PartitionType::kNone;
@@ -143,12 +143,12 @@ struct CandidateCost {
 class NodeDecisionLoop {
  public:
   void reset(const NodeInfo& info, const SearchOptions& options) noexcept;
-  bool add(const CandidateCost& candidate, std::string* error = nullptr);
+  bool add(const CandidateCost& candidate, std::string& error);
   bool add_terms(partition::PartitionType partition, const CostTerms& terms,
-                 int leaves, std::string* error = nullptr);
+                 int leaves, std::string& error);
   bool add_partition(partition::PartitionType partition,
                      std::span<const NodeCost> children,
-                     std::string* error = nullptr);
+                     std::string& error);
 
   // Exact branch-and-bound check.  Returns true when a partially evaluated
   // partition candidate can no longer beat the current best, whatever the

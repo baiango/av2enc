@@ -80,32 +80,28 @@ void Workspace::reset() noexcept {
 }
 
 Status Workspace::init(Arena& arena, const LaunchConfig& config,
-                       std::uint64_t* required_bytes, std::string* error) {
+                       std::uint64_t* required_bytes, std::string& error) {
   const std::uint64_t required = required_device_bytes(config);
   if (required_bytes != nullptr) *required_bytes = required;
   reset();
 
   if (config.max_jobs <= 0) {
-    if (error != nullptr) *error = "lossless_inter workspace: max_jobs must be > 0";
+    error = "lossless_inter workspace: max_jobs must be > 0";
     return Status::kInvalidArgument;
   }
   if (config.max_block_w <= 0 || config.max_block_h <= 0 ||
       config.max_block_w > kMaxTransformDim ||
       config.max_block_h > kMaxTransformDim) {
-    if (error != nullptr) {
-      *error = "lossless_inter workspace: block extent must be in [1, 32]";
-    }
+error = "lossless_inter workspace: block extent must be in [1, 32]";
     return Status::kInvalidArgument;
   }
   if (!arena.initialized()) {
-    if (error != nullptr) *error = "lossless_inter workspace: arena not initialized";
+    error = "lossless_inter workspace: arena not initialized";
     return Status::kNotInitialized;
   }
   if (required > arena.remaining()) {
-    if (error != nullptr) {
-      *error = "lossless_inter workspace: need " + std::to_string(required) +
-               " bytes, arena has " + std::to_string(arena.remaining());
-    }
+error = "lossless_inter workspace: need " + std::to_string(required) +
+         " bytes, arena has " + std::to_string(arena.remaining());
     return Status::kArenaExhausted;
   }
 
@@ -130,10 +126,8 @@ Status Workspace::init(Arena& arena, const LaunchConfig& config,
       lossless == nullptr || recon_status == nullptr) {
     (void)arena.rewind(mark);
     reset();
-    if (error != nullptr) {
-      *error = "lossless_inter workspace: arena allocation failed after the "
-               "size check";
-    }
+error = "lossless_inter workspace: arena allocation failed after the "
+         "size check";
     return Status::kArenaExhausted;
   }
 

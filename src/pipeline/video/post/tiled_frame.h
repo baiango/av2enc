@@ -95,7 +95,7 @@ VideoTilePlan plan_video_tiles(int width, int height, int cols, int rows,
 // silently dropping the tile decisions.
 [[nodiscard]] bool adopt_pipeline_frame_plan(const pipeline::FramePipelinePlan& plan,
                                VideoTiledFrameHeader* header, VideoTilePlan* tiles,
-                               std::string* error = nullptr);
+                               std::string& error);
 
 // Frame-header fields owned by this layer.  base_q_idx < 0 means "use
 // config.base_q_idx".  The filter flags must agree with the sequence options;
@@ -148,7 +148,7 @@ filters_stream::CcsoParams make_tiled_ccso_params(const VideoCcsoPlan& plan);
 // enable_avg_cdf && avg_cdf_type, in which case the spec infers
 // context_update_tile_id = 0 and codes no bits for it.
 [[nodiscard]] bool write_video_tile_info(BitWriter& writer, const tiles::TileLayout& layout,
-                        int tile_size_bytes, std::string* error,
+                        int tile_size_bytes, std::string& error,
                         bool context_update_present = true);
 
 // frame_header_info() syntax, without the leading is_first_tile_group bit and
@@ -159,7 +159,7 @@ filters_stream::CcsoParams make_tiled_ccso_params(const VideoCcsoPlan& plan);
                                   const VideoTiledFrameHeader& header,
                                   const tiles::TileLayout& layout,
                                   int tile_size_bytes, std::size_t* bits,
-                                  std::string* error);
+                                  std::string& error);
 
 // Tile-local block list produced by splitting the whole-frame list.
 struct VideoTileBlocks {
@@ -177,7 +177,7 @@ struct VideoTileBlocks {
 // caller's absolute levels_offset).
 [[nodiscard]] bool split_video_blocks_for_tile(const tiles::TileLayout& layout, int tile_index,
                               std::span<const syntax::BlockSyntax> blocks,
-                              VideoTileBlocks* out, std::string* error);
+                              VideoTileBlocks* out, std::string& error);
 
 struct VideoTiledFrame {
   std::vector<std::vector<std::uint8_t>> tile_payloads;  // raster order
@@ -197,14 +197,14 @@ struct VideoTiledFrame {
                              const tiles::TileLayout& layout,
                              std::span<const syntax::BlockSyntax> blocks,
                              std::span<const std::int32_t> levels,
-                             VideoTiledFrame* out, std::string* error);
+                             VideoTiledFrame* out, std::string& error);
 
 // Sequence header with the §5.4.10 filter row.  For the default 8-bit,
 // all-filters-off options this is byte-identical to
 // av2enc::video::make_sequence_header_obu(config).
 std::vector<std::uint8_t> make_video_sequence_header_obu(
     const VideoConfig& config, const VideoPostSequenceOptions& sequence,
-    std::string* error);
+    std::string& error);
 
 // Escape hatch for callers that already have tile payloads (for example a GPU
 // tile coder).  `tile_payloads` must be in raster TileNum order.
@@ -212,6 +212,6 @@ std::vector<std::uint8_t> make_video_sequence_header_obu(
     const VideoConfig& config, const VideoPostSequenceOptions& sequence,
     const VideoTiledFrameHeader& header, const tiles::TileLayout& layout,
     std::span<const std::vector<std::uint8_t>> tile_payloads,
-    VideoTiledFrame* out, std::string* error);
+    VideoTiledFrame* out, std::string& error);
 
 }  // namespace av2enc::video::post

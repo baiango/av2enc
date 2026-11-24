@@ -68,7 +68,7 @@ WienerUnitSyntax to_syntax(const WienerUnitPlan& plan) {
 
 bool measure_unit_bits(const WienerTileState& sim, int plane, int row,
                        int col, const WienerUnitPlan& plan, int* bits,
-                       std::string* error) {
+                       std::string& error) {
   WienerTileState copy = sim;
   std::vector<std::uint8_t> buffer(kScratchUnitBytes);
   av2::Encoder encoder;
@@ -86,7 +86,7 @@ bool measure_unit_bits(const WienerTileState& sim, int plane, int row,
 bool measure_header_bits(const WienerLrHeaderConfig& config,
                          const WienerLrHeaderParams& params,
                          const WienerReferenceSet& refs, int* bits,
-                         std::string* error) {
+                         std::string& error) {
   BitWriter writer;
   WienerLrHeaderParams copy = params;
   if (!wiener_write_lr_params(writer, config, &copy, refs, error)) {
@@ -135,7 +135,7 @@ bool build_work_core(const WienerDecisionInput& input, int plane,
                      const std::uint8_t* filter_class_grid,
                      int filter_class_count,
                      const std::int16_t* frame_coeffs,
-                     WorkCore* work, std::string* error) {
+                     WorkCore* work, std::string& error) {
   work->core = input.core;
   work->core.frame_type[plane] = kRestoreWienerNs;
   work->core.frame_filters_on[plane] = frame ? 1 : 0;
@@ -199,7 +199,7 @@ bool plan_better(const WienerUnitPlan& a, double a_cost,
 bool choose_unit_plan(const WienerDecisionInput& input, const WorkCore& work,
                       WienerTileState& sim, int plane, int row, int col,
                       const WienerFitResult* fit, double lambda,
-                      WienerUnitPlan* chosen, std::string* error) {
+                      WienerUnitPlan* chosen, std::string& error) {
   const std::uint8_t* target = input.target[plane];
   const int stride = input.target_stride[plane];
   std::int16_t zero[kWienerNsCoeffStride] = {};
@@ -276,7 +276,7 @@ bool choose_unit_plan(const WienerDecisionInput& input, const WorkCore& work,
 }
 
 bool commit_unit(WienerTileState& sim, int plane, int row, int col,
-                 const WienerUnitPlan& plan, std::string* error) {
+                 const WienerUnitPlan& plan, std::string& error) {
   std::vector<std::uint8_t> buffer(kScratchUnitBytes);
   av2::Encoder encoder;
   if (encoder.init_symbol(buffer.data(), buffer.size()) != av2::Status::kOk) {
@@ -324,7 +324,7 @@ bool plane_better(const PlaneCandidate& a, const PlaneCandidate& b) {
 bool evaluate_none(const WienerDecisionInput& input,
                    const WienerDecisionOptions& options,
                    const WienerLrHeaderConfig& config, int plane,
-                   int shift, PlaneCandidate* out, std::string* error) {
+                   int shift, PlaneCandidate* out, std::string& error) {
   const int default_size = (plane == 0) ? 64 : (64 >> input.core.sub_y);
   const int unit_size =
       shift >= 0
@@ -390,7 +390,7 @@ bool evaluate_none(const WienerDecisionInput& input,
 bool evaluate_per_unit(const WienerDecisionInput& input,
                        const WienerDecisionOptions& options,
                        const WienerLrHeaderConfig& config, int plane,
-                       int shift, PlaneCandidate* out, std::string* error) {
+                       int shift, PlaneCandidate* out, std::string& error) {
   const int unit_size = unit_size_from_shift(plane, shift, input.core.sub_x,
                                              input.core.sub_y);
   const int unit_rows =
@@ -517,7 +517,7 @@ bool evaluate_frame_filters(const WienerDecisionInput& input,
                             const WienerLrHeaderConfig& config, int plane,
                             int shift, int num_classes,
                             const PcWienerTables* tables,
-                            PlaneCandidate* out, std::string* error,
+                            PlaneCandidate* out, std::string& error,
                             std::vector<std::string>* notes) {
   const int unit_size = unit_size_from_shift(plane, shift, input.core.sub_x,
                                              input.core.sub_y);
@@ -897,8 +897,10 @@ WienerDecisionStatus wiener_decide(const WienerDecisionInput& input,
     PlaneCandidate none;
     const int forced_none = (plane == 0) ? options.forced_luma_shift
                                          : options.forced_chroma_shift;
+    // A failure here is reported by the status below; the message is unused.
+    std::string ignored_error;
     if (!evaluate_none(input, options, config, plane, forced_none, &none,
-                       nullptr)) {
+                       ignored_error)) {
       return WienerDecisionStatus::kSyntaxError;
     }
     consider(plane, none);
@@ -930,7 +932,7 @@ WienerDecisionStatus wiener_decide(const WienerDecisionInput& input,
         PlaneCandidate cand;
         std::string err;
         if (evaluate_per_unit(input, options, config, plane, shift, &cand,
-                              &err)) {
+                              err)) {
           consider(plane, cand);
         } else if (!err.empty()) {
           return WienerDecisionStatus::kSyntaxError;
@@ -948,7 +950,7 @@ WienerDecisionStatus wiener_decide(const WienerDecisionInput& input,
           PlaneCandidate cand;
           std::string err;
           if (evaluate_frame_filters(input, options, config, plane, shift,
-                                     nclasses, input.tables, &cand, &err,
+                                     nclasses, input.tables, &cand, err,
                                      &notes)) {
             consider(plane, cand);
           } else if (!err.empty()) {
@@ -1038,7 +1040,7 @@ WienerDecisionStatus wiener_decide(const WienerDecisionInput& input,
 
   std::string err;
   if (!measure_header_bits(config, decision->params, refs,
-                           &decision->header_bits, &err)) {
+                           &decision->header_bits, err)) {
     return WienerDecisionStatus::kSyntaxError;
   }
 
@@ -1046,7 +1048,7 @@ WienerDecisionStatus wiener_decide(const WienerDecisionInput& input,
   WienerTileState sim;
   if (!wiener_tile_init(&sim, decision->params, input.core.mi_cols,
                         input.core.mi_rows, input.core.sub_x,
-                        input.core.sub_y, &err)) {
+                        input.core.sub_y, err)) {
     return WienerDecisionStatus::kSyntaxError;
   }
   std::vector<WienerUnitSyntax> plans[3];
@@ -1071,7 +1073,7 @@ WienerDecisionStatus wiener_decide(const WienerDecisionInput& input,
   if (encoder.init_symbol(buffer.data(), buffer.size()) != av2::Status::kOk) {
     return WienerDecisionStatus::kSyntaxError;
   }
-  if (!wiener_write_tile(encoder, sim, plans, sb_size, 0, 0, &err)) {
+  if (!wiener_write_tile(encoder, sim, plans, sb_size, 0, 0, err)) {
     return WienerDecisionStatus::kSyntaxError;
   }
   decision->tile_bits = static_cast<int>(encoder.prefix_bits);

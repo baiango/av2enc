@@ -24,15 +24,13 @@ std::size_t align_up_bytes(std::size_t bytes) noexcept {
   return (bytes + alignment - 1) & ~(alignment - 1);
 }
 
-void set_error(std::string* error, const char* context,
+void set_error(std::string& error, const char* context,
                const std::string& detail) {
-  if (error != nullptr) {
-    *error = std::string(context) + ": " + detail;
-  }
+error = std::string(context) + ": " + detail;
 }
 
 MfStatus cuda_status(cudaError_t result, const char* context,
-                     std::string* error) {
+                     std::string& error) {
   const Status status = status_from_cuda(result);
   if (is_ok(status)) {
     return MfStatus::kOk;
@@ -329,7 +327,7 @@ const char* mf_status_name(MfStatus status) noexcept {
 
 MfStatus allocate_checked(Arena& arena, const MfConfig& config,
                           MfDeviceBuffers* out, std::size_t* required_bytes,
-                          std::string* error) {
+                          std::string& error) {
   if (required_bytes != nullptr) {
     *required_bytes = 0;
   }
@@ -433,7 +431,7 @@ bool motion_field_rewind(Arena& arena, std::uint64_t mark) noexcept {
 
 MfStatus upload_blocks(const MfDeviceBuffers& buffers,
                        const MfBlockStoreInput* host_blocks, int count,
-                       cudaStream_t stream, std::string* error) {
+                       cudaStream_t stream, std::string& error) {
   if (buffers.blocks == nullptr) {
     set_error(error, "upload_blocks", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -459,7 +457,7 @@ MfStatus upload_blocks(const MfDeviceBuffers& buffers,
 
 MfStatus upload_stack_blocks(const MfDeviceBuffers& buffers,
                              const MfStackBlockInput* host_blocks, int count,
-                             cudaStream_t stream, std::string* error) {
+                             cudaStream_t stream, std::string& error) {
   if (buffers.stack_blocks == nullptr) {
     set_error(error, "upload_stack_blocks", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -485,7 +483,7 @@ MfStatus upload_stack_blocks(const MfDeviceBuffers& buffers,
 
 MfStatus upload_projection_jobs(const MfDeviceBuffers& buffers,
                                 const MfProjectionParams* host_jobs, int count,
-                                cudaStream_t stream, std::string* error) {
+                                cudaStream_t stream, std::string& error) {
   if (buffers.projection_jobs == nullptr) {
     set_error(error, "upload_projection_jobs", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -510,7 +508,7 @@ MfStatus upload_projection_jobs(const MfDeviceBuffers& buffers,
 }
 
 MfStatus upload_bank(const MfDeviceBuffers& buffers, const RefMvBank& bank,
-                     cudaStream_t stream, std::string* error) {
+                     cudaStream_t stream, std::string& error) {
   if (buffers.bank == nullptr) {
     set_error(error, "upload_bank", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -524,7 +522,7 @@ MfStatus upload_bank(const MfDeviceBuffers& buffers, const RefMvBank& bank,
 MfStatus upload_bank_ops(const MfDeviceBuffers& buffers,
                          const MfBankOp* host_ops, int count,
                          const RefMvBankRowSource* host_rows, int row_count,
-                         cudaStream_t stream, std::string* error) {
+                         cudaStream_t stream, std::string& error) {
   if (buffers.bank_ops == nullptr || buffers.bank_rows == nullptr) {
     set_error(error, "upload_bank_ops", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -566,7 +564,7 @@ MfStatus upload_bank_ops(const MfDeviceBuffers& buffers,
 // ---------------------------------------------------------------------------
 
 MfStatus zero_field(const MfDeviceBuffers& buffers, cudaStream_t stream,
-                    std::string* error) {
+                    std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "zero_field", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -583,7 +581,7 @@ MfStatus zero_field(const MfDeviceBuffers& buffers, cudaStream_t stream,
 }
 
 MfStatus store_blocks(const MfDeviceBuffers& buffers, int block_count,
-                      cudaStream_t stream, std::string* error) {
+                      cudaStream_t stream, std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "store_blocks", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -618,7 +616,7 @@ MfStatus store_blocks(const MfDeviceBuffers& buffers, int block_count,
 }
 
 MfStatus project(const MfDeviceBuffers& buffers, int job_count,
-                 cudaStream_t stream, std::string* error) {
+                 cudaStream_t stream, std::string& error) {
   const char* missing = first_missing_buffer(buffers);
   if (missing != nullptr) {
     // A null diagnostic here means a buffer was not reserved (for example a
@@ -658,7 +656,7 @@ MfStatus project(const MfDeviceBuffers& buffers, int job_count,
 }
 
 MfStatus traj_fill(const MfDeviceBuffers& buffers, cudaStream_t stream,
-                   std::string* error) {
+                   std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "traj_fill", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -691,7 +689,7 @@ MfStatus traj_fill(const MfDeviceBuffers& buffers, cudaStream_t stream,
 }
 
 MfStatus merge_stacks(const MfDeviceBuffers& buffers, int block_count,
-                      cudaStream_t stream, std::string* error) {
+                      cudaStream_t stream, std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "merge_stacks", "buffers are not initialized");
     return MfStatus::kNotInitialized;
@@ -711,7 +709,7 @@ MfStatus merge_stacks(const MfDeviceBuffers& buffers, int block_count,
 }
 
 MfStatus apply_bank_ops(const MfDeviceBuffers& buffers, int op_count,
-                        cudaStream_t stream, std::string* error) {
+                        cudaStream_t stream, std::string& error) {
   if (!buffers_ready(buffers)) {
     set_error(error, "apply_bank_ops", "buffers are not initialized");
     return MfStatus::kNotInitialized;

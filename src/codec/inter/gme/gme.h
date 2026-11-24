@@ -197,7 +197,7 @@ GmEstimate estimate_gm_warps(std::span<const GmWarpSample> warps, const GmOption
 
 // True when the model is representable by §5.18.9.1 (type-ranges and the
 // syntax quantisation grid). On failure `reason` (when non-null) explains why.
-[[nodiscard]] bool gm_params_codable(const GmParams& params, std::string* reason);
+[[nodiscard]] bool gm_params_codable(const GmParams& params, std::string& reason);
 [[nodiscard]] bool validate_gm_params(const GmParams& params, const GmOptions& options, GmDiagnostics* diag);
 
 // §7.12.2.2 get_warp_motion_vector. `x`/`y` are Q16 luma samples of the

@@ -7,8 +7,8 @@
 namespace av2enc::frame::ref_fields {
 namespace {
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -16,7 +16,7 @@ std::string u32(std::uint32_t value) { return std::to_string(value); }
 
 // §4.11.7 ns( n ) write.
 bool put_ns(BitWriter& writer, std::uint32_t n, std::uint32_t value,
-            std::string* error) {
+            std::string& error) {
   if (n < 2U) return fail(error, "ns(n): n must be >= 2");
   if (value >= n) {
     return fail(error, "ns(" + u32(n) + "): value " + u32(value) +
@@ -203,7 +203,7 @@ bool RefBitReader::seek(std::size_t bit_position) {
 // Reference state
 // ---------------------------------------------------------------------------
 bool slot_constraints_ok(const FrameRefState& state, std::uint32_t slot,
-                         std::string* error) {
+                         std::string& error) {
   if (slot >= kNumRefFrames) {
     return fail(error, "reference slot " + u32(slot) +
                            " is outside NUM_REF_FRAMES");
@@ -276,8 +276,8 @@ void choose_primary_secondary_ref_frame(const RefList& refs,
 
 bool write_primary_ref_signal(BitWriter& writer, FrameType frame_type,
                               bool is_tip, const PrimaryRefSignal& signal,
-                              std::string* error) {
-  if (error != nullptr) error->clear();
+                              std::string& error) {
+  error.clear();
   if (frame_type == FrameType::kKey || frame_type == FrameType::kIntraOnly ||
       frame_type == FrameType::kSwitch) {
     if (signal.signal_primary_ref_frame) {
@@ -305,8 +305,8 @@ bool write_primary_ref_signal(BitWriter& writer, FrameType frame_type,
 
 bool read_primary_ref_signal(RefBitReader& reader, FrameType frame_type,
                              bool is_tip, PrimaryRefSignal* signal,
-                             std::string* error) {
-  if (error != nullptr) error->clear();
+                             std::string& error) {
+  error.clear();
   if (signal == nullptr) return fail(error, "null primary-ref output");
   *signal = PrimaryRefSignal{};
   if (frame_type == FrameType::kKey || frame_type == FrameType::kIntraOnly ||
@@ -351,8 +351,8 @@ bool read_primary_ref_signal(RefBitReader& reader, FrameType frame_type,
 bool resolve_primary_ref(FrameType frame_type, const PrimaryRefSignal& signal,
                          const RefList& refs, const FrameRefState& state,
                          std::uint8_t base_q_idx, PrimaryRefResolved* out,
-                         std::string* error) {
-  if (error != nullptr) error->clear();
+                         std::string& error) {
+  error.clear();
   if (out == nullptr) return fail(error, "null primary-ref resolution");
   *out = PrimaryRefResolved{};
   out->coded_disable_cross_frame_cdf_init =
@@ -461,7 +461,7 @@ struct DrlRules {
   const char* label = "max_drl_bits_minus_1";
 };
 
-bool validate_drl_config(const DrlRules& rules, std::string* error) {
+bool validate_drl_config(const DrlRules& rules, std::string& error) {
   if (rules.seq_minus_1 > rules.max_value) {
     return fail(error, std::string(rules.label) +
                            ": sequence value " + u32(rules.seq_minus_1) +
@@ -472,7 +472,7 @@ bool validate_drl_config(const DrlRules& rules, std::string* error) {
 
 bool write_drl_impl(BitWriter& writer, const DrlRules& rules, bool change,
                     std::uint32_t value, bool* out_change,
-                    std::uint32_t* out_value, std::string* error) {
+                    std::uint32_t* out_value, std::string& error) {
   if (!validate_drl_config(rules, error)) return false;
   if (value > rules.max_value) {
     return fail(error, std::string(rules.label) + " " + u32(value) +
@@ -524,7 +524,7 @@ bool write_drl_impl(BitWriter& writer, const DrlRules& rules, bool change,
 }
 
 bool read_drl_impl(RefBitReader& reader, const DrlRules& rules, bool* change,
-                   std::uint32_t* value, std::string* error) {
+                   std::uint32_t* value, std::string& error) {
   if (!validate_drl_config(rules, error)) return false;
   *change = false;
   *value = rules.seq_minus_1;
@@ -554,8 +554,8 @@ bool read_drl_impl(RefBitReader& reader, const DrlRules& rules, bool* change,
 }  // namespace
 
 bool write_drl(BitWriter& writer, const DrlConfig& config,
-               const DrlSignal& signal, std::string* error) {
-  if (error != nullptr) error->clear();
+               const DrlSignal& signal, std::string& error) {
+  error.clear();
   DrlRules rules;
   rules.allow_change = config.allow_frame_max_drl_bits;
   rules.seq_minus_1 = config.seq_max_drl_bits_minus_1;
@@ -568,8 +568,8 @@ bool write_drl(BitWriter& writer, const DrlConfig& config,
 }
 
 bool read_drl(RefBitReader& reader, const DrlConfig& config, DrlSignal* signal,
-              std::string* error) {
-  if (error != nullptr) error->clear();
+              std::string& error) {
+  error.clear();
   if (signal == nullptr) return fail(error, "null DRL output");
   DrlRules rules;
   rules.allow_change = config.allow_frame_max_drl_bits;
@@ -581,8 +581,8 @@ bool read_drl(RefBitReader& reader, const DrlConfig& config, DrlSignal* signal,
 }
 
 bool write_bvp_drl(BitWriter& writer, const BvDrlConfig& config,
-                   const BvDrlSignal& signal, std::string* error) {
-  if (error != nullptr) error->clear();
+                   const BvDrlSignal& signal, std::string& error) {
+  error.clear();
   DrlRules rules;
   rules.allow_change = config.allow_frame_max_bvp_drl_bits;
   rules.seq_minus_1 = config.seq_max_bvp_drl_bits_minus_1;
@@ -596,8 +596,8 @@ bool write_bvp_drl(BitWriter& writer, const BvDrlConfig& config,
 }
 
 bool read_bvp_drl(RefBitReader& reader, const BvDrlConfig& config,
-                  BvDrlSignal* signal, std::string* error) {
-  if (error != nullptr) error->clear();
+                  BvDrlSignal* signal, std::string& error) {
+  error.clear();
   if (signal == nullptr) return fail(error, "null BVP DRL output");
   DrlRules rules;
   rules.allow_change = config.allow_frame_max_bvp_drl_bits;
@@ -615,7 +615,7 @@ bool validate_refresh_frame_flags(FrameType frame_type,
                                   const RefreshConfig& config,
                                   const RefreshSignal& signal,
                                   bool immediate_output_frame,
-                                  std::string* error) {
+                                  std::string& error) {
   if (config.num_ref_frames < 1U || config.num_ref_frames > kNumRefFrames) {
     return fail(error, "NumRefFrames must be in [1, NUM_REF_FRAMES]");
   }
@@ -692,7 +692,7 @@ namespace {
 
 // Fills `signal->frame_to_refresh` from a single-bit refresh mask.
 bool derive_frame_to_refresh(const RefreshConfig& config,
-                             RefreshSignal* signal, std::string* error) {
+                             RefreshSignal* signal, std::string& error) {
   const std::uint32_t mask = signal->refresh_frame_flags;
   std::uint32_t index = 0;
   bool found = false;
@@ -717,8 +717,8 @@ bool write_refresh_frame_flags(BitWriter& writer, FrameType frame_type,
                                const RefreshConfig& config,
                                const RefreshSignal& signal,
                                bool immediate_output_frame,
-                               std::string* error) {
-  if (error != nullptr) error->clear();
+                               std::string& error) {
+  error.clear();
   if (config.num_ref_frames < 1U || config.num_ref_frames > kNumRefFrames) {
     return fail(error, "NumRefFrames must be in [1, NUM_REF_FRAMES]");
   }
@@ -776,8 +776,8 @@ bool write_refresh_frame_flags(BitWriter& writer, FrameType frame_type,
 bool read_refresh_frame_flags(RefBitReader& reader, FrameType frame_type,
                               const RefreshConfig& config,
                               bool immediate_output_frame,
-                              RefreshSignal* signal, std::string* error) {
-  if (error != nullptr) error->clear();
+                              RefreshSignal* signal, std::string& error) {
+  error.clear();
   if (signal == nullptr) return fail(error, "null refresh output");
   *signal = RefreshSignal{};
   if (config.num_ref_frames < 1U || config.num_ref_frames > kNumRefFrames) {
@@ -838,7 +838,7 @@ bool read_refresh_frame_flags(RefBitReader& reader, FrameType frame_type,
 namespace {
 
 bool validate_size_config(const SizeConfig& config, const RefList& refs,
-                          const FrameRefState& state, std::string* error) {
+                          const FrameRefState& state, std::string& error) {
   if (refs.num_total_refs > kRefsPerFrame) {
     return fail(error, "NumTotalRefs exceeds REFS_PER_FRAME");
   }
@@ -866,7 +866,7 @@ std::uint32_t compute_mi(std::uint32_t size) {
 bool validate_frame_size_against_refs(const FrameSizeResolved& size,
                                       const RefList& refs,
                                       const FrameRefState& state,
-                                      std::string* error) {
+                                      std::string& error) {
   if (size.width == 0U || size.height == 0U) {
     return fail(error, "frame size must be non-zero");
   }
@@ -909,8 +909,8 @@ bool write_frame_size_with_refs(BitWriter& writer, const SizeConfig& config,
                                 const RefList& refs,
                                 const FrameRefState& state,
                                 const FrameSizeSignal& signal,
-                                FrameSizeResolved* out, std::string* error) {
-  if (error != nullptr) error->clear();
+                                FrameSizeResolved* out, std::string& error) {
+  error.clear();
   if (out == nullptr) return fail(error, "null frame-size output");
   if (!validate_size_config(config, refs, state, error)) return false;
   *out = FrameSizeResolved{};
@@ -989,8 +989,8 @@ bool write_frame_size_with_refs(BitWriter& writer, const SizeConfig& config,
 bool read_frame_size_with_refs(RefBitReader& reader, const SizeConfig& config,
                                const RefList& refs,
                                const FrameRefState& state,
-                               FrameSizeResolved* out, std::string* error) {
-  if (error != nullptr) error->clear();
+                               FrameSizeResolved* out, std::string& error) {
+  error.clear();
   if (out == nullptr) return fail(error, "null frame-size output");
   if (!validate_size_config(config, refs, state, error)) return false;
   *out = FrameSizeResolved{};
@@ -1071,14 +1071,14 @@ HeaderBits capture_bits(std::span<const std::uint8_t> writer_bytes,
 }
 
 std::size_t write_frame_header_copy(BitWriter& writer, const HeaderBits& bits,
-                                    std::string* error) {
-  if (error != nullptr) error->clear();
+                                    std::string& error) {
+  error.clear();
   if (bits.num_bits == 0) {
     fail(error, "frame_header_copy needs NumFrameHeaderBits > 0");
     return 0;
   }
   if (bits.bytes.size() != (bits.num_bits + 7U) / 8U) {
-    if (error != nullptr) *error = "frame_header_copy bit buffer is truncated";
+    error = "frame_header_copy bit buffer is truncated";
     return 0;
   }
   for (std::size_t i = 0; i < bits.num_bits; ++i) {
@@ -1088,8 +1088,8 @@ std::size_t write_frame_header_copy(BitWriter& writer, const HeaderBits& bits,
 }
 
 bool read_frame_header_copy(RefBitReader& reader, const HeaderBits& expected,
-                            std::string* error) {
-  if (error != nullptr) error->clear();
+                            std::string& error) {
+  error.clear();
   if (expected.num_bits == 0) {
     return fail(error, "frame_header_copy needs NumFrameHeaderBits > 0");
   }
@@ -1116,24 +1116,24 @@ void FrameHeaderStore::record(std::span<const std::uint8_t> writer_bytes,
 }
 
 std::size_t FrameHeaderStore::write_copy(BitWriter& writer,
-                                         std::string* error) const {
+                                         std::string& error) const {
   if (!present()) {
-    if (error != nullptr) *error = "no recorded frame header to copy";
+    error = "no recorded frame header to copy";
     return 0;
   }
   return write_frame_header_copy(writer, bits_, error);
 }
 
 bool FrameHeaderStore::verify_copy(RefBitReader& reader,
-                                   std::string* error) const {
+                                   std::string& error) const {
   return read_frame_header_copy(reader, bits_, error);
 }
 
 bool write_nonfirst_tile_group_header(BitWriter& writer,
                                       const FrameHeaderStore& store,
                                       bool frame_header_present,
-                                      std::string* error) {
-  if (error != nullptr) error->clear();
+                                      std::string& error) {
+  error.clear();
   if (frame_header_present && !store.present()) {
     return fail(error,
                 "frame_header_present_flag = 1 needs a recorded first header");
@@ -1146,8 +1146,8 @@ bool write_nonfirst_tile_group_header(BitWriter& writer,
 bool read_nonfirst_tile_group_header(RefBitReader& reader,
                                      const FrameHeaderStore& store,
                                      bool* frame_header_present,
-                                     std::string* error) {
-  if (error != nullptr) error->clear();
+                                     std::string& error) {
+  error.clear();
   if (frame_header_present == nullptr) {
     return fail(error, "null frame_header_present_flag output");
   }

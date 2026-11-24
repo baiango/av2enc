@@ -211,7 +211,7 @@ class TileWriter {
       std::string lr_error;
       lr_ready_ = lrs::InitTileState(&lr_state_, params, mi_cols_, mi_rows_,
                                      shape.info.subsampling_x,
-                                     shape.info.subsampling_y, &lr_error);
+                                     shape.info.subsampling_y, lr_error);
       if (!lr_ready_) error_ = "LR tile init failed: " + lr_error;
     }
 
@@ -513,7 +513,7 @@ class TileWriter {
       }
       std::string lr_error;
       if (!lrs::WriteUnit(enc_, lr_state_, plane, unit_row, unit_col, decision,
-                          &lr_error)) {
+                          lr_error)) {
         error_ = "LR unit symbol failed: " + lr_error;
         return false;
       }

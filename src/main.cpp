@@ -233,7 +233,7 @@ bool make_brt_obu(std::uint32_t br_time, std::vector<std::uint8_t>& obu,
   av2enc::hrd::BufferRemovalTiming brt;
   brt.br_ops_dependent_flag = false;
   brt.br_time = br_time;
-  return av2enc::hrd::build_buffer_removal_timing_obu(brt, obu, &error);
+  return av2enc::hrd::build_buffer_removal_timing_obu(brt, obu, error);
 }
 
 // Inserts `obu` immediately before the first frame OBU of a temporal unit.
@@ -625,7 +625,7 @@ bool plan_video_rate_control(
   }
 
   av2enc::video::post::VideoRateControl rc;
-  if (!rc.configure(rc_config, &error)) {
+  if (!rc.configure(rc_config, error)) {
     return false;
   }
 
@@ -636,7 +636,7 @@ bool plan_video_rate_control(
   for (const int display_index : schedule.order) {
     const std::size_t display = static_cast<std::size_t>(display_index);
     av2enc::video::post::VideoFrameQp qp;
-    if (!rc.begin_frame(complexity[display], qp, &error)) {
+    if (!rc.begin_frame(complexity[display], qp, error)) {
       return false;
     }
     (*frame_qp)[display] = static_cast<std::uint8_t>(qp.base_q_idx);
@@ -644,7 +644,7 @@ bool plan_video_rate_control(
     // buffer: the encoding pass is open-loop, so there is no later measurement.
     const std::int64_t actual_bits =
         static_cast<std::int64_t>(std::llround(qp.estimated_bits));
-    if (!rc.end_frame(actual_bits, &error)) {
+    if (!rc.end_frame(actual_bits, error)) {
       return false;
     }
   }
@@ -1036,7 +1036,7 @@ int run_video_format_encode(const Options& options) {
   av2enc::fmt::Y4mFormatInfo info;
   std::string error;
   if (!av2enc::fmt::read_y4m_sequence(options.input, &pictures, &info, limit,
-                                      &error)) {
+                                      error)) {
     std::cerr << "av2enc: error: " << error << "\n";
     return 1;
   }
@@ -1335,7 +1335,7 @@ int run_video_lossless_encode(const Options& options,
   }
   av2enc::lossless::inter::EncodeResult encoded;
   if (!av2enc::lossless::inter::encode_video(pictures, lossless, &encoded,
-                                             &error)) {
+                                             error)) {
     std::cerr << "av2enc: error: --video-lossless: " << error << "\n";
     return 1;
   }
@@ -1423,7 +1423,7 @@ int run_video_lossless_any(const Options& options) {
   av2enc::fmt::Y4mFormatInfo info;
   std::string error;
   if (!av2enc::fmt::read_y4m_sequence(options.input, &pictures, &info, limit,
-                                      &error)) {
+                                      error)) {
     std::cerr << "av2enc: error: " << error << "\n";
     return 1;
   }
@@ -1530,7 +1530,7 @@ int run_video_lossless_format_encode(
       flag_given(options, "--video-min-block") ? options.video_min_block : 8;
   av2enc::lossless::inter::EncodeResult encoded;
   if (!av2enc::lossless::inter::encode_video(lossless_pictures, lossless,
-                                             &encoded, &error)) {
+                                             &encoded, error)) {
     std::cerr << "av2enc: error: --video-lossless: " << error << "\n";
     return 1;
   }
@@ -1931,7 +1931,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   // encode; --video-gpu never falls back to the CPU encoder.  For CQP the
   // historical single call below is unchanged.
   const auto encode_rc_pass =
-      [&error](const std::vector<av2enc::video::VideoInputFrame>& seq,
+      [&error, &options](const std::vector<av2enc::video::VideoInputFrame>& seq,
                          const av2enc::video::VideoOptions& opts,
                          av2enc::video::VideoSequenceResult& out) -> bool {
 #if AV2ENC_VIDEO_GPU_CALLABLE
@@ -3172,7 +3172,7 @@ static int av2enc_main(int argc, char** argv) {
 
     av2enc::formats::StillFormatStats stats;
     if (!av2enc::formats::encode_still_format(options.input, options.output,
-                                              format_options, &stats, &error)) {
+                                              format_options, &stats, error)) {
       std::cerr << "av2enc: error: " << error << "\n";
       return 1;
     }
@@ -3545,7 +3545,7 @@ static int av2enc_main(int argc, char** argv) {
                 const av2enc::still::StillOptions& tile_options,
                 std::span<const std::uint16_t> cdf_seed,
                 av2enc::still::tiles_stream::TileEncodeOutput* out,
-                std::string* tile_encode_error) -> bool {
+                std::string& tile_encode_error) -> bool {
           av2enc::cuda::still_gpu::GpuOptions gpu_options = build_gpu_options();
           gpu_options.base_q_idx = tile_options.base_q_idx;
           gpu_options.enable_cfl = tile_options.enable_cfl;
@@ -3558,7 +3558,7 @@ static int av2enc_main(int argc, char** argv) {
           gpu_options.verify_against_cpu = true;
           av2enc::cuda::still_gpu::GpuResult encoded;
           if (!av2enc::cuda::still_gpu::encode_still_gpu(
-                  tile_picture, gpu_options, encoded, *tile_encode_error)) {
+                  tile_picture, gpu_options, encoded, tile_encode_error)) {
             return false;
           }
           out->tile_bytes = encoded.tile_bytes;
@@ -3570,12 +3570,12 @@ static int av2enc_main(int argc, char** argv) {
           return true;
         };
         tiled_ok = av2enc::still::tiles_stream::encode(
-            picture, tile_config, &tiled, &tile_error, gpu_tile_encoder);
+            picture, tile_config, &tiled, tile_error, gpu_tile_encoder);
       } else
 #endif
       {
         tiled_ok = av2enc::still::tiles_stream::encode(
-            picture, tile_config, &tiled, &tile_error);
+            picture, tile_config, &tiled, tile_error);
       }
       if (!tiled_ok) {
         return fail_encode("--tiles " + options.tiles + ": " + tile_error);
@@ -3594,7 +3594,7 @@ static int av2enc_main(int argc, char** argv) {
         av2enc::still::tiles_stream::Reconstruction recon;
         std::string recon_error;
         if (!av2enc::still::tiles_stream::assemble_reconstruction(
-                tiled, &recon, &recon_error)) {
+                tiled, &recon, recon_error)) {
           return fail_encode(recon_error);
         }
         if (!write_still_recon_y4m(options.recon, y4m, recon.width,

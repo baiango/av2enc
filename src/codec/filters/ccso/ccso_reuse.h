@@ -96,7 +96,7 @@ int derive_ccso_luma_size_log2(int sb_size, int tile_start_or,
                                bool ccso_unit_matches_sb_size);
 
 // §5.18.7.12 field representability (ranges, offset count, bo_only zeros).
-[[nodiscard]] bool validate_plane_params(const PlaneParams& p, std::string* error);
+[[nodiscard]] bool validate_plane_params(const PlaneParams& p, std::string& error);
 
 // Number of ccso_offset_idx values a plane reads.
 int ccso_offset_count(const PlaneParams& p);
@@ -152,7 +152,7 @@ struct SavedFrame {
 
 // §7.23 save_ccso_params().  `i` must be a refreshed reference slot.
 [[nodiscard]] bool save_ccso_params(SlotStore& store, int i, const SavedFrame& frame,
-                      std::string* error);
+                      std::string& error);
 
 // Header context.  Fields not used by the syntax (mi_cols/mi_rows,
 // num_total_refs, ref_frame_idx, slots) are required for the §6.17.7.8
@@ -183,13 +183,13 @@ struct HeaderContext {
 // Returns the number of bits written.  On error returns 0 and fills `error`.
 std::size_t write_ccso_params(BitWriter& writer, FrameParams& params,
                               const HeaderContext& context,
-                              std::string* error);
+                              std::string& error);
 
 // Independent §5.18.7.12 reader.  Reuse planes are loaded from
 // context.slots (load_ccso_params); context.slots is therefore required as
 // soon as a reuse bit is set.  On error returns false.
 [[nodiscard]] bool read_ccso_params(BitReader& reader, const HeaderContext& context,
-                      FrameParams* params, std::string* error);
+                      FrameParams* params, std::string& error);
 
 // The frame-level state a decoder derives from the header + saved slots.
 struct EffectivePlane {
@@ -214,7 +214,7 @@ struct EffectiveFrame {
 // it.  This is the function to call after read_ccso_params().
 [[nodiscard]] bool resolve_ccso_params(const HeaderContext& context,
                          const FrameParams& syntax, const SlotStore& slots,
-                         EffectiveFrame* out, std::string* error);
+                         EffectiveFrame* out, std::string& error);
 
 // Encoder-side reuse decision.  `desired` is the plane's fresh parameters and
 // `desired_blks` its freshly chosen CcsoBlks (may be empty for a plane that
@@ -234,7 +234,7 @@ struct ReuseChoice {
 [[nodiscard]] bool use_ccso(const PlaneParams& desired,
               const std::vector<std::uint8_t>& desired_blks, int blk_cols,
               int blk_rows, int plane, const HeaderContext& context,
-              const SlotStore& slots, ReuseChoice* out, std::string* error);
+              const SlotStore& slots, ReuseChoice* out, std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.20.10.2 read_ccso() — per-superblock `ccso_blk S()` hook
@@ -246,7 +246,7 @@ struct ReuseChoice {
 class TileState {
  public:
   bool init(const EffectiveFrame& frame, int mi_cols, int mi_rows, int sub_x,
-            int sub_y, std::string* error);
+            int sub_y, std::string& error);
 
   void set_tile_origin(int mi_col, int mi_row) {
     tile_mi_col_start_ = mi_col;
@@ -255,14 +255,14 @@ class TileState {
 
   // Encoder decisions.  `data` is row-major blk_cols x blk_rows for `plane`.
   bool set_block_flags(int plane, const std::uint8_t* data, int cols,
-                       int rows, std::string* error);
+                       int rows, std::string& error);
 
   // Encodes/decodes the ccso_blk S() symbols that occur at this coding block.
   // Calls at non-unit origins are no-ops (mirrors read_ccso()).
   bool write_block(av2::Encoder& encoder, int mi_row, int mi_col,
-                   std::string* error);
+                   std::string& error);
   bool read_block(av2::Decoder& decoder, int mi_row, int mi_col,
-                  int blk[3], std::string* error);
+                  int blk[3], std::string& error);
 
   const EffectiveFrame& frame() const { return frame_; }
   const std::vector<std::uint8_t>& blks(int plane) const {
@@ -299,7 +299,7 @@ class TileState {
 // plane's offset_idx values, so the filter core sees the exact §7.19 table.
 [[nodiscard]] bool make_restoration_params(const TileState& state,
                              restoration::CcsoFrameParams* out,
-                             std::string* error);
+                             std::string& error);
 
 // Small helper shared by call sites/tests.
 int ceil_log2_int(int value);

@@ -383,7 +383,7 @@ inline bool block_rate(const BlockPlan& block, bool is_inter, int qctx_slice,
   info.cdf_override = cdf;
   av2::Model model;
   std::string error;
-  if (!model.init(info, scan_levels, &error)) return false;
+  if (!model.init(info, scan_levels, error)) return false;
   detail::FamilySink sink(out, slice);
   model.set_symbol_sink(&sink);
   model.scalar_bits();  // drives the sink; the split is in `out`

@@ -932,7 +932,7 @@ inline double block_bits(const LeafRateInput& in, const CdfStore& store,
   info.cdf_override = &slice;
   rdoq::av2::Model model;
   std::string error;
-  if (!model.init(info, part.levels, &error)) return kImpossibleBits;
+  if (!model.init(info, part.levels, error)) return kImpossibleBits;
   model.set_symbol_sink(&sink);
   return model.scalar_bits();
 }

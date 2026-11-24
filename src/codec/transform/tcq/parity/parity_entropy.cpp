@@ -72,12 +72,12 @@ std::uint16_t* txb_skip_ptr(CdfStore& cdfs, const Geometry& geometry,
 }
 
 bool write_literal(av2::Encoder& encoder, std::int32_t bits,
-                   std::uint32_t value, std::string* error) {
+                   std::uint32_t value, std::string& error) {
   for (std::int32_t i = bits - 1; i >= 0; --i) {
     const bool bit = ((value >> static_cast<unsigned>(i)) & 1U) != 0U;
     const av2::Status status = encoder.encode_bool(bit);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
   }
@@ -85,13 +85,13 @@ bool write_literal(av2::Encoder& encoder, std::int32_t bits,
 }
 
 bool read_literal(av2::Decoder& decoder, std::int32_t bits,
-                  std::uint32_t* value, std::string* error) {
+                  std::uint32_t* value, std::string& error) {
   std::uint32_t out = 0;
   for (std::int32_t i = 0; i < bits; ++i) {
     bool bit = false;
     const av2::Status status = decoder.read_bool(&bit);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
     out = (out << 1U) | (bit ? 1U : 0U);
@@ -145,9 +145,9 @@ bool entropy_config_valid(const EntropyConfig& config) noexcept {
 // ---------------------------------------------------------------------------
 
 bool write_escape_bits(av2::Encoder& encoder, std::int32_t x,
-                       std::int32_t predictor, std::string* error) {
+                       std::int32_t predictor, std::string& error) {
   if (x < 0) {
-    if (error != nullptr) *error = "negative escape value";
+    error = "negative escape value";
     return false;
   }
   const std::int32_t m =
@@ -160,13 +160,13 @@ bool write_escape_bits(av2::Encoder& encoder, std::int32_t x,
     for (std::int32_t i = 0; i < q; ++i) {
       const av2::Status status = encoder.encode_bool(false);
       if (status != av2::Status::kOk) {
-        if (error != nullptr) *error = av2::status_name(status);
+        error = av2::status_name(status);
         return false;
       }
     }
     const av2::Status status = encoder.encode_bool(true);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
     return write_literal(encoder, m, static_cast<std::uint32_t>(
@@ -175,7 +175,7 @@ bool write_escape_bits(av2::Encoder& encoder, std::int32_t x,
   for (std::int32_t i = 0; i < c_max; ++i) {
     const av2::Status status = encoder.encode_bool(false);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
   }
@@ -187,13 +187,13 @@ bool write_escape_bits(av2::Encoder& encoder, std::int32_t x,
       for (std::int32_t i = 0; i < g; ++i) {
         const av2::Status status = encoder.encode_bool(false);
         if (status != av2::Status::kOk) {
-          if (error != nullptr) *error = av2::status_name(status);
+          error = av2::status_name(status);
           return false;
         }
       }
       const av2::Status status = encoder.encode_bool(true);
       if (status != av2::Status::kOk) {
-        if (error != nullptr) *error = av2::status_name(status);
+        error = av2::status_name(status);
         return false;
       }
       return write_literal(encoder, length,
@@ -201,14 +201,14 @@ bool write_escape_bits(av2::Encoder& encoder, std::int32_t x,
     }
     ++g;
     if (g > 30) {
-      if (error != nullptr) *error = "escape value is not codable";
+      error = "escape value is not codable";
       return false;
     }
   }
 }
 
 bool read_escape_bits(av2::Decoder& decoder, std::int32_t predictor,
-                      std::int32_t* x, std::string* error) {
+                      std::int32_t* x, std::string& error) {
   const std::int32_t m =
       clip3(1, 6, predictor <= 0 ? 0 : get_msb(
                                   static_cast<std::uint32_t>(predictor)));
@@ -219,7 +219,7 @@ bool read_escape_bits(av2::Decoder& decoder, std::int32_t predictor,
     bool bit = false;
     const av2::Status status = decoder.read_bool(&bit);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
     if (bit) break;
@@ -231,12 +231,12 @@ bool read_escape_bits(av2::Decoder& decoder, std::int32_t predictor,
       bool bit = false;
       const av2::Status status = decoder.read_bool(&bit);
       if (status != av2::Status::kOk) {
-        if (error != nullptr) *error = av2::status_name(status);
+        error = av2::status_name(status);
         return false;
       }
       if (bit) break;
       if (length > 20) {
-        if (error != nullptr) *error = "golomb length exceeds 20";
+        error = "golomb length exceeds 20";
         return false;
       }
     }
@@ -260,26 +260,22 @@ bool read_escape_bits(av2::Decoder& decoder, std::int32_t predictor,
 
 bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
                  const BlockSyntax& syntax, const Geometry& geometry,
-                 const EntropyConfig& config, std::string* error) {
+                 const EntropyConfig& config, std::string& error) {
   if (!entropy_config_valid(config)) {
-    if (error != nullptr) *error = "invalid entropy config";
+    error = "invalid entropy config";
     return false;
   }
   if (config.eligibility.tx_type_is_idtx || config.eligibility.use_fsc) {
-    if (error != nullptr) {
-      *error = "IDTX/FSC coefficient syntax is outside this component";
-    }
+error = "IDTX/FSC coefficient syntax is outside this component";
     return false;
   }
   if (geometry.plane != 2 && config.txb_skip_ctx > 9) {
-    if (error != nullptr) *error = "luma/U txb_skip context must be 0..9";
+    error = "luma/U txb_skip context must be 0..9";
     return false;
   }
   if (syntax.parity_hiding_eligible !=
       parity_hiding_eligible(geometry, config.eligibility)) {
-    if (error != nullptr) {
-      *error = "syntax eligibility does not match the entropy config";
-    }
+error = "syntax eligibility does not match the entropy config";
     return false;
   }
 
@@ -287,7 +283,7 @@ bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
   av2::Status status =
       encoder.encode_symbol(skip_cdf, 2, syntax.eob == 0 ? 1 : 0);
   if (status != av2::Status::kOk) {
-    if (error != nullptr) *error = av2::status_name(status);
+    error = av2::status_name(status);
     return false;
   }
   if (syntax.eob == 0) return true;
@@ -295,13 +291,13 @@ bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
   std::uint16_t* eob_cdf =
       eob_cdf_ptr(cdfs, syntax.eob_kind, syntax.eob_ctx);
   if (eob_cdf == nullptr) {
-    if (error != nullptr) *error = "unknown EOB CDF";
+    error = "unknown EOB CDF";
     return false;
   }
   status = encoder.encode_symbol(eob_cdf, syntax.eob_symbols,
                                  syntax.eob_symbol);
   if (status != av2::Status::kOk) {
-    if (error != nullptr) *error = av2::status_name(status);
+    error = av2::status_name(status);
     return false;
   }
   if (syntax.eob_escape_bits > 0) {
@@ -315,7 +311,7 @@ bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
     status = encoder.encode_symbol(&cdfs.eob_extra[0], 2,
                                    syntax.eob_extra_symbol);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
     if (!write_literal(encoder, syntax.eob_extra_lsb_bits,
@@ -331,23 +327,23 @@ bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
     const PositionSyntax& p = syntax.positions[static_cast<std::size_t>(c)];
     std::uint16_t* base_cdf = base_cdf_ptr(cdfs, p, geometry);
     if (base_cdf == nullptr) {
-      if (error != nullptr) *error = "unknown coeff_base CDF";
+      error = "unknown coeff_base CDF";
       return false;
     }
     status = encoder.encode_symbol(base_cdf, p.base_symbols, p.base_symbol);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
     if (p.br_present) {
       std::uint16_t* br_cdf = br_cdf_ptr(cdfs, p);
       if (br_cdf == nullptr) {
-        if (error != nullptr) *error = "unknown coeff_br CDF";
+        error = "unknown coeff_br CDF";
         return false;
       }
       status = encoder.encode_symbol(br_cdf, p.br_symbols, p.br_symbol);
       if (status != av2::Status::kOk) {
-        if (error != nullptr) *error = av2::status_name(status);
+        error = av2::status_name(status);
         return false;
       }
     }
@@ -365,13 +361,13 @@ bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
             &cdfs.dc_sign[0][syntax.is_hidden ? 1 : 0][sign_ctx][0];
         status = encoder.encode_symbol(cdf, 2, p.sign);
         if (status != av2::Status::kOk) {
-          if (error != nullptr) *error = av2::status_name(status);
+          error = av2::status_name(status);
           return false;
         }
       } else {
         status = encoder.encode_bool(p.sign != 0);
         if (status != av2::Status::kOk) {
-          if (error != nullptr) *error = av2::status_name(status);
+          error = av2::status_name(status);
           return false;
         }
       }
@@ -381,7 +377,7 @@ bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
           (syntax.is_hidden && c == 0) ? 1 : 0;
       const std::int32_t predictor = hr_level_avg >> lvl_shift;
       if (predictor != p.hr_predictor) {
-        if (error != nullptr) *error = "escape predictor mismatch";
+        error = "escape predictor mismatch";
         return false;
       }
       if (!write_escape_bits(encoder, p.escape_x, predictor, error)) {
@@ -401,23 +397,21 @@ bool write_block(av2::Encoder& encoder, CdfStore& cdfs,
 bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
                 const Geometry& geometry, const EntropyConfig& config,
                 BlockSyntax* syntax, DecodedBlock* decoded,
-                std::string* error) {
+                std::string& error) {
   if (syntax == nullptr || decoded == nullptr) {
-    if (error != nullptr) *error = "null output";
+    error = "null output";
     return false;
   }
   if (!entropy_config_valid(config)) {
-    if (error != nullptr) *error = "invalid entropy config";
+    error = "invalid entropy config";
     return false;
   }
   if (config.eligibility.tx_type_is_idtx || config.eligibility.use_fsc) {
-    if (error != nullptr) {
-      *error = "IDTX/FSC coefficient syntax is outside this component";
-    }
+error = "IDTX/FSC coefficient syntax is outside this component";
     return false;
   }
   if (geometry.plane != 2 && config.txb_skip_ctx > 9) {
-    if (error != nullptr) *error = "luma/U txb_skip context must be 0..9";
+    error = "luma/U txb_skip context must be 0..9";
     return false;
   }
   *syntax = BlockSyntax{};
@@ -428,7 +422,7 @@ bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
   std::int32_t skip_symbol = 0;
   av2::Status status = decoder.decode_symbol(skip_cdf, 2, &skip_symbol);
   if (status != av2::Status::kOk) {
-    if (error != nullptr) *error = av2::status_name(status);
+    error = av2::status_name(status);
     return false;
   }
   if (skip_symbol != 0) {
@@ -441,13 +435,13 @@ bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
   std::uint16_t* eob_cdf =
       eob_cdf_ptr(cdfs, eob_decision.kind, eob_decision.ctx);
   if (eob_cdf == nullptr) {
-    if (error != nullptr) *error = "unknown EOB CDF";
+    error = "unknown EOB CDF";
     return false;
   }
   std::int32_t eob_symbol = 0;
   status = decoder.decode_symbol(eob_cdf, eob_decision.symbols, &eob_symbol);
   if (status != av2::Status::kOk) {
-    if (error != nullptr) *error = av2::status_name(status);
+    error = av2::status_name(status);
     return false;
   }
   std::int32_t eob_pt = eob_symbol + 1;
@@ -468,7 +462,7 @@ bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
   if (eob_pt >= 3) {
     status = decoder.decode_symbol(&cdfs.eob_extra[0], 2, &eob_extra_symbol);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
     eob_lsb_bits = eob_pt - 3;
@@ -483,7 +477,7 @@ bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
   const std::size_t area = static_cast<std::size_t>(geometry.w) *
                            static_cast<std::size_t>(geometry.h);
   if (eob <= 0 || static_cast<std::size_t>(eob) > area) {
-    if (error != nullptr) *error = "decoded EOB is outside the block";
+    error = "decoded EOB is outside the block";
     return false;
   }
 
@@ -535,13 +529,13 @@ bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
 
     std::uint16_t* base_cdf = base_cdf_ptr(cdfs, p, geometry);
     if (base_cdf == nullptr) {
-      if (error != nullptr) *error = "unknown coeff_base CDF in reader";
+      error = "unknown coeff_base CDF in reader";
       return false;
     }
     std::int32_t symbol = 0;
     status = decoder.decode_symbol(base_cdf, p.base_symbols, &symbol);
     if (status != av2::Status::kOk) {
-      if (error != nullptr) *error = av2::status_name(status);
+      error = av2::status_name(status);
       return false;
     }
     p.base_symbol = symbol;
@@ -557,13 +551,13 @@ bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
       p.br_symbols = br.symbols;
       std::uint16_t* br_cdf = br_cdf_ptr(cdfs, p);
       if (br_cdf == nullptr) {
-        if (error != nullptr) *error = "unknown coeff_br CDF in reader";
+        error = "unknown coeff_br CDF in reader";
         return false;
       }
       std::int32_t br_symbol = 0;
       status = decoder.decode_symbol(br_cdf, p.br_symbols, &br_symbol);
       if (status != av2::Status::kOk) {
-        if (error != nullptr) *error = av2::status_name(status);
+        error = av2::status_name(status);
         return false;
       }
       p.br_symbol = br_symbol;
@@ -614,7 +608,7 @@ bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
         std::int32_t sign = 0;
         status = decoder.decode_symbol(cdf, 2, &sign);
         if (status != av2::Status::kOk) {
-          if (error != nullptr) *error = av2::status_name(status);
+          error = av2::status_name(status);
           return false;
         }
         p.sign = sign;
@@ -622,7 +616,7 @@ bool read_block(av2::Decoder& decoder, CdfStore& cdfs,
         bool bit = false;
         status = decoder.read_bool(&bit);
         if (status != av2::Status::kOk) {
-          if (error != nullptr) *error = av2::status_name(status);
+          error = av2::status_name(status);
           return false;
         }
         p.sign = bit ? 1 : 0;

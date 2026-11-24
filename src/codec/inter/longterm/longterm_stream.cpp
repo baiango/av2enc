@@ -5,8 +5,8 @@
 namespace av2enc::inter::longterm {
 namespace {
 
-bool set_error(std::string* error, const std::string& message) {
-  if (error != nullptr) *error = message;
+bool set_error(std::string& error, const std::string& message) {
+  error = message;
   return false;
 }
 
@@ -29,7 +29,7 @@ const char* role_name(FrameRole role) {
 bool extract_video_tiles(std::span<const std::vector<std::uint8_t>> units,
                       std::span<const std::uint32_t> tile_bytes,
                       std::vector<std::vector<std::uint8_t>>* tiles,
-                      std::string* error) {
+                      std::string& error) {
   if (tiles == nullptr) return set_error(error, "extract_video_tiles: null out");
   if (units.size() != tile_bytes.size()) {
     return set_error(error, "M2 unit/tile count mismatch");
@@ -50,7 +50,7 @@ bool extract_video_tiles(std::span<const std::vector<std::uint8_t>> units,
 
 bool assemble_sequence(const SequenceConfig& config,
                        const std::vector<TemporalUnitPlan>& units,
-                       AssembledSequence* out, std::string* error) {
+                       AssembledSequence* out, std::string& error) {
   if (out == nullptr) return set_error(error, "assemble_sequence: null out");
   if (units.empty()) return set_error(error, "no temporal units");
   for (const TemporalUnitPlan& unit : units) {
@@ -71,7 +71,7 @@ bool assemble_sequence(const SequenceConfig& config,
     }
     if (!validate_temporal_unit(config, headers, error)) {
       return set_error(error, "temporal unit " + std::to_string(u) + ": " +
-                                 (error != nullptr ? *error : "invalid"));
+                                 error);
     }
     if (first_picture && unit.frames.front().header.role !=
                              FrameRole::kClosedLoopKey) {
@@ -98,7 +98,7 @@ bool assemble_sequence(const SequenceConfig& config,
       if (!validate_frame_header(config, frame.header, error)) {
         return set_error(error, "unit " + std::to_string(u) + " frame " +
                                    std::to_string(i) + ": " +
-                                   (error != nullptr ? *error : "invalid"));
+                                   error);
       }
       if (frame.header.role == FrameRole::kClosedLoopKey &&
           !first_in_tu) {
@@ -109,7 +109,7 @@ bool assemble_sequence(const SequenceConfig& config,
                        error)) {
         return set_error(error, "unit " + std::to_string(u) + " frame " +
                                    std::to_string(i) + ": " +
-                                   (error != nullptr ? *error : "invalid"));
+                                   error);
       }
       const std::vector<std::uint8_t> obu =
           make_frame_obu(config, frame.header, frame.tile_payload);

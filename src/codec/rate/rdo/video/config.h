@@ -51,11 +51,11 @@ struct RdoConfig {
 };
 
 [[nodiscard]] bool config_valid(const RdoConfig& config) noexcept;
-[[nodiscard]] bool validate_config(const RdoConfig& config, std::string* error = nullptr);
+[[nodiscard]] bool validate_config(const RdoConfig& config, std::string& error);
 
 // The M2 profile: M1's calibrated QP-90 config plus SSE metric.  `error` is
 // set only when the M1 calibration is invalid (it is not for QP 90).
-RdoConfig calibrated_video_config(std::string* error = nullptr);
+RdoConfig calibrated_video_config(std::string& error);
 
 // lambda_sse = av2enc::still::rdo_decide::lambda_sse(lambda config).
 double lambda_sse(const RdoConfig& config) noexcept;

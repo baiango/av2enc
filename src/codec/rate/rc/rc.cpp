@@ -14,10 +14,8 @@ constexpr double kMaxEstimateBits = 1.0e12;
 constexpr double kMaxActualBits = 1.0e15;
 constexpr double kQpOctave = 24.0;  // qlookup doubles about every 24 qindex steps
 
-void set_error(std::string* error, const char* message) {
-  if (error != nullptr) {
-    *error = message;
-  }
+void set_error(std::string& error, const char* message) {
+error = message;
 }
 
 bool finite_nonnegative(double value) noexcept {
@@ -37,7 +35,7 @@ bool select_vbr_qindex(const BitrateEstimator& estimator,
                        int max_qindex,
                        double target_bits,
                        int& qindex,
-                       std::string* error) {
+                       std::string& error) {
   double at_min = 0.0;
   if (!estimate_frame_bits(estimator, complexity, min_qindex, at_min, error)) {
     return false;
@@ -134,7 +132,7 @@ const QpSlice& coeff_cdf_slice(int base_q_idx) noexcept {
 // ---------------------------------------------------------------------------
 
 bool frame_complexity_valid(const FrameComplexity& complexity,
-                            std::string* error) {
+                            std::string& error) {
   if (complexity.width <= 0 || complexity.height <= 0) {
     set_error(error, "frame complexity: width and height must be positive");
     return false;
@@ -154,7 +152,9 @@ bool frame_complexity_valid(const FrameComplexity& complexity,
 
 double frame_complexity_sigma(const FrameComplexity& complexity,
                               double mad_to_sigma) noexcept {
-  if (!frame_complexity_valid(complexity) || !std::isfinite(mad_to_sigma) ||
+  std::string why;
+  if (!frame_complexity_valid(complexity, why) ||
+      !std::isfinite(mad_to_sigma) ||
       mad_to_sigma <= 0.0) {
     return 0.0;
   }
@@ -206,7 +206,7 @@ FrameComplexity complexity_from_u8_planes(std::span<const std::uint8_t> original
 }
 
 bool bitrate_model_params_valid(const BitrateModelParams& params,
-                                std::string* error) {
+                                std::string& error) {
   if (!finite_nonnegative(params.header_bits) ||
       !finite_nonnegative(params.coefficient_bits_per_sample) ||
       !finite_nonnegative(params.max_bits_per_pixel) ||
@@ -228,8 +228,9 @@ bool bitrate_model_params_valid(const BitrateModelParams& params,
 double estimate_frame_bits_model(const FrameComplexity& complexity,
                                  int base_q_idx,
                                  const BitrateModelParams& params) noexcept {
-  if (!frame_complexity_valid(complexity) ||
-      !bitrate_model_params_valid(params)) {
+  std::string why;
+  if (!frame_complexity_valid(complexity, why) ||
+      !bitrate_model_params_valid(params, why)) {
     return 0.0;
   }
   const int q = clamp_base_qindex(base_q_idx);
@@ -253,7 +254,7 @@ double estimate_frame_bits_model(const FrameComplexity& complexity,
 }
 
 bool bitrate_estimator_valid(const BitrateEstimator& estimator,
-                             std::string* error) {
+                             std::string& error) {
   return bitrate_model_params_valid(estimator.params, error);
 }
 
@@ -261,7 +262,7 @@ bool estimate_frame_bits(const BitrateEstimator& estimator,
                          const FrameComplexity& complexity,
                          int base_q_idx,
                          double& bits,
-                         std::string* error) {
+                         std::string& error) {
   bits = 0.0;
   if (!frame_complexity_valid(complexity, error)) {
     return false;
@@ -293,7 +294,7 @@ SegmentationParams disabled_segmentation() noexcept {
 }
 
 bool segmentation_params_valid(const SegmentationParams& params,
-                               std::string* error) {
+                               std::string& error) {
   if (!params.enabled) {
     if (params.update_map || params.temporal_update) {
       set_error(error, "segmentation: disabled params must not update the map");
@@ -350,7 +351,7 @@ bool segmentation_params_valid(const SegmentationParams& params,
 bool set_segment_alt_q(SegmentationParams& params,
                        int segment_id,
                        int delta_q,
-                       std::string* error) {
+                       std::string& error) {
   if (segment_id < 0 || segment_id >= kMaxSegments) {
     set_error(error, "segmentation: segment id out of range");
     return false;
@@ -371,7 +372,7 @@ bool set_segment_alt_q(SegmentationParams& params,
 // Delta-Q
 // ---------------------------------------------------------------------------
 
-bool delta_q_params_valid(const DeltaQParams& params, std::string* error) {
+bool delta_q_params_valid(const DeltaQParams& params, std::string& error) {
   if (params.res < 0 || params.res > 3) {
     set_error(error, "delta_q: res must be in [0, 3]");
     return false;
@@ -383,7 +384,7 @@ bool delta_q_params_valid(const DeltaQParams& params, std::string* error) {
   return true;
 }
 
-bool qp_context_valid(const QpContext& context, std::string* error) {
+bool qp_context_valid(const QpContext& context, std::string& error) {
   if (context.base_q_idx < 0 || context.base_q_idx > kMaxQIndex) {
     set_error(error, "qp context: base_q_idx must be in [0, 255]");
     return false;
@@ -413,7 +414,7 @@ bool effective_qindex(const QpContext& context,
                       int segment_id,
                       bool ignore_delta_q,
                       int& qindex,
-                      std::string* error) {
+                      std::string& error) {
   qindex = context.base_q_idx;
   if (!qp_context_valid(context, error)) {
     return false;
@@ -447,7 +448,7 @@ bool effective_qindex(const QpContext& context,
 
 bool delta_q_reset(int base_q_idx,
                    DeltaQState& state,
-                   std::string* error) {
+                   std::string& error) {
   if (base_q_idx < kMinQIndex || base_q_idx > kMaxQIndex) {
     set_error(error, "delta_q: base_q_idx must be in [1, 255]");
     return false;
@@ -459,7 +460,7 @@ bool delta_q_reset(int base_q_idx,
 bool delta_q_apply(const DeltaQParams& params,
                    int reduced_delta,
                    DeltaQState& state,
-                   std::string* error) {
+                   std::string& error) {
   if (!delta_q_params_valid(params, error)) {
     return false;
   }
@@ -485,7 +486,7 @@ bool delta_q_apply(const DeltaQParams& params,
 }
 
 bool delta_q_plan_config_valid(const DeltaQPlanConfig& config,
-                               std::string* error) {
+                               std::string& error) {
   if (config.base_q_idx < kMinQIndex || config.base_q_idx > kMaxQIndex) {
     set_error(error, "delta_q plan: base_q_idx must be in [1, 255]");
     return false;
@@ -516,7 +517,7 @@ void DeltaQPlan::clear() noexcept {
 bool plan_delta_q(const DeltaQPlanConfig& config,
                   std::span<const int> target_qindex,
                   DeltaQPlan& plan,
-                  std::string* error) {
+                  std::string& error) {
   plan.clear();
   if (!delta_q_plan_config_valid(config, error)) {
     return false;
@@ -570,7 +571,7 @@ bool plan_delta_q(const DeltaQPlanConfig& config,
   return true;
 }
 
-bool segmentation_map_valid(const SegmentationMap& map, std::string* error) {
+bool segmentation_map_valid(const SegmentationMap& map, std::string& error) {
   if (map.mi_cols <= 0 || map.mi_rows <= 0) {
     set_error(error, "segmentation map: dimensions must be positive");
     return false;
@@ -595,7 +596,7 @@ bool segmentation_map_valid(const SegmentationMap& map, std::string* error) {
 // ---------------------------------------------------------------------------
 
 bool rate_control_config_valid(const RateControlConfig& config,
-                               std::string* error) {
+                               std::string& error) {
   switch (config.mode) {
     case RateControlMode::kCqp:
     case RateControlMode::kCrf:
@@ -676,7 +677,7 @@ bool rate_control_config_valid(const RateControlConfig& config,
 }
 
 bool RateController::configure(const RateControlConfig& config,
-                               std::string* error) {
+                               std::string& error) {
   if (!rate_control_config_valid(config, error)) {
     return false;
   }
@@ -697,7 +698,7 @@ void RateController::reset() noexcept {
 
 bool RateController::begin_frame(const FrameComplexity& complexity,
                                  QpDecision& decision,
-                                 std::string* error) {
+                                 std::string& error) {
   if (!configured_) {
     set_error(error, "rate control: controller is not configured");
     return false;
@@ -807,7 +808,7 @@ bool RateController::begin_frame(const FrameComplexity& complexity,
   return true;
 }
 
-bool RateController::end_frame(std::int64_t actual_bits, std::string* error) {
+bool RateController::end_frame(std::int64_t actual_bits, std::string& error) {
   if (!configured_) {
     set_error(error, "rate control: controller is not configured");
     return false;

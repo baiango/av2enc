@@ -80,18 +80,18 @@ std::uint64_t stack_record_hash(const Stack& stack, int num_lists) {
 }
 
 bool write_stack_record(const std::string& path, const Stack& stack,
-                        int num_lists, std::string* error) {
+                        int num_lists, std::string& error) {
   const std::vector<std::uint8_t> bytes = serialize_stack(stack, num_lists);
   std::FILE* file = std::fopen(path.c_str(), "wb");
   if (file == nullptr) {
-    if (error != nullptr) *error = "cannot open " + path;
+    error = "cannot open " + path;
     return false;
   }
   const std::size_t written =
       std::fwrite(bytes.data(), 1, bytes.size(), file);
   std::fclose(file);
   if (written != bytes.size()) {
-    if (error != nullptr) *error = "short write to " + path;
+    error = "short write to " + path;
     return false;
   }
   return true;

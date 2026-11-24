@@ -142,7 +142,7 @@ struct TypeSet {
 // derived one from derive_chroma_type().  `eob <= 1` always yields exactly
 // DCT_DCT with symbol -1.
 [[nodiscard]] bool enumerate_types(const Query& query, TypeSet* out,
-                     std::string* error = nullptr);
+                     std::string& error);
 
 // One concrete decision: the effective PlaneTxType plus its coding.
 struct TypePlan {
@@ -159,7 +159,7 @@ struct TypePlan {
 // with enable_idtx_intra == 0, wrong reduced set, a 1D type at an INTRA_2 /
 // DCT-only size, etc.
 [[nodiscard]] bool plan_type(const Query& query, TxType requested, TypePlan* plan,
-               std::string* error = nullptr);
+               std::string& error);
 
 // Deterministic default: DCT_DCT (legal in every intra set).  For chroma with
 // enable_chroma_dctonly == 0 pass the derived type instead.

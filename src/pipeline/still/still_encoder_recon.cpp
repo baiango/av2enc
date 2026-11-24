@@ -153,7 +153,7 @@ bool Encoder::encode_luma_parts(int r, int c, int w, int h,
     if (!tpart::tx_partition_geometry(
             static_cast<int>(size), r, c,
             static_cast<tpart::TxPartition>(partition), &geometry,
-            &geometry_error)) {
+            geometry_error)) {
       error_ = "tx partition geometry failed: " + geometry_error;
       return false;
     }
@@ -246,7 +246,7 @@ void Encoder::fill_deblock_mi_parts(int mi_row, int mi_col, partition::BlockSize
     std::string geometry_error;
     if (!tpart::tx_partition_geometry(static_cast<int>(size), mi_row, mi_col,
                                       static_cast<tpart::TxPartition>(partition),
-                                      &geometry, &geometry_error)) {
+                                      &geometry, geometry_error)) {
       return;
     }
     if (geometry.count != static_cast<int>(parts.size())) return;

@@ -117,13 +117,13 @@ std::uint32_t read_leb128(std::span<const std::uint8_t> data,
 }
 
 bool parse_obus(std::span<const std::uint8_t> frame, std::vector<Obu>* obus,
-                std::string* error) {
+                std::string& error) {
   std::size_t offset = 0;
   while (offset < frame.size()) {
     bool ok = false;
     const std::uint32_t size = read_leb128(frame, &offset, &ok);
     if (!ok || size < 1U || offset + size > frame.size()) {
-      *error = "truncated OBU length";
+      error = "truncated OBU length";
       return false;
     }
     const std::uint8_t header = frame[offset];
@@ -134,7 +134,7 @@ bool parse_obus(std::span<const std::uint8_t> frame, std::vector<Obu>* obus,
     std::size_t payload_size = size - 1U;
     if (extension) {
       if (payload_size < 1U) {
-        *error = "truncated OBU extension";
+        error = "truncated OBU extension";
         return false;
       }
       ++payload_offset;
@@ -207,7 +207,7 @@ std::vector<std::uint8_t> take_aligned(BitWriter& writer) {
 // M1 sequence_header_obu() syntax from src/encoder/m1/still_headers.cpp, with the
 // five feature sites routed through the small_header writers.
 bool write_still_sequence_header(BitWriter& writer, const StillTemplate& config,
-                              const Features& features, std::string* error) {
+                              const Features& features, std::string& error) {
   put_uvlc(writer, 0);                                // seq_header_id
   writer.put_bits(0U, 5U);                            // seq_profile_idc
   writer.put_bit(true);                               // single_picture_header
@@ -289,7 +289,7 @@ bool write_still_sequence_header(BitWriter& writer, const StillTemplate& config,
 bool write_still_keyframe_header(BitWriter& writer, const StillTemplate& config,
                               const Features& features,
                               FrameTileInfo* tile_info,
-                              std::string* error) {
+                              std::string& error) {
   writer.put_bit(true);  // is_first_tile_group
   put_uvlc(writer, 0);   // cur_mfh_id
   put_uvlc(writer, 0);   // seq_header_id_in_frame_header
@@ -325,7 +325,7 @@ bool write_still_keyframe_header(BitWriter& writer, const StillTemplate& config,
 }
 
 bool features_valid(const StillTemplate& config, const Features& features,
-                    std::string* error) {
+                    std::string& error) {
   if (!validate_cropping_window(
           features.crop, static_cast<std::uint32_t>(config.width),
           static_cast<std::uint32_t>(config.height), error)) {
@@ -347,7 +347,7 @@ bool features_valid(const StillTemplate& config, const Features& features,
 bool build_temporal_unit(const StillTemplate& config, Features features,
                          std::span<const std::uint8_t> tile_payload,
                          std::vector<std::uint8_t>* temporal_unit,
-                         FrameTileInfo* tile_info, std::string* error) {
+                         FrameTileInfo* tile_info, std::string& error) {
   // Sequence tile configs are produced by the sequence writer; do the same
   // partial construction here so frame tile_info() sees the final state.
   if (features.tile.present) {

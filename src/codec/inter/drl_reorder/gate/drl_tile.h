@@ -102,6 +102,6 @@ struct TileOutput {
 // MiInfo grid.
 [[nodiscard]] bool write_drl_tile(int width, int height, const std::vector<LeafPlan>& leaves,
                     const TileConfig& config, TileOutput* out,
-                    std::string* error);
+                    std::string& error);
 
 }  // namespace av2enc::inter::drl::gate

@@ -56,7 +56,7 @@ struct LambdaConfig {
 
 [[nodiscard]] bool lambda_config_valid(const LambdaConfig& config) noexcept;
 [[nodiscard]] bool validate_lambda_config(const LambdaConfig& config,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 // lambda = sse_scale * quant_step^2 via the shared RDO framework.
 double lambda_sse(const LambdaConfig& config) noexcept;
@@ -65,7 +65,7 @@ double lambda_sse(const LambdaConfig& config) noexcept;
 // syntax writer pins 90.  Any other value returns a zeroed config and sets
 // `error`; callers should pass the real dequant step explicitly when they
 // extend M1 beyond QP 90.
-LambdaConfig calibrated_still_config(std::string* error = nullptr);
+LambdaConfig calibrated_still_config(std::string& error);
 
 // Convenience: cost(distortion, rate_bits) with this layer's convention.
 double block_cost(double distortion, double rate_bits,

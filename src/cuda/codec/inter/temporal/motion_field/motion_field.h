@@ -302,8 +302,8 @@ struct MfDeviceBuffers {
 // receives the exact need and the arena bump pointer is unchanged.
 MfStatus allocate_checked(Arena& arena, const MfConfig& config,
                           MfDeviceBuffers* out,
-                          std::size_t* required_bytes = nullptr,
-                          std::string* error = nullptr);
+                          std::size_t* required_bytes,
+                          std::string& error);
 
 // Arena watermark wrappers.  mark() is stable across calls; rewind() returns
 // false for a mark newer than the current bump pointer.
@@ -314,58 +314,58 @@ std::uint64_t motion_field_mark(const Arena& arena) noexcept;
 // module and are never called by a launcher.
 MfStatus upload_blocks(const MfDeviceBuffers& buffers,
                        const MfBlockStoreInput* host_blocks, int count,
-                       cudaStream_t stream = nullptr,
-                       std::string* error = nullptr);
+                       cudaStream_t stream,
+                       std::string& error);
 MfStatus upload_stack_blocks(const MfDeviceBuffers& buffers,
                              const MfStackBlockInput* host_blocks, int count,
-                             cudaStream_t stream = nullptr,
-                             std::string* error = nullptr);
+                             cudaStream_t stream,
+                             std::string& error);
 MfStatus upload_projection_jobs(const MfDeviceBuffers& buffers,
                                 const MfProjectionParams* host_jobs, int count,
-                                cudaStream_t stream = nullptr,
-                                std::string* error = nullptr);
+                                cudaStream_t stream,
+                                std::string& error);
 MfStatus upload_bank(const MfDeviceBuffers& buffers, const RefMvBank& bank,
-                     cudaStream_t stream = nullptr,
-                     std::string* error = nullptr);
+                     cudaStream_t stream,
+                     std::string& error);
 MfStatus upload_bank_ops(const MfDeviceBuffers& buffers,
                          const MfBankOp* host_ops, int count,
                          const RefMvBankRowSource* host_rows, int row_count,
-                         cudaStream_t stream = nullptr,
-                         std::string* error = nullptr);
+                         cudaStream_t stream,
+                         std::string& error);
 
 // Zero the persistent motion field (mv/valid/offset) and, when allocated, the
 // trajectory arrays.  Matches the CPU driver's initialisation.
 MfStatus zero_field(const MfDeviceBuffers& buffers,
-                    cudaStream_t stream = nullptr,
-                    std::string* error = nullptr);
+                    cudaStream_t stream,
+                    std::string& error);
 
 // §7.22: writes `buffers.saved`.  Storage is two ordered passes (stamp then
 // write, one thread per descriptor) because odd-origin 4x4 blocks can share an
 // 8x8 cell; the highest descriptor index wins, matching CPU call order.
 MfStatus store_blocks(const MfDeviceBuffers& buffers, int block_count,
-                      cudaStream_t stream = nullptr,
-                      std::string* error = nullptr);
+                      cudaStream_t stream,
+                      std::string& error);
 
 // §7.9: applies `count` projection jobs in order, one thread per job.
 MfStatus project(const MfDeviceBuffers& buffers, int job_count,
-                 cudaStream_t stream = nullptr, std::string* error = nullptr);
+                 cudaStream_t stream, std::string& error);
 
 // §7.9 trajectory gap fill (proj_step == 2 only; a no-op otherwise).
 MfStatus traj_fill(const MfDeviceBuffers& buffers,
-                   cudaStream_t stream = nullptr,
-                   std::string* error = nullptr);
+                   cudaStream_t stream,
+                   std::string& error);
 
 // §7.12.2.7/.8 temporal scan, §7.12.2.21 bank append, §7.12.2.19 sort:
 // one thread per work item.  `bank` may be null when no item uses the bank.
 MfStatus merge_stacks(const MfDeviceBuffers& buffers, int block_count,
-                      cudaStream_t stream = nullptr,
-                      std::string* error = nullptr);
+                      cudaStream_t stream,
+                      std::string& error);
 
 // §5.20.2.2 / §7.12.2.21 reset/update/count operations, one thread total so
 // the normative ring order is preserved.  Writes `buffers.bank`.
 MfStatus apply_bank_ops(const MfDeviceBuffers& buffers, int op_count,
-                        cudaStream_t stream = nullptr,
-                        std::string* error = nullptr);
+                        cudaStream_t stream,
+                        std::string& error);
 
 }  // namespace av2enc::cuda::motion_field
 

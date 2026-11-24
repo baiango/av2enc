@@ -74,7 +74,7 @@ class Workspace {
   // Allocates the persistent descriptor/result tables from `arena`. The arena
   // must contain at least `required_device_bytes(config)` bytes. On
   // kArenaExhausted the caller should read `required_bytes()`.
-  Status create(Arena& arena, const WarpStackConfig& config, std::string* error = nullptr) {
+  Status create(Arena& arena, const WarpStackConfig& config, std::string& error) {
     if (created_) {
       return Status::kAlreadyInitialized;
     }
@@ -89,10 +89,8 @@ class Workspace {
     config_ = config;
     required_bytes_ = required_device_bytes(config);
     if (arena.remaining() < required_bytes_) {
-      if (error != nullptr) {
-        *error = "warp_stack workspace needs " + std::to_string(required_bytes_) +
-                 " bytes, arena has " + std::to_string(arena.remaining());
-      }
+error = "warp_stack workspace needs " + std::to_string(required_bytes_) +
+         " bytes, arena has " + std::to_string(arena.remaining());
       return Status::kArenaExhausted;
     }
 

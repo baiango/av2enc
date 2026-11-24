@@ -32,8 +32,8 @@ bool set_sqr(Set set, int tx_size_index, int* sqr) {
   return false;
 }
 
-bool fail(std::string* error, const char* message) {
-  if (error != nullptr) *error = message;
+bool fail(std::string& error, const char* message) {
+  error = message;
   return false;
 }
 
@@ -99,7 +99,7 @@ void TypeSyntaxWriter::reset() {
 }
 
 bool TypeSyntaxWriter::write(Set set, int tx_size_index, TxType type, int symbol,
-                             bool flag, bool adapt, std::string* error) {
+                             bool flag, bool adapt, std::string& error) {
   if (failed_) return fail(error, "writer is already poisoned");
   if (finished_) return fail(error, "writer already finished");
   const int nsym = cdf_symbol_count(set);
@@ -157,7 +157,7 @@ bool TypeSyntaxWriter::write(Set set, int tx_size_index, TxType type, int symbol
 }
 
 bool TypeSyntaxWriter::finish(std::vector<std::uint8_t>* bytes,
-                              std::string* error) {
+                              std::string& error) {
   if (failed_) return fail(error, "writer is already poisoned");
   if (!finished_) {
     if (encoder_.out == nullptr) {
@@ -196,7 +196,7 @@ void TypeSyntaxReader::reset() {
 }
 
 bool TypeSyntaxReader::init(std::vector<std::uint8_t> bytes,
-                            std::size_t payload_bytes, std::string* error) {
+                            std::size_t payload_bytes, std::string& error) {
   reset();
   if (payload_bytes == 0 || payload_bytes > bytes.size()) {
     return fail(error, "payload size is out of range");
@@ -211,7 +211,7 @@ bool TypeSyntaxReader::init(std::vector<std::uint8_t> bytes,
 }
 
 bool TypeSyntaxReader::read(const TypeSet& types, int tx_size_index, bool adapt,
-                            TypeSymbols* out, std::string* error) {
+                            TypeSymbols* out, std::string& error) {
   const Set set = types.set;
   if (out == nullptr) return fail(error, "null output");
   if (!started_) return fail(error, "reader is not initialized");
@@ -281,7 +281,7 @@ bool TypeSyntaxReader::read(const TypeSet& types, int tx_size_index, bool adapt,
   return fail(error, "decoded symbol is not in the queried set");
 }
 
-bool TypeSyntaxReader::finish(std::string* error) {
+bool TypeSyntaxReader::finish(std::string& error) {
   if (failed_) return fail(error, "reader is already poisoned");
   if (!started_) return fail(error, "reader is not initialized");
   if (decoder_.exit_symbol() != av2enc::av2::Status::kOk) {

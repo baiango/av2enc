@@ -152,12 +152,12 @@ class ArenaMark {
 template <typename T>
 bool arena_array(Arena& arena, std::size_t count, T** out, const char* what,
                  std::uint64_t arena_need, HighBitDepthGpuStatus* status,
-                 std::string* error) {
+                 std::string& error) {
   *out = nullptr;
   if (count == 0) return true;
   if (count > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
     if (status != nullptr) status->code = HighBitDepthGpuStatus::Code::kInvalidArgument;
-    if (error != nullptr) *error = std::string("M10 GPU: oversized ") + what;
+    error = std::string("M10 GPU: oversized ") + what;
     return false;
   }
   void* raw = nullptr;
@@ -167,29 +167,23 @@ bool arena_array(Arena& arena, std::size_t count, T** out, const char* what,
       status->code = HighBitDepthGpuStatus::Code::kArenaTooSmall;
       status->required_bytes = arena_need;
     }
-    if (error != nullptr) {
-      *error = std::string("M10 GPU arena too small for ") + what + ": need " +
-               std::to_string(arena_need) + " device bytes";
-    }
+error = std::string("M10 GPU arena too small for ") + what + ": need " +
+         std::to_string(arena_need) + " device bytes";
     return false;
   }
   if (!is_ok(result)) {
     if (status != nullptr) status->code = HighBitDepthGpuStatus::Code::kInvalidArgument;
-    if (error != nullptr) {
-      *error = std::string("M10 GPU arena allocation failed for ") + what +
-               ": " + status_name(result);
-    }
+error = std::string("M10 GPU arena allocation failed for ") + what +
+         ": " + status_name(result);
     return false;
   }
   *out = static_cast<T*>(raw);
   return true;
 }
 
-bool check(cudaError_t status, const char* what, std::string* error) {
+bool check(cudaError_t status, const char* what, std::string& error) {
   if (status == cudaSuccess) return true;
-  if (error != nullptr) {
-    *error = std::string(what) + ": " + cudaGetErrorString(status);
-  }
+error = std::string(what) + ": " + cudaGetErrorString(status);
   return false;
 }
 
@@ -252,12 +246,12 @@ namespace {
 
 bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& picture,
                          const av2enc::high_bitdepth::HighBitDepthOptions& options,
-                         av2enc::high_bitdepth::HighBitDepthResult& result, std::string* error,
+                         av2enc::high_bitdepth::HighBitDepthResult& result, std::string& error,
                          HighBitDepthGpuStatus* status) {
-  if (error != nullptr) error->clear();
+  error.clear();
   result = av2enc::high_bitdepth::HighBitDepthResult{};
   if (picture.format.depth != av2enc::fmt::BitDepth::k10) {
-    if (error != nullptr) *error = "HBD GPU requires a 10-bit picture";
+    error = "HBD GPU requires a 10-bit picture";
     return false;
   }
   if (!av2enc::high_bitdepth::high_bitdepth_geometry_supported(
@@ -265,19 +259,19 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
     return false;
   }
   if (!av2enc::fmt::samples_in_range(picture)) {
-    if (error != nullptr) *error = "HBD input samples must be in [0,1023]";
+    error = "HBD input samples must be in [0,1023]";
     return false;
   }
   const fmtdev::FrameLayout layout = fmtdev::make_frame_layout(picture.format);
   if (!layout.valid()) {
-    if (error != nullptr) *error = "HBD GPU: invalid frame format";
+    error = "HBD GPU: invalid frame format";
     return false;
   }
   const int num_planes = layout.num_planes;
   const int bit_depth = 10;
   const int quant_step = av2enc::hbd::depth::qlookup(options.base_q_idx);
   if (quant_step <= 0) {
-    if (error != nullptr) *error = "HBD GPU: unsupported base_q_idx";
+    error = "HBD GPU: unsupported base_q_idx";
     return false;
   }
 
@@ -290,7 +284,7 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
   config.disable_cdf_update = options.disable_cdf_update;
   std::string reason;
   if (!av2enc::hbd::validate_config(config, &reason)) {
-    if (error != nullptr) *error = reason;
+    error = reason;
     return false;
   }
 
@@ -380,7 +374,7 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
                    error) &&
        arena_array(arena, 1, &d_job, "tx job", arena_need, status, error);
   if (!ok) {
-    if (error != nullptr && error->empty()) *error = "CUDA allocation failed";
+    if (error.empty()) error = "CUDA allocation failed";
     return false;
   }
   if (!check(cudaMemset(d_errors, 0, sizeof(int)), "zero error count", error)) {
@@ -416,7 +410,7 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
       const auto params_opt = av2enc::txv::make_tx_params(
           plane_coded_w, plane_coded_h, av2enc::txv::TxType::kDctDct);
       if (!params_opt.has_value()) {
-        if (error != nullptr) *error = "unsupported HBD transform size";
+        error = "unsupported HBD transform size";
         return false;
       }
       av2enc::txv::TxParams params = *params_opt;
@@ -496,7 +490,7 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
                  "download levels", error);
       if (!ok) return false;
       if (eob < 0 || eob > params.w * params.h) {
-        if (error != nullptr) *error = "GPU rejected the transform job";
+        error = "GPU rejected the transform job";
         return false;
       }
       block.eob[plane] = static_cast<std::uint32_t>(eob);
@@ -515,7 +509,7 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
     return false;
   }
   if (errors != 0) {
-    if (error != nullptr) *error = "GPU transform job was rejected";
+    error = "GPU transform job was rejected";
     return false;
   }
 
@@ -603,7 +597,7 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
   hbd_config.apply_deblock_v = options.enable_deblock && num_planes > 2;
   std::string hbd_reason;
   if (!av2enc::hbd::validate_config(hbd_config, &hbd_reason)) {
-    if (error != nullptr) *error = hbd_reason;
+    error = hbd_reason;
     return false;
   }
 
@@ -623,7 +617,7 @@ bool encode_high_bitdepth_gpu_impl(Arena& arena, const av2enc::fmt::Picture& pic
 HighBitDepthGpuStatus encode_high_bitdepth_gpu(Arena& arena, const av2enc::fmt::Picture& picture,
                             const av2enc::high_bitdepth::HighBitDepthOptions& options,
                             av2enc::high_bitdepth::HighBitDepthResult& result,
-                            std::string* error) {
+                            std::string& error) {
   HighBitDepthGpuStatus status;
   if (!encode_high_bitdepth_gpu_impl(arena, picture, options, result, error, &status)) {
     if (status.code == HighBitDepthGpuStatus::Code::kOk) {
@@ -637,8 +631,8 @@ HighBitDepthGpuStatus encode_high_bitdepth_gpu(Arena& arena, const av2enc::fmt::
 
 bool encode_high_bitdepth_gpu(const av2enc::fmt::Picture& picture,
                     const av2enc::high_bitdepth::HighBitDepthOptions& options,
-                    av2enc::high_bitdepth::HighBitDepthResult& result, std::string* error) {
-  if (error != nullptr) error->clear();
+                    av2enc::high_bitdepth::HighBitDepthResult& result, std::string& error) {
+  error.clear();
   HighBitDepthGpuConfig config;
   config.width = picture.format.width;
   config.height = picture.format.height;
@@ -654,23 +648,21 @@ bool encode_high_bitdepth_gpu(const av2enc::fmt::Picture& picture,
   std::string arena_error;
   const Status init = arena.init(need, Arena::kAlignment, &arena_error);
   if (!is_ok(init)) {
-    if (error != nullptr) {
-      *error = arena_error.empty()
-                   ? std::string("M10 GPU arena init failed: ") +
-                         status_name(init)
-                   : arena_error;
-    }
+error = arena_error.empty()
+             ? std::string("M10 GPU arena init failed: ") +
+                   status_name(init)
+             : arena_error;
     return false;
   }
   const HighBitDepthGpuStatus status =
       encode_high_bitdepth_gpu(arena, picture, options, result, error);
   if (status.ok()) return true;
-  if (error != nullptr && error->empty()) {
+  if (error.empty()) {
     if (status.code == HighBitDepthGpuStatus::Code::kArenaTooSmall) {
-      *error = "M10 GPU arena too small: need " +
+      error = "M10 GPU arena too small: need " +
                std::to_string(status.required_bytes) + " device bytes";
     } else {
-      *error = "M10 GPU encode failed";
+      error = "M10 GPU encode failed";
     }
   }
   return false;

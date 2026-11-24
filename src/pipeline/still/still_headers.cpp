@@ -182,7 +182,9 @@ std::size_t write_sequence_header(BitWriter& writer, const StillConfig& c) {
   // §5.4.8 delta-Q fields.  The default SequenceDeltaQ writes exactly the
   // historical 8 bits (separate_uv_delta_q=0, equal_ac_dc_q=1,
   // base_uv_ac_delta_q=0, uv_ac_delta_q_enabled=0).
-  const bool dq_ok = write_sequence_delta_q_fields(writer, c.dc_ac_delta_q, nullptr);
+  std::string seq_dq_error;
+  const bool dq_ok = write_sequence_delta_q_fields(writer, c.dc_ac_delta_q,
+                                                   seq_dq_error);
   assert(dq_ok);
   (void)dq_ok;
 
@@ -267,8 +269,9 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
 
   // §5.18.6.1 quantization_params(): base_q_idx plus any frame DC/AC delta-Q
   // fields.  The default (disabled) state writes exactly the base_q_idx byte.
+  std::string qp_error;
   const bool qp_ok = dcdeltaq::write_quantization_params(
-      writer, c.base_q_idx, c.dc_ac_delta_q, c.frame_delta_q, nullptr);
+      writer, c.base_q_idx, c.dc_ac_delta_q, c.frame_delta_q, qp_error);
   assert(qp_ok);
   (void)qp_ok;
 
@@ -279,22 +282,21 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
   qp_header.primary_ref_is_none = true;  // OBU_CLOSED_LOOP_KEY
   rc::SegmentationParams segmentation;
   rc::DeltaQParams frame_delta_q_params;
-  std::string qp_error;
   const bool seg_ok = make_delta_q_params(c.per_sb_delta_q, segmentation,
-                                          frame_delta_q_params, &qp_error);
+                                          frame_delta_q_params, qp_error);
   assert(seg_ok);
   (void)seg_ok;
   const std::size_t seg_bits = deltaq::write_segmentation_params(
-      writer, segmentation, qp_header, &qp_error);
+      writer, segmentation, qp_header, qp_error);
   assert(seg_bits != 0);
   (void)seg_bits;
   const bool qm_ok = qm::write_setup_qm_params(
       writer, c.qm, /*num_planes=*/3, segmentation.enabled,
-      &qp_error);
+      qp_error);
   assert(qm_ok);
   (void)qm_ok;
   const std::size_t dq_bits = deltaq::write_delta_q_params(
-      writer, frame_delta_q_params, c.base_q_idx, &qp_error);
+      writer, frame_delta_q_params, c.base_q_idx, qp_error);
   assert(dq_bits != 0);
   (void)dq_bits;
 
@@ -341,7 +343,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
     params.pic_scale_idx = c.gdf.pic_scale_idx;
     std::string gdf_error;
     const std::size_t bits =
-        gdf::WriteFrameGdfParams(writer, ctx, &params, &gdf_error);
+        gdf::WriteFrameGdfParams(writer, ctx, &params, gdf_error);
     assert(gdf_error.empty());
     assert(!params.per_block);
     assert(params.blk_size == c.gdf.blk_size);
@@ -413,7 +415,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
         c.lr.plane[1].enabled ? c.lr.plane[1].shift : c.lr.plane[2].shift;
     std::string pc_error;
     const std::size_t bits =
-        pcw::WriteLrParams(writer, &params, ctx, &pc_error);
+        pcw::WriteLrParams(writer, &params, ctx, pc_error);
     assert(pc_error.empty());
     assert(bits > 0);
     (void)bits;
@@ -512,7 +514,7 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const StillConfig& c) {
     ctx.implicit_output_frame = false;
     std::string grain_error;
     [[maybe_unused]] const bool ok =
-        grain::WriteFilmGrainConfig(writer, config, ctx, &grain_error);
+        grain::WriteFilmGrainConfig(writer, config, ctx, grain_error);
     assert(ok);
     assert(grain_error.empty());
   }
@@ -533,7 +535,7 @@ std::size_t write_frame_header(BitWriter& writer, const StillConfig& config) {
 
 bool make_delta_q_params(const StillDeltaQConfig& config,
                          rc::SegmentationParams& segmentation,
-                         rc::DeltaQParams& delta_q, std::string* error) {
+                         rc::DeltaQParams& delta_q, std::string& error) {
   segmentation = rc::SegmentationParams{};
   delta_q = rc::DeltaQParams{};
   segmentation.enabled = config.segmentation_enabled;
@@ -610,7 +612,7 @@ std::vector<std::uint8_t> assemble_still_picture(
     std::vector<std::uint8_t> with_grain;
     std::string grain_error;
     if (!av2enc::filters::grain::InsertFilmGrainObu(
-            out, config.film_grain_obu, &with_grain, &grain_error)) {
+            out, config.film_grain_obu, &with_grain, grain_error)) {
       return {};
     }
     out.swap(with_grain);

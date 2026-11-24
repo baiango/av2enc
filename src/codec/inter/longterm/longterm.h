@@ -186,7 +186,7 @@ std::size_t write_sequence_header(BitWriter& writer,
 // max_mlayer_id > 0 would require the §5.4.1 layer-dependency syntax, which is
 // not implemented here.
 [[nodiscard]] bool validate_sequence_header_config(const SequenceConfig& config,
-                                     std::string* error);
+                                     std::string& error);
 std::vector<std::uint8_t> make_sequence_header_obu(const SequenceConfig&);
 std::vector<std::uint8_t> make_temporal_delimiter_obu();
 
@@ -218,7 +218,7 @@ struct ObuView {
 
 // Annex B.2 [leb128][obu_header()][payload]. `consumed` counts the whole OBU.
 [[nodiscard]] bool parse_obu(std::span<const std::uint8_t> bytes, ObuView* view,
-               std::size_t* consumed, std::string* error);
+               std::size_t* consumed, std::string& error);
 
 struct ParsedFrameHeader {
   FrameHeader header;
@@ -231,13 +231,13 @@ struct ParsedFrameHeader {
 // Parses a tile_group_obu() payload (the bytes after obu_header()).
 [[nodiscard]] bool read_tile_group_header(std::span<const std::uint8_t> payload,
                             const SequenceConfig& config,
-                            ParsedFrameHeader* out, std::string* error);
+                            ParsedFrameHeader* out, std::string& error);
 
 // Parses the sequence header payload written by write_sequence_header() and
 // checks it against `config`. Returns the number of bits consumed.
 [[nodiscard]] bool read_sequence_header(std::span<const std::uint8_t> payload,
                           const SequenceConfig& config, std::size_t* bits,
-                          std::string* error);
+                          std::string& error);
 
 // ---------------------------------------------------------------------------
 // §5.18.2 / §7.4.3 / §7.4.4 / §7.23 reference pool
@@ -289,7 +289,7 @@ void reset_pool(const SequenceConfig& config, PoolState* pool);
 
 // Static §5.18.2/§7.4.2 conformance rules that do not need pool state.
 [[nodiscard]] bool validate_frame_header(const SequenceConfig& config,
-                           const FrameHeader& header, std::string* error);
+                           const FrameHeader& header, std::string& error);
 
 // Applies one frame header exactly in the order of §5.18.2 (invalidation,
 // refresh bookkeeping) followed by §7.23 (RefValid/RefLongTermId update).
@@ -298,7 +298,7 @@ void reset_pool(const SequenceConfig& config, PoolState* pool);
 // slot. The pool is not modified on failure (except through PoolEvents).
 [[nodiscard]] bool apply_frame(const SequenceConfig& config, const FrameHeader& header,
                  bool first_picture_in_tu, PoolState* pool,
-                 PoolEvents* events, std::string* error);
+                 PoolEvents* events, std::string& error);
 
 // §7.3.6/§7.3.7 temporal-unit rules: at most one random-access OBU and only as
 // the first frame unit; CLK and OLK never mix; leading frames never mix with
@@ -307,14 +307,14 @@ void reset_pool(const SequenceConfig& config, PoolState* pool);
 // units share one OrderHint.
 [[nodiscard]] bool validate_temporal_unit(const SequenceConfig& config,
                             std::span<const FrameHeader> frames,
-                            std::string* error);
+                            std::string& error);
 
 // §7.4.3 closed random access: a CLK starts a new coded video sequence, so it
 // must not depend on any prior reference state, and it never names long-term
 // ids. `required_long_term_ids` are the ids later frames still need.
 [[nodiscard]] bool validate_closed_random_access(const SequenceConfig& config,
                                    const FrameHeader& clk,
-                                   std::string* error);
+                                   std::string& error);
 
 // §7.4.4 open random access. `required_long_term_ids` is the set of ids that
 // frames after the random access point will reference; every one of them must
@@ -323,7 +323,7 @@ void reset_pool(const SequenceConfig& config, PoolState* pool);
 [[nodiscard]] bool validate_open_random_access(
     const SequenceConfig& config, const FrameHeader& olk,
     const PoolState& pool, std::span<const std::int32_t> required_long_term_ids,
-    std::string* error);
+    std::string& error);
 
 // A frame decoded between an OLK and the next Regular frame belongs to the
 // leading set when it is not itself regular and its output order precedes the
@@ -337,7 +337,7 @@ void reset_pool(const SequenceConfig& config, PoolState* pool);
 // §7.4.3: the CLK refreshes every slot (no bits) and may carry a long-term id.
 [[nodiscard]] bool plan_closed_loop_key(const SequenceConfig& config,
                           std::uint32_t order_hint, std::int32_t long_term_id,
-                          FrameHeader* header, std::string* error);
+                          FrameHeader* header, std::string& error);
 
 // §7.4.4: the OLK occupies `olk_slot` (only that slot is refreshed, so every
 // retained long-term slot survives) and names `retain_long_term_ids` in
@@ -346,7 +346,7 @@ void reset_pool(const SequenceConfig& config, PoolState* pool);
                         const PoolState& pool, std::uint32_t order_hint,
                         std::uint8_t olk_slot, std::int32_t olk_long_term_id,
                         std::span<const std::int32_t> retain_long_term_ids,
-                        FrameHeader* header, std::string* error);
+                        FrameHeader* header, std::string& error);
 
 // Plans one P frame: `ref_slots` become ref_frame_idx (one entry per ref) and
 // `refresh_slot` receives the decoded picture.
@@ -354,7 +354,7 @@ void reset_pool(const SequenceConfig& config, PoolState* pool);
                       std::uint32_t order_hint,
                       std::span<const std::uint8_t> ref_slots,
                       std::uint8_t refresh_slot, bool immediate_output_frame,
-                      FrameHeader* header, std::string* error);
+                      FrameHeader* header, std::string& error);
 
 }  // namespace av2enc::inter::longterm
 

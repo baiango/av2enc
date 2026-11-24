@@ -30,10 +30,8 @@ bool same_luma_geometry(const cfl::Block& a, const cfl::Block& b) {
          a.sub_y == b.sub_y;
 }
 
-bool fail(std::string* error, const char* what) {
-  if (error != nullptr) {
-    *error = what;
-  }
+bool fail(std::string& error, const char* what) {
+error = what;
   return false;
 }
 
@@ -74,7 +72,7 @@ StillCflPair make_still_cfl_pair(const StillCflFrame& frame, const StillCflRect&
   return pair;
 }
 
-bool still_cfl_valid_pair(const StillCflPair& pair, std::string* error) {
+bool still_cfl_valid_pair(const StillCflPair& pair, std::string& error) {
   if (!cfl::valid(pair.u)) {
     return fail(error, "U block descriptor is not valid");
   }

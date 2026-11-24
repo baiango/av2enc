@@ -71,20 +71,20 @@ std::size_t write_video_frame_header_with_mfh(BitWriter& writer,
                                            const VideoMfhConfig& config,
                                            const VideoMfhFrameHeader& header,
                                            const MultiFrameHeader* mfh,
-                                           std::string* error);
+                                           std::string& error);
 
 // §5.19 tile_group_obu() header: is_first_tile_group + frame_header +
 // byte_alignment().
 std::size_t write_video_tile_group_header_with_mfh(
     BitWriter& writer, const VideoMfhConfig& config,
     const VideoMfhFrameHeader& header, const MultiFrameHeader* mfh,
-    std::string* error);
+    std::string& error);
 
 // Complete OBU_CLOSED_LOOP_KEY / OBU_REGULAR_TILE_GROUP with the supplied tile
 // payload (which must end with the §8.2.4 exit_symbol bits).
 std::vector<std::uint8_t> make_video_frame_obu_with_mfh(
     const VideoMfhConfig& config, const VideoMfhFrameHeader& header,
     const MultiFrameHeader* mfh, std::span<const std::uint8_t> tile_payload,
-    std::string* error);
+    std::string& error);
 
 }  // namespace av2enc::frame::mfh

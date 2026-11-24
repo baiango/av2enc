@@ -36,11 +36,9 @@ int bits_for_range(int values) {
 
 bool still_cdef_build_header(const cdef::CdefOptions& options,
                           bool single_picture_header, CdefHeaderParams* out,
-                          std::string* error) {
-  auto fail = [error](const char* text) {
-    if (error != nullptr) {
-      *error = text;
-    }
+                          std::string& error) {
+  auto fail = [&error](const char* text) {
+error = text;
     return false;
   };
   if (out == nullptr) {
@@ -89,18 +87,14 @@ bool still_cdef_build_header(const cdef::CdefOptions& options,
     bits += 1 + (h.uv_pri_zero ? 0 : 4) + 2;
   }
   out->bits = bits;
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return true;
 }
 
 bool still_cdef_build_mi_grids(const CdefMiInputs& inputs, CdefMiGrids* out,
-                            std::string* error) {
-  auto fail = [error](const char* text) {
-    if (error != nullptr) {
-      *error = text;
-    }
+                            std::string& error) {
+  auto fail = [&error](const char* text) {
+error = text;
     return false;
   };
   if (out == nullptr) {
@@ -141,18 +135,14 @@ bool still_cdef_build_mi_grids(const CdefMiInputs& inputs, CdefMiGrids* out,
       out->lossless_chroma[i] = inputs.lossless_array[seg] != 0 ? 1 : 0;
     }
   }
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return true;
 }
 
 bool still_cdef_plan(const CdefStageFrame& frame, const CdefStageOptions& options,
-                  CdefStagePlan* plan, std::string* error) {
-  auto fail = [error](const char* text) {
-    if (error != nullptr) {
-      *error = text;
-    }
+                  CdefStagePlan* plan, std::string& error) {
+  auto fail = [&error](const char* text) {
+error = text;
     return false;
   };
   if (plan == nullptr) {
@@ -224,7 +214,7 @@ bool still_cdef_plan(const CdefStageFrame& frame, const CdefStageOptions& option
   search.eval_step = options.search_step;
 
   std::string search_error;
-  if (!cdef::cdef_search_plan(view, search, &plan->search, &search_error)) {
+  if (!cdef::cdef_search_plan(view, search, &plan->search, search_error)) {
     return fail(search_error.empty() ? "strength search failed"
                                      : search_error.c_str());
   }
@@ -260,19 +250,15 @@ bool still_cdef_plan(const CdefStageFrame& frame, const CdefStageOptions& option
     const int minus_bits = bits_for_range(plan->num_strengths - 1);
     plan->index_bits_estimate = blocks * (1 + minus_bits);
   }
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return true;
 }
 
 bool still_cdef_validate_device_frame(const CdefDeviceFrame& frame,
                                    const cdef::CdefOptions& options,
-                                   std::string* error) {
-  auto fail = [error](const char* text) {
-    if (error != nullptr) {
-      *error = text;
-    }
+                                   std::string& error) {
+  auto fail = [&error](const char* text) {
+error = text;
     return false;
   };
   if (options.bit_depth != 8) {
@@ -325,9 +311,7 @@ bool still_cdef_validate_device_frame(const CdefDeviceFrame& frame,
       frame.num_tile_cols < 0 || frame.num_tile_rows < 0) {
     return fail("invalid tile arrays");
   }
-  if (error != nullptr) {
-    error->clear();
-  }
+error.clear();
   return true;
 }
 

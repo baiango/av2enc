@@ -22,12 +22,10 @@ std::size_t sample_bytes(const tiles::TileLayout& layout, int bit_depth) {
 }
 
 bool frame_layout(const tiles::TileLayout& layout, int bit_depth,
-                  PlaneGeometry planes[3], std::string* error) {
+                  PlaneGeometry planes[3], std::string& error) {
   if (layout.width <= 0 || layout.height <= 0 || layout.width % 2 != 0 ||
       layout.height % 2 != 0) {
-    if (error != nullptr) {
-      *error = "reference exchange needs a positive even 4:2:0 frame";
-    }
+error = "reference exchange needs a positive even 4:2:0 frame";
     return false;
   }
   const std::size_t bps = sample_bytes(layout, bit_depth);
@@ -67,7 +65,7 @@ struct PlaneRect {
 
 bool tile_plane_rects(const tiles::TileLayout& layout,
                       const tiles::TileRect& rect, int bit_depth,
-                      PlaneRect out[3], std::string* error) {
+                      PlaneRect out[3], std::string& error) {
   PlaneGeometry planes[3];
   if (!frame_layout(layout, bit_depth, planes, error)) {
     return false;
@@ -77,16 +75,12 @@ bool tile_plane_rects(const tiles::TileLayout& layout,
     const int width = rect.pixel_width();
     const int height = rect.pixel_height();
     if (width <= 0 || height <= 0) {
-      if (error != nullptr) {
-        *error = "tile rectangle is empty";
-      }
+error = "tile rectangle is empty";
       return false;
     }
     if (plane != 0 && ((width % 2) != 0 || (height % 2) != 0 ||
                        (rect.x0 % 2) != 0 || (rect.y0 % 2) != 0)) {
-      if (error != nullptr) {
-        *error = "chroma tile region is not 2x2 aligned";
-      }
+error = "chroma tile region is not 2x2 aligned";
       return false;
     }
     out[plane].x = rect.x0 >> shift;

@@ -509,16 +509,16 @@ EncodeResult encode(const plan::FramePlan& frame_plan, const Plane& src_y,
 }
 
 bool read_source(const std::string& path, Plane* y, Plane* u, Plane* v,
-                 std::string* error) {
+                 std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
   if (reader.read_frame(frame, *error) != av2enc::Y4mReadResult::kFrame) {
-    *error = "no frame in " + path;
+    error = "no frame in " + path;
     return false;
   }
   if (frame.width() != kWidth || frame.height() != kHeight) {
-    *error = "gate needs a 64x64 source";
+    error = "gate needs a 64x64 source";
     return false;
   }
   y->width = kWidth;
@@ -537,16 +537,16 @@ bool read_source(const std::string& path, Plane* y, Plane* u, Plane* v,
 }
 
 bool read_decoded(const std::string& path, Plane* y, Plane* u, Plane* v,
-                  std::string* error) {
+                  std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame frame;
   if (reader.read_frame(frame, *error) != av2enc::Y4mReadResult::kFrame) {
-    *error = "no decoded frame in " + path;
+    error = "no decoded frame in " + path;
     return false;
   }
   if (frame.width() != kWidth || frame.height() != kHeight) {
-    *error = "decoded frame has the wrong size";
+    error = "decoded frame has the wrong size";
     return false;
   }
   y->width = kWidth;
@@ -577,7 +577,7 @@ int max_abs_diff(const Plane& a, const Plane& b) {
 }
 
 bool write_ivf(const std::string& path, const std::vector<std::uint8_t>& frame,
-               std::string* error) {
+               std::string& error) {
   av2enc::IvfHeader header;
   header.width = kWidth;
   header.height = kHeight;

@@ -6,13 +6,13 @@
 namespace av2enc::video::adv {
 namespace {
 
-bool fail(std::string* error, const std::string& message) {
-  if (error != nullptr) *error = message;
+bool fail(std::string& error, const std::string& message) {
+  error = message;
   return false;
 }
 
 bool sym(av2::Encoder& enc, std::uint16_t* cdf, int n, int symbol,
-         std::string* error) {
+         std::string& error) {
   const av2::Status status = enc.encode_symbol(cdf, n, symbol);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("encode_symbol failed: ") +
@@ -23,7 +23,7 @@ bool sym(av2::Encoder& enc, std::uint16_t* cdf, int n, int symbol,
 }
 
 bool sym(av2::Decoder& dec, std::uint16_t* cdf, int n, int* symbol,
-         std::string* error) {
+         std::string& error) {
   const av2::Status status = dec.decode_symbol(cdf, n, symbol);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("decode_symbol failed: ") +
@@ -32,7 +32,7 @@ bool sym(av2::Decoder& dec, std::uint16_t* cdf, int n, int* symbol,
   return true;
 }
 
-bool raw_bit(av2::Encoder& enc, bool bit, std::string* error) {
+bool raw_bit(av2::Encoder& enc, bool bit, std::string& error) {
   const av2::Status status = enc.encode_bool(bit);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("encode_bool failed: ") + av2::status_name(status));
@@ -40,7 +40,7 @@ bool raw_bit(av2::Encoder& enc, bool bit, std::string* error) {
   return true;
 }
 
-bool raw_bit(av2::Decoder& dec, bool* bit, std::string* error) {
+bool raw_bit(av2::Decoder& dec, bool* bit, std::string& error) {
   const av2::Status status = dec.read_bool(bit);
   if (status != av2::Status::kOk) {
     return fail(error, std::string("read_bool failed: ") + av2::status_name(status));
@@ -267,7 +267,7 @@ bool wedge_index_from_symbols(const WedgeModeSymbols& symbols, int* wedge_index)
 // ---------------------------------------------------------------------------
 
 bool write_is_warp(av2::Encoder& enc, AdvancedCdfState& cdfs, int warp_mv_ctx,
-                   bool value, std::string* error) {
+                   bool value, std::string& error) {
   if (warp_mv_ctx < 0 || warp_mv_ctx > 4) {
     return fail(error, "is_warp context outside 0..4");
   }
@@ -275,13 +275,13 @@ bool write_is_warp(av2::Encoder& enc, AdvancedCdfState& cdfs, int warp_mv_ctx,
 }
 
 bool write_warp_mv(av2::Encoder& enc, AdvancedCdfState& cdfs, bool value,
-                   std::string* error) {
+                   std::string& error) {
   return sym(enc, cdfs.warp_mv, 2, value ? 1 : 0, error);
 }
 
 bool write_bawp_symbols(av2::Encoder& enc, AdvancedCdfState& cdfs,
                         const BawpSymbols& symbols, bool has_chroma,
-                        std::string* error) {
+                        std::string& error) {
   if (symbols.explicit_ctx < 0 || symbols.explicit_ctx > 2) {
     return fail(error, "explicit_bawp context outside 0..2");
   }
@@ -316,7 +316,7 @@ bool write_bawp_symbols(av2::Encoder& enc, AdvancedCdfState& cdfs,
 }
 
 bool write_wedge_mode(av2::Encoder& enc, AdvancedCdfState& cdfs,
-                      const WedgeModeSymbols& symbols, std::string* error) {
+                      const WedgeModeSymbols& symbols, std::string& error) {
   if (symbols.wedge_quad < 0 || symbols.wedge_quad > 3 ||
       symbols.wedge_angle < 0 || symbols.wedge_angle > 4) {
     return fail(error, "wedge quad/angle out of range");
@@ -345,13 +345,13 @@ bool write_wedge_mode(av2::Encoder& enc, AdvancedCdfState& cdfs,
   return sym(enc, cdfs.wedge_dist1, 4, symbols.wedge_dist1, error);
 }
 
-bool write_wedge_sign(av2::Encoder& enc, bool sign, std::string* error) {
+bool write_wedge_sign(av2::Encoder& enc, bool sign, std::string& error) {
   return raw_bit(enc, sign, error);
 }
 
 bool write_inter_intra(av2::Encoder& enc, AdvancedCdfState& cdfs, bool is_warp,
                        int mi_size, const MotionModeSymbols& symbols,
-                       std::string* error) {
+                       std::string& error) {
   if (mi_size < 0 || mi_size >= kBlockSizes) {
     return fail(error, "MiSize outside BLOCK_SIZES");
   }
@@ -407,7 +407,7 @@ bool write_inter_intra(av2::Encoder& enc, AdvancedCdfState& cdfs, bool is_warp,
 }
 
 bool write_motion_mode(av2::Encoder& enc, AdvancedCdfState& cdfs, int mi_size,
-                       const MotionModeSymbols& symbols, std::string* error) {
+                       const MotionModeSymbols& symbols, std::string& error) {
   if (mi_size < 0 || mi_size >= kBlockSizes) {
     return fail(error, "MiSize outside BLOCK_SIZES");
   }
@@ -457,7 +457,7 @@ bool write_motion_mode(av2::Encoder& enc, AdvancedCdfState& cdfs, int mi_size,
 }
 
 bool write_warp_idx(av2::Encoder& enc, AdvancedCdfState& cdfs, int ref_warp_idx,
-                    std::string* error) {
+                    std::string& error) {
   if (ref_warp_idx < 0 || ref_warp_idx > 3) {
     return fail(error, "RefWarpIdx outside 0..3");
   }
@@ -470,13 +470,13 @@ bool write_warp_idx(av2::Encoder& enc, AdvancedCdfState& cdfs, int ref_warp_idx,
 }
 
 bool write_warpmv_with_mvd(av2::Encoder& enc, AdvancedCdfState& cdfs, bool value,
-                           std::string* error) {
+                           std::string& error) {
   return sym(enc, cdfs.warp_with_mvd, 2, value ? 1 : 0, error);
 }
 
 bool write_warp_delta(av2::Encoder& enc, AdvancedCdfState& cdfs, int mi_size,
                       const WarpDeltaSymbols& symbols, bool six_param,
-                      std::string* error) {
+                      std::string& error) {
   if (mi_size < 0 || mi_size >= kBlockSizes) {
     return fail(error, "MiSize outside BLOCK_SIZES");
   }
@@ -519,7 +519,7 @@ bool write_warp_delta(av2::Encoder& enc, AdvancedCdfState& cdfs, int mi_size,
 // ---------------------------------------------------------------------------
 
 bool read_is_warp(av2::Decoder& dec, AdvancedCdfState& cdfs, int warp_mv_ctx,
-                  bool* value, std::string* error) {
+                  bool* value, std::string& error) {
   if (warp_mv_ctx < 0 || warp_mv_ctx > 4) {
     return fail(error, "is_warp context outside 0..4");
   }
@@ -530,7 +530,7 @@ bool read_is_warp(av2::Decoder& dec, AdvancedCdfState& cdfs, int warp_mv_ctx,
 }
 
 bool read_warp_mv(av2::Decoder& dec, AdvancedCdfState& cdfs, bool* value,
-                  std::string* error) {
+                  std::string& error) {
   int symbol = 0;
   if (!sym(dec, cdfs.warp_mv, 2, &symbol, error)) return false;
   *value = symbol != 0;
@@ -539,7 +539,7 @@ bool read_warp_mv(av2::Decoder& dec, AdvancedCdfState& cdfs, bool* value,
 
 bool read_bawp_symbols(av2::Decoder& dec, AdvancedCdfState& cdfs,
                        int explicit_ctx, bool has_chroma, BawpSymbols* out,
-                       std::string* error) {
+                       std::string& error) {
   if (out == nullptr || explicit_ctx < 0 || explicit_ctx > 2) {
     return fail(error, "invalid BAWP read arguments");
   }
@@ -567,7 +567,7 @@ bool read_bawp_symbols(av2::Decoder& dec, AdvancedCdfState& cdfs,
 }
 
 bool read_wedge_mode(av2::Decoder& dec, AdvancedCdfState& cdfs,
-                     WedgeModeSymbols* out, std::string* error) {
+                     WedgeModeSymbols* out, std::string& error) {
   if (out == nullptr) return fail(error, "null wedge output");
   WedgeModeSymbols s{};
   if (!sym(dec, cdfs.wedge_quad, 4, &s.wedge_quad, error)) return false;
@@ -591,7 +591,7 @@ bool read_wedge_mode(av2::Decoder& dec, AdvancedCdfState& cdfs,
   return true;
 }
 
-bool read_wedge_sign(av2::Decoder& dec, int* sign, std::string* error) {
+bool read_wedge_sign(av2::Decoder& dec, int* sign, std::string& error) {
   bool bit = false;
   if (!raw_bit(dec, &bit, error)) return false;
   *sign = bit ? 1 : 0;
@@ -601,7 +601,7 @@ bool read_wedge_sign(av2::Decoder& dec, int* sign, std::string* error) {
 bool read_inter_intra(av2::Decoder& dec, AdvancedCdfState& cdfs, bool is_warp,
                       int mi_size, bool wedge_allowed, bool* inter_intra,
                       int* interintra_mode, bool* wedge_interintra,
-                      int* wedge_index, std::string* error) {
+                      int* wedge_index, std::string& error) {
   if (mi_size < 0 || mi_size >= kBlockSizes) {
     return fail(error, "MiSize outside BLOCK_SIZES");
   }
@@ -647,7 +647,7 @@ bool read_motion_mode(av2::Decoder& dec, AdvancedCdfState& cdfs, int size_group,
                       bool is_warp_newmv, bool extend_allowed, bool local_allowed,
                       int extend_warp_ctx, int local_warp_ctx,
                       bool inter_intra_allowed, bool wedge_allowed,
-                      MotionModeSymbols* out, std::string* error) {
+                      MotionModeSymbols* out, std::string& error) {
   if (out == nullptr || size_group < 0 || size_group > 3) {
     return fail(error, "invalid motion-mode read arguments");
   }
@@ -717,7 +717,7 @@ bool read_motion_mode(av2::Decoder& dec, AdvancedCdfState& cdfs, int size_group,
 }
 
 bool read_warp_idx(av2::Decoder& dec, AdvancedCdfState& cdfs, int* ref_warp_idx,
-                   std::string* error) {
+                   std::string& error) {
   if (ref_warp_idx == nullptr) return fail(error, "null RefWarpIdx output");
   *ref_warp_idx = 3;
   for (int idx = 0; idx < kMaxWarpRefCandidates - 1; ++idx) {
@@ -732,7 +732,7 @@ bool read_warp_idx(av2::Decoder& dec, AdvancedCdfState& cdfs, int* ref_warp_idx,
 }
 
 bool read_warpmv_with_mvd(av2::Decoder& dec, AdvancedCdfState& cdfs, bool* value,
-                          std::string* error) {
+                          std::string& error) {
   int symbol = 0;
   if (!sym(dec, cdfs.warp_with_mvd, 2, &symbol, error)) return false;
   *value = symbol != 0;
@@ -740,7 +740,7 @@ bool read_warpmv_with_mvd(av2::Decoder& dec, AdvancedCdfState& cdfs, bool* value
 }
 
 bool read_warp_delta(av2::Decoder& dec, AdvancedCdfState& cdfs, int mi_size,
-                     bool six_param, WarpDeltaSymbols* out, std::string* error) {
+                     bool six_param, WarpDeltaSymbols* out, std::string& error) {
   if (out == nullptr || mi_size < 0 || mi_size >= kBlockSizes) {
     return fail(error, "invalid warp delta read arguments");
   }
@@ -801,7 +801,7 @@ bool has_mvd(int y_mode, bool warpmv_with_mvd) {
 bool write_advanced_inter_block(av2::Encoder& enc, AdvancedCdfState& cdfs,
                                 const AdvancedBlockCoding& block,
                                 const BaselineInterWriter& baseline,
-                                std::string* error) {
+                                std::string& error) {
   if (block.mi_size < 0 || block.mi_size >= kBlockSizes) {
     return fail(error, "MiSize outside BLOCK_SIZES");
   }
@@ -970,7 +970,7 @@ bool write_advanced_inter_block(av2::Encoder& enc, AdvancedCdfState& cdfs,
 bool read_advanced_inter_block(av2::Decoder& dec, AdvancedCdfState& cdfs,
                                const AdvancedBlockCoding& gates,
                                const BaselineInterReader& baseline,
-                               AdvancedBlockCoding* out, std::string* error) {
+                               AdvancedBlockCoding* out, std::string& error) {
   if (out == nullptr || gates.mi_size < 0 || gates.mi_size >= kBlockSizes) {
     return fail(error, "invalid advanced block read arguments");
   }
@@ -1137,7 +1137,7 @@ bool read_advanced_inter_block(av2::Decoder& dec, AdvancedCdfState& cdfs,
 
 bool write_sequence_motion_mode_config(av2enc::BitWriter* writer,
                                        const SequenceAdvancedConfig& config,
-                                       std::string* error) {
+                                       std::string& error) {
   if (writer == nullptr) return fail(error, "null BitWriter");
   bool any_mode = false;
   for (int mode = 1; mode < kMotionModes; ++mode) {
@@ -1160,7 +1160,7 @@ bool write_sequence_motion_mode_config(av2enc::BitWriter* writer,
 
 bool write_sequence_bawp_cwp_bits(av2enc::BitWriter* writer,
                                   const SequenceAdvancedConfig& config,
-                                  std::string* error) {
+                                  std::string& error) {
   if (writer == nullptr) return fail(error, "null BitWriter");
   writer->put_bit(config.enable_bawp);
   writer->put_bit(config.enable_cwp);
@@ -1170,7 +1170,7 @@ bool write_sequence_bawp_cwp_bits(av2enc::BitWriter* writer,
 
 bool write_sequence_global_motion_bit(av2enc::BitWriter* writer,
                                       const SequenceAdvancedConfig& config,
-                                      std::string* error) {
+                                      std::string& error) {
   if (writer == nullptr) return fail(error, "null BitWriter");
   if (config.enable_global_motion) {
     return fail(error,
@@ -1183,7 +1183,7 @@ bool write_sequence_global_motion_bit(av2enc::BitWriter* writer,
 
 bool write_frame_motion_mode_bits(av2enc::BitWriter* writer,
                                   const FrameAdvancedConfig& config,
-                                  std::string* error) {
+                                  std::string& error) {
   if (writer == nullptr) return fail(error, "null BitWriter");
   for (int mode = 1; mode < kMotionModes; ++mode) {
     if (!config.seq_enabled_motion_modes[mode]) {
@@ -1204,7 +1204,7 @@ bool write_frame_motion_mode_bits(av2enc::BitWriter* writer,
 
 bool write_frame_bawp_warp_bits(av2enc::BitWriter* writer,
                                 const FrameAdvancedConfig& config,
-                                std::string* error) {
+                                std::string& error) {
   if (writer == nullptr) return fail(error, "null BitWriter");
   const bool bawp_present = !config.frame_is_intra && config.enable_bawp;
   if (bawp_present) {

@@ -29,7 +29,7 @@ void usage() {
 }
 
 bool write_recon_y4m(const std::string& path, const av2enc::high_bitdepth::HighBitDepthResult& r,
-                     std::string* error) {
+                     std::string& error) {
   return av2enc::high_bitdepth::write_y4m_10bit_planes(
       path, static_cast<std::uint32_t>(r.recon[0].visible_width),
       static_cast<std::uint32_t>(r.recon[0].visible_height),

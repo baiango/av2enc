@@ -111,7 +111,7 @@ struct VbvState {
                     double average_frame_bits,
                     double frame_duration,
                     VbvState& state,
-                    std::string* error = nullptr);
+                    std::string& error);
 
 // Largest frame size that does not underflow at the current fill, and the
 // smallest size that does not overflow. Both are unclamped diagnostics; a
@@ -180,7 +180,7 @@ struct FrameStats {
 // same content with the implicit single tile materialized.
 [[nodiscard]] bool normalize_frame_stats(const FrameStats& input,
                            FrameStats& normalized,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // Convenience first pass: block-DC intra prediction over one 8-bit luma plane.
 //
@@ -199,7 +199,7 @@ struct FrameStats {
                      int tile_rows,
                      bool keyframe,
                      FrameStats& stats,
-                     std::string* error = nullptr);
+                     std::string& error);
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -270,7 +270,7 @@ struct TwoPassConfig {
 };
 
 [[nodiscard]] bool two_pass_config_valid(const TwoPassConfig& config,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // ---------------------------------------------------------------------------
 // Allocation (first pass result)
@@ -310,7 +310,7 @@ struct AllocationResult {
                      double total_bits,
                      const VbvState& initial_buffer,
                      AllocationResult& result,
-                     std::string* error = nullptr);
+                     std::string& error);
 
 // ---------------------------------------------------------------------------
 // Second-pass decisions
@@ -397,30 +397,30 @@ class TwoPassController {
   TwoPassController(const TwoPassController&) = delete;
   TwoPassController& operator=(const TwoPassController&) = delete;
 
-  bool configure(const TwoPassConfig& config, std::string* error = nullptr);
+  bool configure(const TwoPassConfig& config, std::string& error);
   const TwoPassConfig& config() const noexcept { return config_; }
   bool configured() const noexcept { return configured_; }
 
   // Clears all history but keeps the configuration.
-  bool reset(std::string* error = nullptr);
+  bool reset(std::string& error);
 
   // Offline first pass. Computes the global allocation for the supplied clip
   // and stores a private copy of the statistics for the second pass.
-  bool analyze(std::span<const FrameStats> stats, std::string* error = nullptr);
+  bool analyze(std::span<const FrameStats> stats, std::string& error);
 
   // Streaming first pass. Replaces the lookahead window; window[0] is the next
   // frame to encode (index frame_count()). The allocation is recomputed from
   // the current VBV state. Must not be called while a frame is open.
   bool set_lookahead(std::span<const FrameStats> window,
-                     std::string* error = nullptr);
+                     std::string& error);
 
   // Produces the plan for frame_count(). Requires pending first-pass stats.
-  bool begin_frame(FramePlan& plan, std::string* error = nullptr);
+  bool begin_frame(FramePlan& plan, std::string& error);
 
   // Reports the actual coded payload bits for the frame opened by
   // begin_frame(). Updates the VBV fill, the rate-feedback EMA, the totals,
   // and (offline) deterministically re-plans the remaining lookahead window.
-  bool end_frame(std::int64_t actual_bits, std::string* error = nullptr);
+  bool end_frame(std::int64_t actual_bits, std::string& error);
 
   std::size_t frame_count() const noexcept { return frame_count_; }
   bool frame_open() const noexcept { return frame_open_; }
@@ -436,8 +436,8 @@ class TwoPassController {
   bool validate_and_plan(std::span<const FrameStats> stats,
                          std::size_t horizon,
                          double total_bits,
-                         std::string* error);
-  bool reallocate_remaining(double error_bits, std::string* error);
+                         std::string& error);
+  bool reallocate_remaining(double error_bits, std::string& error);
 
   TwoPassConfig config_{};
   bool configured_ = false;

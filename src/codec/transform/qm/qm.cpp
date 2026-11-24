@@ -93,13 +93,11 @@ bool matrix_is_transpose(const std::uint8_t a[8][8], const std::uint8_t b[8][8],
 }
 
 bool write_user_defined_qm(BitWriter& writer, const UserQmLevel& user,
-                           int level, int t, int plane, std::string* error) {
+                           int level, int t, int plane, std::string& error) {
   auto set_error = [&](const char* message) {
-    if (error != nullptr) {
-      *error = "quantizer matrix level " + std::to_string(level) +
-               ", t=" + std::to_string(t) + ", plane=" +
-               std::to_string(plane) + ": " + message;
-    }
+error = "quantizer matrix level " + std::to_string(level) +
+         ", t=" + std::to_string(t) + ", plane=" +
+         std::to_string(plane) + ": " + message;
     return false;
   };
 
@@ -317,9 +315,9 @@ bool dequantize_block(const std::int32_t* levels,
 
 bool write_setup_qm_params(BitWriter& writer, const QmFrameState& state,
                            int num_planes, bool segmentation_enabled,
-                           std::string* error) {
+                           std::string& error) {
   auto fail = [&](const char* message) {
-    if (error != nullptr) *error = std::string("setup_qm_params: ") + message;
+    error = std::string("setup_qm_params: ") + message;
     return false;
   };
   if (num_planes < 1 || num_planes > 3) return fail("NumPlanes out of range");
@@ -375,11 +373,9 @@ bool fill_user_qm_constant(UserQmLevel* level, std::uint8_t value) {
 
 bool write_quantizer_matrix_obu_payload(BitWriter& writer,
                                         const QmObuConfig& config,
-                                        std::string* error) {
+                                        std::string& error) {
   auto fail = [&](const char* message) {
-    if (error != nullptr) {
-      *error = std::string("quantizer_matrix_obu: ") + message;
-    }
+error = std::string("quantizer_matrix_obu: ") + message;
     return false;
   };
   if ((config.bit_map & 0x8000U) != 0) return fail("qm_bit_map is f(15)");
@@ -413,7 +409,7 @@ bool write_quantizer_matrix_obu_payload(BitWriter& writer,
 }
 
 std::vector<std::uint8_t> make_quantizer_matrix_obu(
-    const QmObuConfig& config, std::string* error) {
+    const QmObuConfig& config, std::string& error) {
   BitWriter writer;
   if (!write_quantizer_matrix_obu_payload(writer, config, error)) {
     return {};

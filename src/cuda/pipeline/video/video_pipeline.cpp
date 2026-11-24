@@ -76,8 +76,8 @@ class BackendFilterHooks final
   bool apply_stage(av2enc::video::post::VideoFilterStage stage,
                    const av2enc::video::post::VideoFilterPlan& plan,
                    const av2enc::video::post::VideoLoopFilterDeviceFrame& frame,
-                   std::string* error) override {
-    return backend_.loop_filter_stage(stage, plan, frame, *error);
+                   std::string& error) override {
+    return backend_.loop_filter_stage(stage, plan, frame, error);
   }
 
  private:
@@ -645,7 +645,7 @@ class GpuFrameEncoder {
       }
       BackendFilterHooks hooks(backend_);
       if (!av2enc::video::post::run_video_loop_filters(
-              lf, options_.loop_filters, &filter_plan_, &hooks, &error)) {
+              lf, options_.loop_filters, &filter_plan_, &hooks, error)) {
         return false;
       }
     }
@@ -663,7 +663,7 @@ class GpuFrameEncoder {
       av2enc::video::post::VideoDeblockGrid grid;
       if (!av2enc::video::post::build_video_deblock_grid(
               blocks_, mi_cols_, mi_rows_, options_.base_q_idx, keyframe_,
-              &grid, &error)) {
+              &grid, error)) {
         return false;
       }
       if (!backend_.deblock_frame(grid, recon_[0].samples, recon_[1].samples,
@@ -2149,19 +2149,19 @@ bool encode_tiled_sequence_gpu(Backend& backend,
     cdf_saved.assign(words, 0);
     cdf_defaults.assign(words, 0);
     if (!av2enc::video::syntax::cdf_image_defaults_for_base_q_idx(
-            static_cast<int>(options.base_q_idx), cdf_defaults, &error)) {
+            static_cast<int>(options.base_q_idx), cdf_defaults, error)) {
       return false;
     }
     if (!av2enc::video::syntax::cdf_image_tables(
             cdf_frame, cdf_tile, cdf_saved, cdf_defaults, cdf_bank_tables,
-            &error)) {
+            error)) {
       return false;
     }
     entropy::avg_cdf::CdfBankConfig bank_config;
     bank_config.enable_avg_cdf = options.avg_cdf;
     bank_config.avg_cdf_type = true;
     bank_config.context_update_tile_id = 0;
-    if (!cdf_bank.init(cdf_bank_tables, bank_config, &error)) {
+    if (!cdf_bank.init(cdf_bank_tables, bank_config, error)) {
       error = "average-CDF bank: " + error;
       return false;
     }
@@ -2294,7 +2294,7 @@ bool encode_tiled_sequence_gpu(Backend& backend,
       }
       BackendFilterHooks hooks(backend);
       if (!post::run_video_loop_filters(lf, options.loop_filters,
-                                        &key_filters, &hooks, &error)) {
+                                        &key_filters, &hooks, error)) {
         error = "keyframe: " + error;
         return false;
       }
@@ -2349,14 +2349,14 @@ bool encode_tiled_sequence_gpu(Backend& backend,
     header.ccso_frame_flag = key_filters.ccso.enabled;
     post::VideoTiledFrame frame;
     if (!post::assemble_video_tile_group_from_payloads(
-            config, tile_sequence, header, layout, payloads, &frame, &error)) {
+            config, tile_sequence, header, layout, payloads, &frame, error)) {
       error = "keyframe: " + error;
       return false;
     }
     const std::vector<std::uint8_t> td =
         av2enc::video::make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> seq =
-        post::make_video_sequence_header_obu(config, tile_sequence, &error);
+        post::make_video_sequence_header_obu(config, tile_sequence, error);
     if (seq.empty()) {
       error = "keyframe: tiled sequence header: " + error;
       return false;
@@ -2496,7 +2496,7 @@ bool encode_tiled_sequence_gpu(Backend& backend,
       }
       BackendFilterHooks hooks(backend);
       if (!post::run_video_loop_filters(lf, options.loop_filters,
-                                        &frame_filters, &hooks, &error)) {
+                                        &frame_filters, &hooks, error)) {
         error = "P-frame " + std::to_string(i) + ": " + error;
         return false;
       }
@@ -2552,7 +2552,7 @@ bool encode_tiled_sequence_gpu(Backend& backend,
     header.ccso_frame_flag = frame_filters.ccso.enabled;
     post::VideoTiledFrame frame;
     if (!post::assemble_video_tile_group_from_payloads(
-            config, tile_sequence, header, layout, payloads, &frame, &error)) {
+            config, tile_sequence, header, layout, payloads, &frame, error)) {
       error = "P-frame " + std::to_string(i) + ": " + error;
       return false;
     }
@@ -3222,19 +3222,19 @@ bool encode_video_sequence_gpu(std::span<const VideoInputFrame> frames,
     cdf_saved.assign(words, 0);
     cdf_defaults.assign(words, 0);
     if (!av2enc::video::syntax::cdf_image_defaults_for_base_q_idx(
-            static_cast<int>(options.base_q_idx), cdf_defaults, &error)) {
+            static_cast<int>(options.base_q_idx), cdf_defaults, error)) {
       return false;
     }
     if (!av2enc::video::syntax::cdf_image_tables(
             cdf_frame, cdf_tile, cdf_saved, cdf_defaults, cdf_bank_tables,
-            &error)) {
+            error)) {
       return false;
     }
     entropy::avg_cdf::CdfBankConfig bank_config;
     bank_config.enable_avg_cdf = options.avg_cdf;
     bank_config.avg_cdf_type = true;
     bank_config.context_update_tile_id = 0;
-    if (!cdf_bank.init(cdf_bank_tables, bank_config, &error)) {
+    if (!cdf_bank.init(cdf_bank_tables, bank_config, error)) {
       error = "average-CDF bank: " + error;
       return false;
     }

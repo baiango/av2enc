@@ -5485,7 +5485,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       std::string qp_error;
       if (!deltaq::effective_qindex(
               enc_seg_, base_q_index(), st.current_qindex, delta_q_enabled_,
-              segment_id, /*ignore_delta_q=*/false, qindex, &qp_error)) {
+              segment_id, /*ignore_delta_q=*/false, qindex, qp_error)) {
         error = "get_qindex: " + qp_error;
         return false;
       }
@@ -5509,7 +5509,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
       segment_block.bh4 = h4;
       std::string seg_error;
       if (!deltaq::commit_segment_block(enc_seg_grid_, segment_block,
-                                        segment_id, &seg_error)) {
+                                        segment_id, seg_error)) {
         error = "segment map: " + seg_error;
         return false;
       }

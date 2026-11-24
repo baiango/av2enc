@@ -68,7 +68,7 @@ struct TileGrid {
 
   int64_t tile_count() const;
   int64_t max_tile_area() const;
-  bool structurally_valid(std::string* why = nullptr) const;
+  bool structurally_valid(std::string& why) const;
 };
 
 // ---------------------------------------------------------------------------

@@ -77,7 +77,7 @@ struct SequenceDeltaQ {
 //   * equal_ac_dc_q = 1 forces BaseYDcDeltaQ = BaseUVDcDeltaQ = 0 and both DC
 //     enables off (the fields are not coded);
 //   * BaseUVDcDeltaQ is BaseUVAcDeltaQ when equal_ac_dc_q = 1.
-[[nodiscard]] bool validate_sequence_delta_q(const SequenceDeltaQ& seq, std::string* error);
+[[nodiscard]] bool validate_sequence_delta_q(const SequenceDeltaQ& seq, std::string& error);
 
 // Normalized view: with equal_ac_dc_q = 1, BaseUVDcDeltaQ := BaseUVAcDeltaQ.
 SequenceDeltaQ normalized_sequence_delta_q(const SequenceDeltaQ& seq);
@@ -107,20 +107,20 @@ struct SeqTransformQuantEntropyConfig {
 // `uv_ac_delta_q_enabled`.  Returns the number of bits written (0 on error).
 std::size_t write_sequence_transform_quant_entropy_config(
     BitWriter& writer, const SeqTransformQuantEntropyConfig& config,
-    const SequenceDeltaQ& seq, std::string* error = nullptr);
+    const SequenceDeltaQ& seq, std::string& error);
 [[nodiscard]] bool read_sequence_transform_quant_entropy_config(
     av2enc::deltaq::BitReader& reader, SeqTransformQuantEntropyConfig& config,
-    SequenceDeltaQ& seq, std::string* error = nullptr);
+    SequenceDeltaQ& seq, std::string& error);
 
 // Delta-only form: starts at `separate_uv_delta_q` and stops after
 // `uv_ac_delta_q_enabled`.  This is the exact splice for headers that already
 // wrote enable_fsc .. enable_parity_hiding.
 std::size_t write_sequence_delta_q_fields(BitWriter& writer,
                                           const SequenceDeltaQ& seq,
-                                          std::string* error = nullptr);
+                                          std::string& error);
 [[nodiscard]] bool read_sequence_delta_q_fields(av2enc::deltaq::BitReader& reader, bool monochrome,
                                   SequenceDeltaQ& seq,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 
 // ---------------------------------------------------------------------------
 // Frame-level delta-Q state (§5.18.6.1 / §5.18.6.3)
@@ -152,7 +152,7 @@ struct QuantizationParams {
 };
 
 [[nodiscard]] bool validate_frame_delta_q(const SequenceDeltaQ& seq,
-                            const FrameDeltaQ& frame, std::string* error);
+                            const FrameDeltaQ& frame, std::string& error);
 
 // Complete §5.18.6.1 `quantization_params()` for a non-TIP frame:
 //   base_q_idx; DeltaQYDc; [diff_uv_delta]; DeltaQUDc; DeltaQUAc; ...
@@ -160,23 +160,23 @@ struct QuantizationParams {
 std::size_t write_quantization_params(BitWriter& writer, int base_q_idx,
                                       const SequenceDeltaQ& seq,
                                       const FrameDeltaQ& frame,
-                                      std::string* error = nullptr);
+                                      std::string& error);
 [[nodiscard]] bool read_quantization_params(av2enc::deltaq::BitReader& reader,
                               const SequenceDeltaQ& seq, int bit_depth,
                               QuantizationParams& out,
-                              std::string* error = nullptr);
+                              std::string& error);
 
 // Convenience for callers that only need base_q_idx (all deltas zero).
 std::size_t write_disabled_quantization_params(BitWriter& writer,
                                                int base_q_idx,
                                                const SequenceDeltaQ& seq,
-                                               std::string* error = nullptr);
+                                               std::string& error);
 
 // `read_delta_q()` itself: f(1) delta_coded; if set, su(7) delta_q.
 std::size_t write_delta_q(BitWriter& writer, int value,
-                          std::string* error = nullptr);
+                          std::string& error);
 [[nodiscard]] bool read_delta_q(av2enc::deltaq::BitReader& reader, int& value,
-                  bool* coded = nullptr, std::string* error = nullptr);
+                  bool* coded, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Derived quantizers (§7.14.2)
@@ -273,19 +273,19 @@ int adjusted_height(int coded_h);
 // Fills `q2[tw * th]` with the §7.14.4 q2 matrix (DC at index 0, AC elsewhere,
 // QM applied when active).  Returns false on bad parameters.
 [[nodiscard]] bool build_q2_matrix(const QuantBlock& block, std::int32_t* q2,
-                     std::string* error = nullptr);
+                     std::string& error);
 
 // `coeff[tw * th]` -> levels.  In lossless mode the coefficients are passed
 // through with Round2(x, 0) (the reversible WHT/IDTX path does not use this
 // quantizer; the pass-through keeps the API total and is what a lossless
 // encoder calls).
 [[nodiscard]] bool quantize_block(const double* coeff, const QuantBlock& block,
-                    std::int32_t* levels, std::string* error = nullptr);
+                    std::int32_t* levels, std::string& error);
 
 // levels -> dequant.  In lossless mode this copies the levels (the decoder's
 // lossless path does not invoke §7.14.4 dequantization).
 [[nodiscard]] bool dequantize_block(const std::int32_t* levels, const QuantBlock& block,
-                      std::int32_t* dequant, std::string* error = nullptr);
+                      std::int32_t* dequant, std::string& error);
 
 // §4.8 Round2 for the non-negative domain used by dequantization.
 std::int32_t round2(std::int32_t value, int n);
@@ -347,6 +347,6 @@ struct DeltaQSearchResult {
 [[nodiscard]] bool search_frame_delta_q(const FramePlanesView& planes,
                           const DeltaQSearchConfig& config,
                           DeltaQSearchResult* result,
-                          std::string* error = nullptr);
+                          std::string& error);
 
 }  // namespace av2enc::dcdeltaq

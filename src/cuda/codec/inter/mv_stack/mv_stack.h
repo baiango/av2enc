@@ -90,7 +90,7 @@ class Workspace {
   // `Status::kArenaExhausted`, writes the requirement to `*out_required_bytes`
   // and leaves the bump pointer untouched.
   Status create(Arena& arena, const MvStackConfig& config,
-                std::string* error = nullptr,
+                std::string& error,
                 std::size_t* out_required_bytes = nullptr);
 
   bool created() const noexcept { return created_; }

@@ -25,8 +25,8 @@ using av2enc::cuda::still::CdefStageFrame;
 using av2enc::cuda::still::CdefStageOptions;
 using av2enc::cuda::still::CdefStagePlan;
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -35,7 +35,7 @@ int cdef_size4() { return av2enc::cdef::kCdefSize4; }
 int mx4() { return av2enc::cdef::kMiSize; }
 
 bool validate_view(const FrameView& frame, bool need_source,
-                   std::string* error) {
+                   std::string& error) {
   if (frame.width <= 0 || frame.height <= 0 || frame.mi_cols <= 0 ||
       frame.mi_rows <= 0) {
     return fail(error, "invalid frame geometry");
@@ -109,7 +109,7 @@ void FrameGrids::bind(FrameView* view) const {
 }
 
 bool plan(const FrameView& frame, const Options& options, Plan* out,
-          std::string* error) {
+          std::string& error) {
   if (out == nullptr) return fail(error, "null plan output");
   *out = Plan{};
   if (!validate_view(frame, /*need_source=*/true, error)) return false;
@@ -279,7 +279,7 @@ bool plan(const FrameView& frame, const Options& options, Plan* out,
     std::string header_error;
     const std::size_t bits = write_frame_header_cdef(
         counter, *out, /*single_picture_header=*/false,
-        options.cdef_on_skip_txfm, &header_error);
+        options.cdef_on_skip_txfm, header_error);
     if (!header_error.empty()) {
       return fail(error, header_error);
     }
@@ -296,18 +296,18 @@ bool plan(const FrameView& frame, const Options& options, Plan* out,
   } else {
     std::vector<std::uint8_t> payload;
     std::string index_error;
-    if (!write_index_symbols(*out, &payload, &index_error)) {
+    if (!write_index_symbols(*out, &payload, index_error)) {
       return fail(error, index_error);
     }
     out->index_bits = static_cast<int>(payload.size() * 8U);
   }
-  if (error != nullptr) error->clear();
+  error.clear();
   return true;
 }
 
 bool filter(const FrameView& frame, const Plan& plan,
             std::uint8_t* const dst[3], const int dst_stride[3],
-            std::string* error) {
+            std::string& error) {
   if (!validate_view(frame, /*need_source=*/false, error)) return false;
   if (dst == nullptr || dst_stride == nullptr) {
     return fail(error, "null CDEF destination");
@@ -368,7 +368,7 @@ bool filter(const FrameView& frame, const Plan& plan,
 std::size_t write_frame_header_cdef(BitWriter& writer, const Plan& plan,
                                     bool single_picture_header,
                                     int cdef_on_skip_txfm,
-                                    std::string* error) {
+                                    std::string& error) {
   if (plan.num_strengths != plan.params.num_strengths) {
     fail(error, "plan params disagree with the decoded strength count");
     return 0;
@@ -387,7 +387,7 @@ std::size_t write_frame_header_cdef(BitWriter& writer, const Plan& plan,
 std::size_t write_sequence_filter_config(BitWriter& writer, bool enable_cdef,
                                          bool on_skip_always_on,
                                          bool on_skip_disabled,
-                                         std::string* error) {
+                                         std::string& error) {
   filters_stream::SequenceFilterConfig config;
   config.disable_loopfilters_across_tiles = false;
   config.enable_cdef = enable_cdef;
@@ -403,7 +403,7 @@ std::size_t write_sequence_filter_config(BitWriter& writer, bool enable_cdef,
 }
 
 bool TileIndexWriter::init(int mi_cols, int mi_rows, int strengths,
-                           int sb_width_log2, std::string* error) {
+                           int sb_width_log2, std::string& error) {
   if (strengths < 1 || strengths > 8) {
     return fail(error, "CdefStrengths outside 1..8");
   }
@@ -422,14 +422,14 @@ void TileIndexWriter::clear_superblock(int mi_row, int mi_col) {
 }
 
 bool TileIndexWriter::write(av2::Encoder& encoder, int mi_row, int mi_col,
-                            int idx, std::string* error) {
+                            int idx, std::string& error) {
   return filters_stream::cdef_write_block(
       encoder, state, tile_mi_col_start, tile_mi_row_start, mi_row, mi_col,
       idx, error);
 }
 
 bool read_tile_index(av2::Decoder& decoder, TileIndexWriter* tile, int mi_row,
-                     int mi_col, int* idx, std::string* error) {
+                     int mi_col, int* idx, std::string& error) {
   if (tile == nullptr || idx == nullptr) {
     return fail(error, "null tile reader");
   }
@@ -440,7 +440,7 @@ bool read_tile_index(av2::Decoder& decoder, TileIndexWriter* tile, int mi_row,
 }
 
 bool write_index_symbols(const Plan& plan, std::vector<std::uint8_t>* payload,
-                         std::string* error) {
+                         std::string& error) {
   if (payload == nullptr) return fail(error, "null payload output");
   payload->clear();
   const int blocks = plan.n64_cols * plan.n64_rows;
@@ -488,7 +488,7 @@ bool write_index_symbols(const Plan& plan, std::vector<std::uint8_t>* payload,
 
 bool read_index_symbols(std::span<const std::uint8_t> payload,
                         const Plan& plan, std::vector<std::int8_t>* grid,
-                        std::string* error) {
+                        std::string& error) {
   if (grid == nullptr) return fail(error, "null grid output");
   grid->assign(static_cast<std::size_t>(plan.n64_cols) *
                    static_cast<std::size_t>(plan.n64_rows),
@@ -533,7 +533,7 @@ bool build_mi_grids(int mi_cols, int mi_rows, const std::uint8_t* skip,
                     const std::uint8_t* chroma_segment_id,
                     const std::uint8_t* lossless_array,
                     int lossless_array_size, FrameGrids* out,
-                    std::string* error) {
+                    std::string& error) {
   if (out == nullptr) return fail(error, "null grid output");
   if (mi_cols <= 0 || mi_rows <= 0) return fail(error, "invalid MI geometry");
   if ((segment_id != nullptr || chroma_segment_id != nullptr) &&

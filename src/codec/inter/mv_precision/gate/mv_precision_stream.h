@@ -49,6 +49,6 @@ struct StreamOutput {
 };
 
 [[nodiscard]] bool build_stream(const StreamInput& input, StreamOutput* output,
-                  std::string* error);
+                  std::string& error);
 
 }  // namespace av2enc::inter::mvprec::gate

@@ -35,6 +35,6 @@ struct PlanCostRect {
 [[nodiscard]] bool plan_cost_launch_variance(const std::uint8_t* d_luma, int luma_stride,
                                const PlanCostRect* d_rects,
                                std::int64_t* d_costs, int count, void* stream,
-                               std::string* error);
+                               std::string& error);
 
 }  // namespace av2enc::still::plan

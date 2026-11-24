@@ -260,8 +260,8 @@ class Workspace {
   // Allocates every persistent buffer from `arena`.  On failure the arena bump
   // pointer is restored, `*required_out` receives required_device_bytes(), and
   // `Status::kArenaExhausted` is returned when the arena is merely too small.
-  Status init(Arena& arena, const Config& config = {},
-              std::string* error = nullptr,
+  Status init(Arena& arena, const Config& config,
+              std::string& error,
               std::uint64_t* required_out = nullptr);
 
   bool initialized() const noexcept { return arena_ != nullptr; }
@@ -272,8 +272,8 @@ class Workspace {
   // kArenaExhausted when the batch exceeds the configured capacity, and
   // kNotInitialized before init().  No hidden synchronisation.
   Status evaluate(const BlockJob* jobs, int count,
-                  const EvaluateOptions& options = {},
-                  cudaStream_t stream = nullptr, std::string* error = nullptr);
+                  const EvaluateOptions& options,
+                  cudaStream_t stream, std::string& error);
 
   // One synchronize for the whole batch.  Call before downloading.
   Status synchronize(cudaStream_t stream = nullptr);
@@ -321,7 +321,7 @@ class Workspace {
     std::int32_t candidate_count = 0;
   };
 
-  Status release_and_restore(std::uint64_t mark, std::string* error,
+  Status release_and_restore(std::uint64_t mark, std::string& error,
                              const char* what);
 
   Arena* arena_ = nullptr;

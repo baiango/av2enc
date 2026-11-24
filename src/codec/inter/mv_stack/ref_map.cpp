@@ -58,9 +58,9 @@ bool RefSlotBank::refresh(int refresh_frame_flags, int order_hint,
                           int frame_width, int frame_height, int base_q_idx,
                           bool key_frame, int tlayer_id, int mlayer_id,
                           bool implicit_output, bool immediate_output,
-                          int counter, std::string* error) {
+                          int counter, std::string& error) {
   const auto fail = [&](const char* message) {
-    if (error != nullptr) *error = message;
+    error = message;
     return false;
   };
   if (num_ref_frames < 1 || num_ref_frames > kMaxNumRefSlots) {
@@ -93,9 +93,9 @@ bool RefSlotBank::refresh(int refresh_frame_flags, int order_hint,
 }
 
 bool get_ref_frames(const RefMapParams& params, RefMap* out,
-                    std::string* error) {
+                    std::string& error) {
   const auto fail = [&](const char* message) {
-    if (error != nullptr) *error = message;
+    error = message;
     return false;
   };
   if (out == nullptr) return fail("null output");
@@ -279,9 +279,9 @@ bool get_ref_frames(const RefMapParams& params, RefMap* out,
 }
 
 bool get_past_future_cur_ref_lists(const RefMapParams& params, RefMap* map,
-                                   std::string* error) {
+                                   std::string& error) {
   const auto fail = [&](const char* message) {
-    if (error != nullptr) *error = message;
+    error = message;
     return false;
   };
   if (map == nullptr || params.slots == nullptr) return fail("null argument");
@@ -330,9 +330,9 @@ bool get_past_future_cur_ref_lists(const RefMapParams& params, RefMap* map,
 
 bool derive_explicit_ref_map(const RefMapParams& params, int num_total_refs,
                              const int* ref_frame_idx, RefMap* out,
-                             std::string* error) {
+                             std::string& error) {
   const auto fail = [&](const char* message) {
-    if (error != nullptr) *error = message;
+    error = message;
     return false;
   };
   if (out == nullptr) return fail("null output");
@@ -379,7 +379,7 @@ bool derive_explicit_ref_map(const RefMapParams& params, int num_total_refs,
 }
 
 bool derive_implicit_ref_map(const RefMapParams& params, ImplicitRefMap* out,
-                             std::string* error) {
+                             std::string& error) {
   if (out == nullptr) return false;
   RefMapParams stage0 = params;
   stage0.check_res = false;
@@ -402,13 +402,13 @@ bool derive_implicit_ref_map(const RefMapParams& params, ImplicitRefMap* out,
 
 bool get_max_disp_order_hint(const DispOrderHintParams& params,
                              bool only_showable, int* max_disp,
-                             std::string* error) {
+                             std::string& error) {
   if (max_disp == nullptr) {
-    if (error != nullptr) *error = "null output";
+    error = "null output";
     return false;
   }
   if (params.slots == nullptr) {
-    if (error != nullptr) *error = "null slot bank";
+    error = "null slot bank";
     return false;
   }
   int max = 0;
@@ -426,13 +426,13 @@ bool get_max_disp_order_hint(const DispOrderHintParams& params,
 }
 
 bool get_disp_order_hint(const DispOrderHintParams& params,
-                         int* disp_order_hint, std::string* error) {
+                         int* disp_order_hint, std::string& error) {
   if (disp_order_hint == nullptr) {
-    if (error != nullptr) *error = "null output";
+    error = "null output";
     return false;
   }
   if (params.order_hint_bits < 1 || params.order_hint_bits > 16) {
-    if (error != nullptr) *error = "OrderHintBits outside 1..16";
+    error = "OrderHintBits outside 1..16";
     return false;
   }
   if (params.obu_closed_loop_key ||
@@ -453,7 +453,7 @@ bool get_disp_order_hint(const DispOrderHintParams& params,
     value += ((offset >> params.order_hint_bits) + 1) << params.order_hint_bits;
   }
   if (value >= (1 << (kDisplayOrderHintBits - 1))) {
-    if (error != nullptr) *error = "display order hint exceeds the bound";
+    error = "display order hint exceeds the bound";
     return false;
   }
   *disp_order_hint = value;
@@ -465,9 +465,9 @@ bool get_disp_order_hint(const DispOrderHintParams& params,
 // ---------------------------------------------------------------------------
 
 bool validate_r77(std::span<const OperatingPointRefMap> maps, R77Result* out,
-                  std::string* error) {
+                  std::string& error) {
   const auto fail = [&](const char* message) {
-    if (error != nullptr) *error = message;
+    error = message;
     return false;
   };
   if (out == nullptr) return fail("null output");
@@ -545,9 +545,9 @@ bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
                                 const FrameRefMapSyntax& syntax,
                                 const RefMapParams& params,
                                 const ImplicitRefMap& implicit,
-                                std::string* error) {
+                                std::string& error) {
   if (writer == nullptr) {
-    if (error != nullptr) *error = "null BitWriter";
+    error = "null BitWriter";
     return false;
   }
   const bool explicit_map = frame_uses_explicit_map(syntax);
@@ -565,14 +565,12 @@ bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
     ImplicitRefMap check;
     if (!derive_implicit_ref_map(params, &check, error)) return false;
     if (check.stage1.num_total_refs != implicit.stage1.num_total_refs) {
-      if (error != nullptr) *error = "implicit NumTotalRefs does not match §7.7";
+      error = "implicit NumTotalRefs does not match §7.7";
       return false;
     }
     for (int i = 0; i < check.stage1.num_total_refs; ++i) {
       if (check.stage1.ref_frame_idx[i] != implicit.stage1.ref_frame_idx[i]) {
-        if (error != nullptr) {
-          *error = "implicit ref_frame_idx does not match §7.7";
-        }
+error = "implicit ref_frame_idx does not match §7.7";
         return false;
       }
     }
@@ -580,7 +578,7 @@ bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
   }
   if (syntax.is_bridge) return true;  // NumTotalRefs = 1, index implied
   if (syntax.num_total_refs < 0 || syntax.num_total_refs > kRefsPerFrameConst) {
-    if (error != nullptr) *error = "NumTotalRefs outside 0..7";
+    error = "NumTotalRefs outside 0..7";
     return false;
   }
   writer->put_bits(static_cast<std::uint64_t>(syntax.num_total_refs), 3);
@@ -588,7 +586,7 @@ bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
   for (int i = 0; i < syntax.num_total_refs; ++i) {
     if (syntax.ref_frame_idx[i] < 0 ||
         syntax.ref_frame_idx[i] >= params.num_ref_frames) {
-      if (error != nullptr) *error = "ref_frame_idx outside NumRefFrames";
+      error = "ref_frame_idx outside NumRefFrames";
       return false;
     }
     writer->put_bits(static_cast<std::uint64_t>(syntax.ref_frame_idx[i]),
@@ -600,9 +598,9 @@ bool write_frame_ref_map_syntax(av2enc::BitWriter* writer,
 bool read_frame_ref_map_syntax(BitReader* reader,
                                const FrameRefMapSyntax& gates,
                                const RefMapParams& params,
-                               FrameRefMapResult* out, std::string* error) {
+                               FrameRefMapResult* out, std::string& error) {
   if (reader == nullptr || out == nullptr) {
-    if (error != nullptr) *error = "null argument";
+    error = "null argument";
     return false;
   }
   FrameRefMapResult result;
@@ -612,7 +610,7 @@ bool read_frame_ref_map_syntax(BitReader* reader,
   } else if (gates.seq_explicit_ref_frame_map) {
     std::uint32_t bit = 0;
     if (!reader->read_bits(1, &bit)) {
-      if (error != nullptr) *error = "invalid frame_explicit_ref_frame_map";
+      error = "invalid frame_explicit_ref_frame_map";
       return false;
     }
     explicit_map = bit != 0;
@@ -632,7 +630,7 @@ bool read_frame_ref_map_syntax(BitReader* reader,
     std::uint32_t num_total_refs = 0;
     if (!reader->read_bits(3, &num_total_refs) ||
         num_total_refs > kRefsPerFrameConst) {
-      if (error != nullptr) *error = "invalid num_total_refs";
+      error = "invalid num_total_refs";
       return false;
     }
     int indices[kRefsPerFrameConst] = {};
@@ -641,7 +639,7 @@ bool read_frame_ref_map_syntax(BitReader* reader,
       std::uint32_t index = 0;
       if (!reader->read_bits(index_bits, &index) ||
           static_cast<int>(index) >= params.num_ref_frames) {
-        if (error != nullptr) *error = "invalid ref_frame_idx";
+        error = "invalid ref_frame_idx";
         return false;
       }
       indices[i] = static_cast<int>(index);

@@ -83,7 +83,7 @@ void write_seg_info(BitWriter& writer, const SegInfo& seg) {
 bool write_segmentation_params(BitWriter& writer, const VideoMfhConfig& config,
                                const VideoMfhFrameHeader& header,
                                const MultiFrameHeader* mfh,
-                               std::string* error) {
+                               std::string& error) {
   writer.put_bit(header.segmentation_enabled);
   if (!header.segmentation_enabled) return true;
 
@@ -110,7 +110,7 @@ bool write_segmentation_params(BitWriter& writer, const VideoMfhConfig& config,
   }
   if (reuse) {
     if (source == nullptr) {
-      if (error != nullptr) *error = "segmentation reuse without a source";
+      error = "segmentation reuse without a source";
       return false;
     }
     // No bits: FeatureEnabled/FeatureData copy from the MFH.
@@ -128,25 +128,23 @@ std::size_t write_video_frame_header_with_mfh(BitWriter& writer,
                                            const VideoMfhConfig& config,
                                            const VideoMfhFrameHeader& header,
                                            const MultiFrameHeader* mfh,
-                                           std::string* error) {
-  if (error != nullptr) error->clear();
+                                           std::string& error) {
+  error.clear();
   if (config.base_q_idx == 0) {
-    if (error != nullptr) *error = "M2 adapter does not support lossless q = 0";
+    error = "M2 adapter does not support lossless q = 0";
     return 0;
   }
   if (header.frame_size_override && !header.keyframe) {
-    if (error != nullptr) {
-      *error =
-          "inter-frame frame_size_override needs the "
-          "frame_size_with_refs() found_ref bits; not implemented in the "
-          "adapter";
-    }
+error =
+    "inter-frame frame_size_override needs the "
+    "frame_size_with_refs() found_ref bits; not implemented in the "
+    "adapter";
     return 0;
   }
   if (mfh != nullptr && mfh->frame_size_present &&
       (mfh->frame_width > config.max_frame_width ||
        mfh->frame_height > config.max_frame_height)) {
-    if (error != nullptr) *error = "MFH frame size exceeds the sequence maximum";
+    error = "MFH frame size exceeds the sequence maximum";
     return 0;
   }
 
@@ -235,7 +233,7 @@ std::size_t write_video_frame_header_with_mfh(BitWriter& writer,
 std::size_t write_video_tile_group_header_with_mfh(
     BitWriter& writer, const VideoMfhConfig& config,
     const VideoMfhFrameHeader& header, const MultiFrameHeader* mfh,
-    std::string* error) {
+    std::string& error) {
   const std::size_t start = writer.bit_size();
   writer.put_bit(true);  // is_first_tile_group
   if (write_video_frame_header_with_mfh(writer, config, header, mfh, error) == 0) {
@@ -248,7 +246,7 @@ std::size_t write_video_tile_group_header_with_mfh(
 std::vector<std::uint8_t> make_video_frame_obu_with_mfh(
     const VideoMfhConfig& config, const VideoMfhFrameHeader& header,
     const MultiFrameHeader* mfh, std::span<const std::uint8_t> tile_payload,
-    std::string* error) {
+    std::string& error) {
   BitWriter writer;
   if (write_video_tile_group_header_with_mfh(writer, config, header, mfh, error) ==
       0) {

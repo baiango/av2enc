@@ -47,7 +47,7 @@ partition::FrameDecision decide_partition_rdo(
     const partition::FrameGeometry& geometry,
     const partition::DecisionOptions& options,
     const LeafCostFunction& leaf_costs, const PartitionRdoConfig& config,
-    std::string* error = nullptr);
+    std::string& error);
 
 // Documented variance-based leaf-rate proxy (delegates to M1's
 // `estimate_leaf_rate_bits()`).  It is a ranking aid, not an entropy estimate.

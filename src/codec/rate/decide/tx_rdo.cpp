@@ -124,21 +124,21 @@ bool decide_tx_type(const std::int16_t* residual_coded, int coded_w,
                     std::span<std::int32_t> levels_out,
                     std::span<std::int16_t> recon_out,
                     TransformStreamRate& stream, TxTypeDecision& out,
-                    std::string* error) {
+                    std::string& error) {
   out = TxTypeDecision{};
-  if (error != nullptr) error->clear();
+  error.clear();
   if (!std::isfinite(config.lambda) || config.lambda < 0.0) {
-    if (error != nullptr) *error = "TxTypeDecisionConfig.lambda must be >= 0";
+    error = "TxTypeDecisionConfig.lambda must be >= 0";
     return false;
   }
   if (residual_coded == nullptr || coded_w <= 0 || coded_h <= 0) {
-    if (error != nullptr) *error = "invalid coded residual block";
+    error = "invalid coded residual block";
     return false;
   }
   const auto params_opt = txv::make_tx_params(coded_w, coded_h,
                                               txv::TxType::kDctDct);
   if (!params_opt.has_value()) {
-    if (error != nullptr) *error = "unsupported coded transform size";
+    error = "unsupported coded transform size";
     return false;
   }
   const int area = params_opt->w * params_opt->h;
@@ -147,7 +147,7 @@ bool decide_tx_type(const std::int16_t* residual_coded, int coded_w,
       levels_out.size() < static_cast<std::size_t>(area) ||
       recon_scratch.size() < static_cast<std::size_t>(coded_area) ||
       recon_out.size() < static_cast<std::size_t>(coded_area)) {
-    if (error != nullptr) *error = "TX decision scratch/output spans too small";
+    error = "TX decision scratch/output spans too small";
     return false;
   }
 
@@ -160,7 +160,7 @@ bool decide_tx_type(const std::int16_t* residual_coded, int coded_w,
 
   txtype::TxTypeSet set;
   if (!txtype::intra_tx_candidates(query, &set)) {
-    if (error != nullptr) *error = "no legal intra TX-type set for this block";
+    error = "no legal intra TX-type set for this block";
     return false;
   }
 
@@ -208,7 +208,7 @@ bool decide_tx_type(const std::int16_t* residual_coded, int coded_w,
     block.eob = eval.eob;
     std::string stream_error;
     if (!stream.init(block, &stream_error)) {
-      if (error != nullptr && error->empty()) *error = stream_error;
+      if (error.empty()) error = stream_error;
       ++out.candidates_rejected;
       continue;
     }
@@ -221,7 +221,7 @@ bool decide_tx_type(const std::int16_t* residual_coded, int coded_w,
                             ? eval.sse + config.lambda * rate_bits
                             : eval.sse;
     if (!std::isfinite(cost) || !valid_rate(rate_bits)) {
-      if (error != nullptr) *error = "TX-type candidate cost is not finite";
+      error = "TX-type candidate cost is not finite";
       ++out.candidates_rejected;
       continue;
     }
@@ -250,8 +250,8 @@ bool decide_tx_type(const std::int16_t* residual_coded, int coded_w,
   }
 
   if (!found) {
-    if (error != nullptr && error->empty()) {
-      *error = "no codable intra TX type";
+    if (error.empty()) {
+      error = "no codable intra TX type";
     }
     out = TxTypeDecision{};
     return false;
@@ -273,15 +273,15 @@ bool decide_rdoq(std::span<const double> original_scan,
                  const RdoqConfig& config, RdoqWorkspace& workspace,
                  TransformStreamRate& stream,
                  std::span<std::int32_t> levels_out, RdoqDecision& out,
-                 std::string* error) {
+                 std::string& error) {
   out = RdoqDecision{};
-  if (error != nullptr) error->clear();
+  error.clear();
   if (!rdoq_config_valid(config)) {
-    if (error != nullptr) *error = "invalid RdoqConfig";
+    error = "invalid RdoqConfig";
     return false;
   }
   if (w <= 0 || h <= 0 || w * h > kMaxTransformArea) {
-    if (error != nullptr) *error = "RDOQ block must be <= 32x32";
+    error = "RDOQ block must be <= 32x32";
     return false;
   }
   const std::size_t count = static_cast<std::size_t>(w) *
@@ -289,7 +289,7 @@ bool decide_rdoq(std::span<const double> original_scan,
   if (original_scan.size() != count ||
       scalar_levels_scan.size() != count ||
       levels_out.size() < count) {
-    if (error != nullptr) *error = "RDOQ span size must equal w*h";
+    error = "RDOQ span size must equal w*h";
     return false;
   }
   const int states = config.prev_level_cap + 1;
@@ -297,7 +297,7 @@ bool decide_rdoq(std::span<const double> original_scan,
   std::int32_t scalar_eob = 0;
   for (std::size_t i = 0; i < count; ++i) {
     if (!std::isfinite(original_scan[i])) {
-      if (error != nullptr) *error = "RDOQ original coefficients must be finite";
+      error = "RDOQ original coefficients must be finite";
       return false;
     }
     if (scalar_levels_scan[i] != 0) {
@@ -316,14 +316,14 @@ bool decide_rdoq(std::span<const double> original_scan,
   block.eob = scalar_eob;
   std::string stream_error;
   if (!stream.init(block, &stream_error)) {
-    if (error != nullptr) *error = stream_error;
+    error = stream_error;
     return false;
   }
 
   for (int i = 0; i <= static_cast<int>(count); ++i) {
     const double bits = stream.eob_bits(i);
     if (!valid_rate(bits)) {
-      if (error != nullptr) *error = "stream EOB rate is invalid";
+      error = "stream EOB rate is invalid";
       return false;
     }
     workspace.eob_bits[static_cast<std::size_t>(i)] = bits;
@@ -363,7 +363,7 @@ bool decide_rdoq(std::span<const double> original_scan,
     std::int32_t bound = 0;
     bool clipped = false;
     if (!level_bound_for(original, config, &bound, &clipped)) {
-      if (error != nullptr) *error = "invalid RDOQ coefficient";
+      error = "invalid RDOQ coefficient";
       return false;
     }
     truncated = truncated || clipped;
@@ -407,7 +407,7 @@ bool decide_rdoq(std::span<const double> original_scan,
         const double normal_bits =
             stream.coefficient_bits(scan_pos, signed_level, false);
         if (!valid_rate(normal_bits)) {
-          if (error != nullptr) *error = "stream coefficient rate is invalid";
+          error = "stream coefficient rate is invalid";
           return false;
         }
         if (std::isfinite(workspace.dp_next[next_index])) {
@@ -432,7 +432,7 @@ bool decide_rdoq(std::span<const double> original_scan,
           const double eob_coeff_bits =
               stream.coefficient_bits(scan_pos, signed_level, true);
           if (!valid_rate(eob_coeff_bits)) {
-            if (error != nullptr) *error = "stream EOB coefficient rate is invalid";
+            error = "stream EOB coefficient rate is invalid";
             return false;
           }
           Choice candidate;
@@ -476,7 +476,7 @@ bool decide_rdoq(std::span<const double> original_scan,
   }
 
   if (!std::isfinite(workspace.dp_next[0])) {
-    if (error != nullptr) *error = "RDOQ trellis has no valid path";
+    error = "RDOQ trellis has no valid path";
     return false;
   }
 
@@ -515,7 +515,7 @@ bool decide_rdoq(std::span<const double> original_scan,
     const double bits =
         stream.coefficient_bits(i, level, is_eob);
     if (!valid_rate(bits)) {
-      if (error != nullptr) *error = "RDOQ rate callback returned invalid bits";
+      error = "RDOQ rate callback returned invalid bits";
       return false;
     }
     rate_bits += bits;
@@ -523,7 +523,7 @@ bool decide_rdoq(std::span<const double> original_scan,
   const double cost = distortion + config.lambda * rate_bits;
   if (!std::isfinite(distortion) || !valid_rate(rate_bits) ||
       !std::isfinite(cost)) {
-    if (error != nullptr) *error = "RDOQ result is not finite";
+    error = "RDOQ result is not finite";
     return false;
   }
 

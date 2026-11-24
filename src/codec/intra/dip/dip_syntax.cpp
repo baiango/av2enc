@@ -21,9 +21,9 @@ void DipCdfState::reset() noexcept {
 
 namespace {
 
-bool entropy_ok(av2::Status status, std::string* error) noexcept {
+bool entropy_ok(av2::Status status, std::string& error) noexcept {
   if (status == av2::Status::kOk) return true;
-  if (error != nullptr) *error = "DIP syntax entropy coder error";
+  error = "DIP syntax entropy coder error";
   return false;
 }
 
@@ -31,11 +31,11 @@ bool entropy_ok(av2::Status status, std::string* error) noexcept {
 
 bool write_dip_mode_info(const SyntaxContext& context,
                          const DipModeInfo& info, av2::Encoder& encoder,
-                         DipCdfState& cdfs, std::string* error) noexcept {
+                         DipCdfState& cdfs, std::string& error) noexcept {
   if (!validate_dip_mode_info(context, info, error)) return false;
   if (!dip_mode_info_present(context)) return true;
   if (context.use_dip_ctx < 0 || context.use_dip_ctx >= kUseDipContexts) {
-    if (error != nullptr) *error = "use_dip context outside 0..2";
+    error = "use_dip context outside 0..2";
     return false;
   }
 
@@ -60,13 +60,13 @@ bool write_dip_mode_info(const SyntaxContext& context,
 
 bool read_dip_mode_info(const SyntaxContext& context, av2::Decoder& decoder,
                         DipCdfState& cdfs, DipModeInfo& info,
-                        std::string* error) noexcept {
+                        std::string& error) noexcept {
   info = DipModeInfo{};
   if (!dip_mode_info_present(context)) {
     return validate_dip_mode_info(context, info, error);
   }
   if (context.use_dip_ctx < 0 || context.use_dip_ctx >= kUseDipContexts) {
-    if (error != nullptr) *error = "use_dip context outside 0..2";
+    error = "use_dip context outside 0..2";
     return false;
   }
 

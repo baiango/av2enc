@@ -1447,11 +1447,9 @@ inter::mc::Mv clamp_mv_to_integer(inter::mc::Mv mv) {
 }
 
 Status validate_mode_syntax(const ModeSyntax& syntax, const StackParams& params,
-                            const MvStack& stack, std::string* why) {
+                            const MvStack& stack, std::string& why) {
   const auto fail = [&](Status status, const char* message) {
-    if (why != nullptr) {
-      *why = message;
-    }
+    why = message;
     return status;
   };
   if (!syntax.is_inter) {
@@ -1543,7 +1541,9 @@ Status resolve_mode(const MvStack& stack, const StackParams& params,
   if (out == nullptr) {
     return Status::kInvalidArgument;
   }
-  const Status status = validate_mode_syntax(syntax, params, stack, nullptr);
+  std::string ignored;
+  const Status status =
+      validate_mode_syntax(syntax, params, stack, ignored);
   if (status != Status::kOk) {
     return status;
   }

@@ -10,8 +10,8 @@ namespace {
 
 namespace detail = av2enc::cuda::tcq::detail;
 
-bool set_error(std::string* error, const char* text) {
-  if (error != nullptr) *error = text;
+bool set_error(std::string& error, const char* text) {
+  error = text;
   return false;
 }
 
@@ -20,7 +20,7 @@ bool set_error(std::string* error, const char* text) {
 bool tcq_scan_and_pre_max(int tx_size, int tx_class, int plane,
                           int max_coefficients, int* count, int* w, int* h,
                           std::int32_t* scan, std::int32_t* pre_max,
-                          std::string* error) {
+                          std::string& error) {
   if (count == nullptr || w == nullptr || h == nullptr || scan == nullptr ||
       pre_max == nullptr || max_coefficients <= 0) {
     return set_error(error, "tcq_scan_and_pre_max: null output or capacity");
@@ -64,7 +64,7 @@ bool tcq_fill_rate_tables(const TcqJob& job, const double* original,
                           const std::int32_t* level_context,
                           const av2enc::tcq::RateModel& model,
                           double* normal_rate, double* eob_coeff_rate,
-                          double* block_eob_rate, std::string* error) {
+                          double* block_eob_rate, std::string& error) {
   if (model.coefficient_rate == nullptr || model.eob_rate == nullptr) {
     return set_error(error, "tcq_fill_rate_tables: rate callbacks must be set");
   }

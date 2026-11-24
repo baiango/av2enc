@@ -503,11 +503,11 @@ struct TileContext {
 class SymWriter {
  public:
   bool init(std::uint8_t* out, std::size_t capacity, bool adaptive,
-            std::string* error) {
+            std::string& error) {
     enc_.disable_cdf_update = adaptive ? 0 : 1;
     const Status s = enc_.init_symbol(out, capacity);
     if (s != Status::kOk) {
-      *error = std::string("entropy init: ") + av2enc::av2::status_name(s);
+      error = std::string("entropy init: ") + av2enc::av2::status_name(s);
       return false;
     }
     return true;
@@ -562,11 +562,11 @@ class SymWriter {
 class SymReader {
  public:
   bool init(const std::uint8_t* data, std::size_t size, std::size_t sz,
-            bool adaptive, std::string* error) {
+            bool adaptive, std::string& error) {
     dec_.disable_cdf_update = adaptive ? 0 : 1;
     const Status s = dec_.init_symbol(data, size, sz);
     if (s != Status::kOk) {
-      *error = std::string("entropy init: ") + av2enc::av2::status_name(s);
+      error = std::string("entropy init: ") + av2enc::av2::status_name(s);
       return false;
     }
     return true;
@@ -1803,7 +1803,7 @@ class TileWriter {
 
   bool encode_tile(std::uint8_t* out, std::size_t capacity,
                    std::size_t* tile_bytes, std::string& error) {
-    if (!w_.init(out, capacity, opt_.adaptive_cdf, &error)) return false;
+    if (!w_.init(out, capacity, opt_.adaptive_cdf, error)) return false;
     const int sb_mi = 16;
     for (int sb_r = 0; sb_r < g_.sb_rows; ++sb_r) {
       ctx_.clear_left();
@@ -1811,7 +1811,7 @@ class TileWriter {
         const int r = sb_r * sb_mi;
         const int c = sb_c * sb_mi;
         if (r >= g_.mi_rows || c >= g_.mi_cols) continue;
-        if (!write_partition(r, c, BlockSize::k64x64, 0, true, &error)) {
+        if (!write_partition(r, c, BlockSize::k64x64, 0, true, error)) {
           return false;
         }
       }
@@ -1825,7 +1825,7 @@ class TileWriter {
 
  private:
   bool write_partition(int r, int c, BlockSize bsize, int chroma_offset,
-                       bool has_chroma, std::string* error) {
+                       bool has_chroma, std::string& error) {
     if (r >= g_.mi_rows || c >= g_.mi_cols) return true;
     const AllowedPartitions allowed =
         init_allowed(r, c, bsize, chroma_offset, has_chroma, g_.mi_rows,
@@ -1859,7 +1859,7 @@ class TileWriter {
       if (preferred_ok && bsize != BlockSize::k8x8) {
         part = preferred;
       } else if (bsize != BlockSize::k8x8) {
-        *error = "unsupported lossless partition geometry (no 8x8 leaf)";
+        error = "unsupported lossless partition geometry (no 8x8 leaf)";
         return false;
       } else {
         part = PartitionType::kNone;
@@ -1870,13 +1870,13 @@ class TileWriter {
       if (allowed.none && part == PartitionType::kNone) {
         if (!w_.sym(&cdfs_.do_split[do_split_context(ctx_, r, c, bsize)][0], 2,
                     0)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       } else if (allowed.none) {
         if (!w_.sym(&cdfs_.do_split[do_split_context(ctx_, r, c, bsize)][0], 2,
                     1)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       }
@@ -1886,7 +1886,7 @@ class TileWriter {
           const int symbol = part == PartitionType::kHorz ? 0 : 1;
           if (!w_.sym(&cdfs_.rect_type[rect_type_context(ctx_, r, c, bsize)][0],
                       2, symbol)) {
-            *error = w_.error();
+            error = w_.error();
             return false;
           }
         }
@@ -1894,7 +1894,7 @@ class TileWriter {
     }
     if (part == PartitionType::kNone) {
       if (bsize != BlockSize::k8x8) {
-        *error = "lossless reference only codes 8x8 coding blocks";
+        error = "lossless reference only codes 8x8 coding blocks";
         return false;
       }
       return write_block(r, c, error);
@@ -2072,7 +2072,7 @@ class TileWriter {
     return best;
   }
 
-  bool write_block(int r, int c, std::string* error) {
+  bool write_block(int r, int c, std::string& error) {
     // External block stage (CUDA `still_lossless`): use its per-block modes and
     // levels instead of the host DPCM/FSC search and forward transform.  The
     // prediction below still reads the reconstruction, whose decoded samples
@@ -2101,27 +2101,27 @@ class TileWriter {
     // Luma: lossless use_dpcm_y syntax, then optional fsc_mode.
     if (plan.use_dpcm_y) {
       if (!w_.sym(&cdfs_.use_dpcm_y[0], 2, 1)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       if (!w_.sym(&cdfs_.dpcm_mode_y[0], 2, plan.dpcm_y_vertical ? 0 : 1)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     } else {
       if (!w_.sym(&cdfs_.use_dpcm_y[0], 2, 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       const int jctx =
           (ctx_.joint_mode(r, c, w4, h4, 0) >= 5 ? 1 : 0) +
           (ctx_.joint_mode(r, c, w4, h4, 1) >= 5 ? 1 : 0);
       if (!w_.sym(&cdfs_.y_mode_set[0], 4, 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       if (!w_.sym(&cdfs_.y_mode_index[jctx][0], 8, 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
@@ -2130,7 +2130,7 @@ class TileWriter {
       const int fctx = fsc_context(ctx_, r, c, w4, h4, sb_mi);
       const int group = kFscBsizeGroups[static_cast<int>(BlockSize::k8x8)];
       if (!w_.sym(&cdfs_.fsc_mode[fctx][group][0], 2, plan.fsc ? 1 : 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
@@ -2138,32 +2138,32 @@ class TileWriter {
     // Chroma mode.
     if (plan.use_dpcm_uv) {
       if (!w_.sym(&cdfs_.use_dpcm_uv[0], 2, 1)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       if (!w_.sym(&cdfs_.dpcm_mode_uv[0], 2, plan.dpcm_uv_vertical ? 0 : 1)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     } else {
       if (!w_.sym(&cdfs_.use_dpcm_uv[0], 2, 0)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       const int uv_ctx = y_mode_is_directional(plan.y_mode) ? 1 : 0;
       const int idx = uv_mode_index(kDcPred, plan.y_mode);
       if (idx <= 6) {
         if (!w_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, idx)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       } else {
         if (!w_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, 7)) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
         if (!w_.literal(3, static_cast<std::uint32_t>(idx - 7))) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
       }
@@ -2173,7 +2173,7 @@ class TileWriter {
     if (plan.fsc) {
       const int group = kSizeGroup[static_cast<int>(BlockSize::k8x8)];
       if (!w_.sym(&cdfs_.lossless_tx_size[group][0][0], 2, 1)) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
     }
@@ -2210,7 +2210,7 @@ class TileWriter {
   }
 
   bool write_luma_4x4(int r, int c, const BlockPlan& plan,
-                      const BlockCoding* pre, std::string* error) {
+                      const BlockCoding* pre, std::string& error) {
     PredictionScratch s;
     const Plane& srcp = *src_[0];
     const Plane& predp = *recon_[0];
@@ -2224,7 +2224,7 @@ class TileWriter {
         const bool have_above = (r > 0) || (ty > 0);
         if (!predict_tx(predp, x, y, 4, 4, plan.y_mode, have_left, have_above,
                         8, s.pred, 4)) {
-          *error = "luma prediction failed";
+          error = "luma prediction failed";
           return false;
         }
         for (int i = 0; i < 16; ++i) {
@@ -2247,7 +2247,7 @@ class TileWriter {
         write_coeff_normal(cdfs_, w_, ctx_, 0, x4, y4, 1, 1, 8, 8, 4, 4,
                            s.levels, false, 0);
         if (!w_.ok()) {
-          *error = w_.error();
+          error = w_.error();
           return false;
         }
         // Verify by running the exact decoder path.
@@ -2262,7 +2262,7 @@ class TileWriter {
   }
 
   bool write_luma_fsc(int r, int c, const BlockPlan& plan,
-                      const BlockCoding* pre, std::string* error) {
+                      const BlockCoding* pre, std::string& error) {
     PredictionScratch s;
     const Plane& srcp = *src_[0];
     const Plane& predp = *recon_[0];
@@ -2270,7 +2270,7 @@ class TileWriter {
     const int y = r * 4;
     if (!predict_tx(predp, x, y, 8, 8, plan.y_mode, c > 0, r > 0, 8, s.pred,
                     8)) {
-      *error = "luma FSC prediction failed";
+      error = "luma FSC prediction failed";
       return false;
     }
     for (int i = 0; i < 64; ++i) {
@@ -2290,7 +2290,7 @@ class TileWriter {
     write_coeff_fsc(cdfs_, w_, ctx_, x4, y4, 2, 2, 8, 8, 8, 8, s.levels,
                     true);
     if (!w_.ok()) {
-      *error = w_.error();
+      error = w_.error();
       return false;
     }
     // FSC luma chroma transform is derived as IDTX; reconstruction is
@@ -2304,7 +2304,7 @@ class TileWriter {
   }
 
   bool write_chroma(int r, int c, const BlockPlan& plan,
-                    const BlockCoding* pre, std::string* error) {
+                    const BlockCoding* pre, std::string& error) {
     const int cx = c * 2;
     const int cy = r * 2;
     int eob1 = 0;
@@ -2314,7 +2314,7 @@ class TileWriter {
       const Plane& predp = *recon_[plane];
       if (!predict_tx(predp, cx, cy, 4, 4, plan.uv_mode, c > 0, r > 0, 8,
                       s.pred, 4)) {
-        *error = "chroma prediction failed";
+        error = "chroma prediction failed";
         return false;
       }
       for (int i = 0; i < 16; ++i) {
@@ -2343,7 +2343,7 @@ class TileWriter {
           cdfs_, w_, ctx_, plane, x4, y4, 1, 1, 4, 4, 4, 4, s.levels,
           plan.fsc, plane == 2 ? prev_eob_u : 0);
       if (!w_.ok()) {
-        *error = w_.error();
+        error = w_.error();
         return false;
       }
       if (plane == 1) {
@@ -2385,7 +2385,7 @@ class TileReader {
 
   bool decode_tile(const std::uint8_t* data, std::size_t size, std::size_t sz,
                    std::string& error) {
-    if (!r_.init(data, size, sz, opt_.adaptive_cdf, &error)) return false;
+    if (!r_.init(data, size, sz, opt_.adaptive_cdf, error)) return false;
     const int sb_mi = 16;
     for (int sb_r = 0; sb_r < g_.sb_rows; ++sb_r) {
       ctx_.clear_left();
@@ -2393,7 +2393,7 @@ class TileReader {
         const int r = sb_r * sb_mi;
         const int c = sb_c * sb_mi;
         if (r >= g_.mi_rows || c >= g_.mi_cols) continue;
-        if (!read_partition(r, c, BlockSize::k64x64, 0, true, &error)) {
+        if (!read_partition(r, c, BlockSize::k64x64, 0, true, error)) {
           return false;
         }
       }
@@ -2407,7 +2407,7 @@ class TileReader {
 
  private:
   bool read_partition(int r, int c, BlockSize bsize, int chroma_offset,
-                      bool has_chroma, std::string* error) {
+                      bool has_chroma, std::string& error) {
     if (r >= g_.mi_rows || c >= g_.mi_cols) return true;
     const AllowedPartitions allowed =
         init_allowed(r, c, bsize, chroma_offset, has_chroma, g_.mi_rows,
@@ -2433,7 +2433,7 @@ class TileReader {
       if (allowed.none) {
         if (!r_.sym(&cdfs_.do_split[do_split_context(ctx_, r, c, bsize)][0], 2,
                     &do_split)) {
-          *error = r_.error();
+          error = r_.error();
           return false;
         }
         if (!do_split) {
@@ -2448,7 +2448,7 @@ class TileReader {
           int symbol = 0;
           if (!r_.sym(&cdfs_.rect_type[rect_type_context(ctx_, r, c, bsize)][0],
                       2, &symbol)) {
-            *error = r_.error();
+            error = r_.error();
             return false;
           }
           part = symbol == 0 ? PartitionType::kHorz : PartitionType::kVert;
@@ -2457,7 +2457,7 @@ class TileReader {
     }
     if (part == PartitionType::kNone) {
       if (bsize != BlockSize::k8x8) {
-        *error = "lossless reader only supports 8x8 coding blocks (r=" +
+        error = "lossless reader only supports 8x8 coding blocks (r=" +
                  std::to_string(r) + " c=" + std::to_string(c) +
                  " bsize=" + std::to_string(static_cast<int>(bsize)) + ")";
         return false;
@@ -2488,14 +2488,14 @@ class TileReader {
     return true;
   }
 
-  bool read_block(int r, int c, std::string* error) {
+  bool read_block(int r, int c, std::string& error) {
     const int w4 = 2;
     const int h4 = 2;
     const int sb_mi = 16;
 
     int use_dpcm_y = 0;
     if (!r_.sym(&cdfs_.use_dpcm_y[0], 2, &use_dpcm_y)) {
-      *error = r_.error();
+      error = r_.error();
       return false;
     }
     int y_mode = kDcPred;
@@ -2503,7 +2503,7 @@ class TileReader {
     if (use_dpcm_y) {
       int mode = 0;
       if (!r_.sym(&cdfs_.dpcm_mode_y[0], 2, &mode)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       dpcm_y_vertical = mode == 0;
@@ -2511,11 +2511,11 @@ class TileReader {
     } else {
       int set = 0;
       if (!r_.sym(&cdfs_.y_mode_set[0], 4, &set)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       if (set != 0) {
-        *error = "lossless reader: non-DC y_mode_set unsupported";
+        error = "lossless reader: non-DC y_mode_set unsupported";
         return false;
       }
       const int jctx =
@@ -2523,11 +2523,11 @@ class TileReader {
           (ctx_.joint_mode(r, c, w4, h4, 1) >= 5 ? 1 : 0);
       int index = 0;
       if (!r_.sym(&cdfs_.y_mode_index[jctx][0], 8, &index)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       if (index != 0) {
-        *error = "lossless reader: only DC y_mode_index unsupported";
+        error = "lossless reader: only DC y_mode_index unsupported";
         return false;
       }
       y_mode = kDcPred;
@@ -2538,7 +2538,7 @@ class TileReader {
       const int group = kFscBsizeGroups[static_cast<int>(BlockSize::k8x8)];
       int symbol = 0;
       if (!r_.sym(&cdfs_.fsc_mode[fctx][group][0], 2, &symbol)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       fsc = symbol != 0;
@@ -2546,7 +2546,7 @@ class TileReader {
 
     int use_dpcm_uv = 0;
     if (!r_.sym(&cdfs_.use_dpcm_uv[0], 2, &use_dpcm_uv)) {
-      *error = r_.error();
+      error = r_.error();
       return false;
     }
     int uv_mode = kDcPred;
@@ -2554,7 +2554,7 @@ class TileReader {
     if (use_dpcm_uv) {
       int mode = 0;
       if (!r_.sym(&cdfs_.dpcm_mode_uv[0], 2, &mode)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       dpcm_uv_vertical = mode == 0;
@@ -2563,13 +2563,13 @@ class TileReader {
       const int uv_ctx = y_mode_is_directional(y_mode) ? 1 : 0;
       int idx = 0;
       if (!r_.sym(&cdfs_.uv_mode[uv_ctx][0], 8, &idx)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       if (idx == 7) {
         std::uint32_t extra = 0;
         if (!r_.literal(3, &extra)) {
-          *error = r_.error();
+          error = r_.error();
           return false;
         }
         idx += static_cast<int>(extra);
@@ -2601,7 +2601,7 @@ class TileReader {
         }
       }
       if (resolved < 0) {
-        *error = "lossless reader: invalid uv_mode index";
+        error = "lossless reader: invalid uv_mode index";
         return false;
       }
       uv_mode = resolved;
@@ -2613,7 +2613,7 @@ class TileReader {
       int lossless_tx_size = 0;
       if (!r_.sym(&cdfs_.lossless_tx_size[group][0][0], 2,
                   &lossless_tx_size)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       luma_tx = lossless_tx_size ? kTx8x8 : kTx4x4;
@@ -2633,19 +2633,19 @@ class TileReader {
 
     if (fsc) {
       if (luma_tx != kTx8x8) {
-        *error = "lossless reader: FSC 4x4 luma tx unsupported";
+        error = "lossless reader: FSC 4x4 luma tx unsupported";
         return false;
       }
       int levels[64] = {};
       CoeffResult cr;
       if (!read_coeff_fsc(cdfs_, r_, ctx_, c * 4 / 4, r * 4 / 4, 2, 2, 8, 8,
                           8, 8, true, levels, &cr)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       if (!recon_luma(r, c, y_mode, use_dpcm_y, dpcm_y_vertical, true, 8, 8,
                       levels)) {
-        *error = "luma FSC reconstruction failed";
+        error = "luma FSC reconstruction failed";
         return false;
       }
     } else {
@@ -2657,12 +2657,12 @@ class TileReader {
           const int y4 = r + ty;
           if (!read_coeff_normal(cdfs_, r_, ctx_, 0, x4, y4, 1, 1, 8, 8, 4,
                                  4, false, 0, levels, &cr)) {
-            *error = r_.error();
+            error = r_.error();
             return false;
           }
           if (!recon_luma_4x4(r, c, tx, ty, y_mode, use_dpcm_y,
                               dpcm_y_vertical, levels)) {
-            *error = "luma reconstruction failed";
+            error = "luma reconstruction failed";
             return false;
           }
         }
@@ -2678,7 +2678,7 @@ class TileReader {
       if (!read_coeff_normal(cdfs_, r_, ctx_, plane, c / 2, r / 2, 1, 1, 4, 4,
                              4, 4, fsc, plane == 2 ? prev_eob_u : 0, levels,
                              &cr)) {
-        *error = r_.error();
+        error = r_.error();
         return false;
       }
       if (plane == 1) {
@@ -2687,7 +2687,7 @@ class TileReader {
       }
       if (!recon_chroma(r, c, plane, uv_mode, use_dpcm_uv, dpcm_uv_vertical,
                         fsc, levels)) {
-        *error = "chroma reconstruction failed";
+        error = "chroma reconstruction failed";
         return false;
       }
     }

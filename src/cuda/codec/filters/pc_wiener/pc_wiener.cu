@@ -110,59 +110,59 @@ Status compute_required(const PcWienerConfig& config, std::size_t* out) {
 }
 
 bool valid_source(const PcWienerWorkspace& ws, const PcWienerSource& src,
-                  const PcWienerParams& params, std::string* error) {
+                  const PcWienerParams& params, std::string& error) {
   if (src.curr == nullptr || src.cdef == nullptr) {
-    if (error != nullptr) *error = "PC-Wiener source planes are null";
+    error = "PC-Wiener source planes are null";
     return false;
   }
   if (src.curr_stride <= 0 || src.cdef_stride <= 0) {
-    if (error != nullptr) *error = "PC-Wiener source strides are invalid";
+    error = "PC-Wiener source strides are invalid";
     return false;
   }
   if (src.luma_start_x < 0 || src.luma_end_x < src.luma_start_x ||
       src.luma_start_y < 0 || src.luma_end_y < src.luma_start_y) {
-    if (error != nullptr) *error = "PC-Wiener luma extents are invalid";
+    error = "PC-Wiener luma extents are invalid";
     return false;
   }
   if (src.curr_stride < src.luma_end_x + 1 ||
       src.cdef_stride < src.luma_end_x + 1) {
-    if (error != nullptr) *error = "PC-Wiener source stride is too small";
+    error = "PC-Wiener source stride is too small";
     return false;
   }
   if (src.stripe_start_y > src.stripe_end_y ||
       src.stripe_start_y < src.luma_start_y ||
       src.stripe_end_y > src.luma_end_y) {
-    if (error != nullptr) *error = "PC-Wiener stripe bounds are invalid";
+    error = "PC-Wiener stripe bounds are invalid";
     return false;
   }
   if (params.bit_depth != ws.config().bit_depth) {
-    if (error != nullptr) *error = "PC-Wiener bit depth does not match config";
+    error = "PC-Wiener bit depth does not match config";
     return false;
   }
   if (params.base_q_idx < 0 || params.base_q_idx > max_q_host(params.bit_depth)) {
-    if (error != nullptr) *error = "PC-Wiener base_q_idx is out of range";
+    error = "PC-Wiener base_q_idx is out of range";
     return false;
   }
   if (params.mi_col_end < 1 || params.mi_col_end > ws.mi_cols()) {
-    if (error != nullptr) *error = "PC-Wiener mi_col_end is out of range";
+    error = "PC-Wiener mi_col_end is out of range";
     return false;
   }
   if (params.mi_row_start < 0 || params.mi_row_end <= params.mi_row_start ||
       params.mi_row_end > ws.mi_rows()) {
-    if (error != nullptr) *error = "PC-Wiener tile MI rows are out of range";
+    error = "PC-Wiener tile MI rows are out of range";
     return false;
   }
   if (params.lr_tx_skip == nullptr || params.lr_tx_skip_stride < params.mi_col_end) {
-    if (error != nullptr) *error = "PC-Wiener LrTxSkip grid is invalid";
+    error = "PC-Wiener LrTxSkip grid is invalid";
     return false;
   }
   return true;
 }
 
 bool valid_output(const PcWienerWorkspace& ws, std::uint16_t* lr,
-                  int lr_stride, std::string* error) {
+                  int lr_stride, std::string& error) {
   if (lr == nullptr || lr_stride < ws.config().width) {
-    if (error != nullptr) *error = "PC-Wiener LrFrame output is invalid";
+    error = "PC-Wiener LrFrame output is invalid";
     return false;
   }
   return true;
@@ -336,7 +336,7 @@ std::size_t pc_wiener_required_device_bytes(const PcWienerConfig& config) {
 // ---------------------------------------------------------------------------
 
 Status PcWienerWorkspace::create(Arena& arena, const PcWienerConfig& config,
-                                 std::string* error) {
+                                 std::string& error) {
   reset();
   config_ = PcWienerConfig{};
   mi_cols_ = 0;
@@ -347,21 +347,19 @@ Status PcWienerWorkspace::create(Arena& arena, const PcWienerConfig& config,
   std::size_t required = 0;
   Status status = compute_required(config, &required);
   if (!is_ok(status)) {
-    if (error != nullptr) *error = "invalid PC-Wiener config";
+    error = "invalid PC-Wiener config";
     required_bytes_ = 0;
     return status;
   }
   required_bytes_ = required;
   if (!arena.initialized()) {
-    if (error != nullptr) *error = "PC-Wiener arena is not initialized";
+    error = "PC-Wiener arena is not initialized";
     return Status::kNotInitialized;
   }
   if (arena.remaining() < required_bytes_) {
-    if (error != nullptr) {
-      *error = "PC-Wiener arena too small: need " +
-               std::to_string(required_bytes_) + " bytes, have " +
-               std::to_string(arena.remaining());
-    }
+error = "PC-Wiener arena too small: need " +
+         std::to_string(required_bytes_) + " bytes, have " +
+         std::to_string(arena.remaining());
     return Status::kArenaExhausted;
   }
 
@@ -407,10 +405,8 @@ Status PcWienerWorkspace::create(Arena& arena, const PcWienerConfig& config,
   if (!is_ok(status)) {
     arena.rewind(start);
     clear();
-    if (error != nullptr) {
-      *error = "PC-Wiener arena allocation failed: " +
-               std::string(status_name(status));
-    }
+error = "PC-Wiener arena allocation failed: " +
+         std::string(status_name(status));
     return status;
   }
   persistent_bytes_ = static_cast<std::size_t>(arena.used() - start_used);
@@ -419,10 +415,8 @@ Status PcWienerWorkspace::create(Arena& arena, const PcWienerConfig& config,
   if (!is_ok(status)) {
     arena.rewind(start);
     clear();
-    if (error != nullptr) {
-      *error = "PC-Wiener arena allocation failed: " +
-               std::string(status_name(status));
-    }
+error = "PC-Wiener arena allocation failed: " +
+         std::string(status_name(status));
     return status;
   }
   scratch_bytes_ = static_cast<std::size_t>(arena.used() - start_used) -
@@ -457,10 +451,8 @@ Status PcWienerWorkspace::create(Arena& arena, const PcWienerConfig& config,
     if (err != cudaSuccess) {
       arena.rewind(start);
       clear();
-      if (error != nullptr) {
-        *error = std::string("PC-Wiener table upload failed: ") +
-                 cudaGetErrorString(err);
-      }
+error = std::string("PC-Wiener table upload failed: ") +
+         cudaGetErrorString(err);
       return status_from_cuda(err);
     }
   }
@@ -493,7 +485,7 @@ Status PcWienerWorkspace::create(Arena& arena, const PcWienerConfig& config,
   unit_active_ = static_cast<std::uint8_t*>(active);
   arena_ = &arena;
 
-  if (error != nullptr) error->clear();
+  error.clear();
   return Status::kOk;
 }
 

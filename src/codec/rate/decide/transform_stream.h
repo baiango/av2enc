@@ -77,7 +77,7 @@ class TransformStreamRate {
 
   // Builds the per-position context tables from `block`.  Returns false on an
   // invalid geometry/context or an inconsistent level span.  No allocation.
-  bool init(const TransformStreamBlock& block, std::string* error = nullptr);
+  bool init(const TransformStreamBlock& block, std::string& error);
 
   // Bits for the block described at init(): EOB syntax plus every coefficient
   // below the supplied EOB.  Includes txb_skip (the all-zero flag).

@@ -764,10 +764,10 @@ std::vector<int> parse_ints(const std::string& s) {
 }
 
 bool load_goldens(const std::string& path, std::vector<GoldenCase>* cases,
-                  std::string* error) {
+                  std::string& error) {
   std::ifstream in(path);
   if (!in) {
-    *error = "cannot open " + path;
+    error = "cannot open " + path;
     return false;
   }
   std::string line;
@@ -777,7 +777,7 @@ bool load_goldens(const std::string& path, std::vector<GoldenCase>* cases,
     if (line.empty() || line[0] == '#') continue;
     const std::vector<std::string> f = split(line, '|');
     if (f.size() != 8) {
-      *error = "golden line " + std::to_string(line_no) +
+      error = "golden line " + std::to_string(line_no) +
                " must have 8 fields";
       return false;
     }
@@ -796,7 +796,7 @@ bool load_goldens(const std::string& path, std::vector<GoldenCase>* cases,
     }
     if (c.mvs.size() != c.weights.size() ||
         c.expected_mvs.size() != c.weights.size()) {
-      *error = "golden line " + std::to_string(line_no) + " length mismatch";
+      error = "golden line " + std::to_string(line_no) + " length mismatch";
       return false;
     }
     cases->push_back(c);

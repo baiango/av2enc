@@ -124,7 +124,7 @@ struct RateModelHooks {
   // builds rdoq::av2::Model from the request.  On success `*model` must be
   // usable for the immediately following rdoq_quantize() call.
   bool (*build)(void* user, const RateModelRequest& request,
-                rdoq::RateModel* model, std::string* error) = nullptr;
+                rdoq::RateModel* model, std::string& error) = nullptr;
   // Releases a model returned by build().  Called after rdoq_quantize().
   void (*release)(void* user, rdoq::RateModel* model) noexcept = nullptr;
   void* user = nullptr;
@@ -210,13 +210,13 @@ struct Decision {
 // On success `*decision` is fully populated and true is returned.  On failure
 // `decision->valid` is false and `*error` (when non-null) explains why.
 [[nodiscard]] bool quantize_block(const Request& request, Decision* decision,
-                    std::string* error = nullptr);
+                    std::string& error);
 
 // Scalar-quantisation baseline under the same rate model and TX-type rule.
 // Useful for measuring RDOQ gains without duplicating this logic.  The rate
 // includes the signalled TX-type symbol.  `lambda` only affects `cost`.
 [[nodiscard]] bool quantize_block_scalar(const Request& request, Decision* decision,
-                           std::string* error = nullptr);
+                           std::string& error);
 
 // Evaluates every legal candidate (after `candidate_types` filtering) without
 // selecting one.  `decisions` receives one entry per candidate in symbol order;
@@ -224,7 +224,7 @@ struct Decision {
 // `eob <= 1` rule.  This is the CPU parity surface for the GPU batch path.
 [[nodiscard]] bool evaluate_candidates(const Request& request,
                          std::vector<Decision>* decisions,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 // Convenience lambda for the shipped quantiser:
 //   rdo::lambda_sse_from_quant_step(1 / params.quant_factor, sse_scale)

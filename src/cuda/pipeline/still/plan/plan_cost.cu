@@ -49,13 +49,12 @@ __global__ void variance_kernel(const std::uint8_t* __restrict__ luma,
   costs[index] = static_cast<std::int64_t>(sse);
 }
 
-void set_error(std::string* error, const char* context,
+void set_error(std::string& error, const char* context,
                cudaError_t status) {
-  if (error == nullptr) return;
   char detail[256];
   std::snprintf(detail, sizeof(detail), "%s: %s (CUDA %d)", context,
                 cudaGetErrorString(status), static_cast<int>(status));
-  *error = detail;
+  error = detail;
 }
 
 }  // namespace
@@ -63,18 +62,16 @@ void set_error(std::string* error, const char* context,
 bool plan_cost_launch_variance(const std::uint8_t* d_luma, int luma_stride,
                                const PlanCostRect* d_rects,
                                std::int64_t* d_costs, int count, void* stream,
-                               std::string* error) {
-  if (error != nullptr) error->clear();
+                               std::string& error) {
+  error.clear();
   if (count < 0) {
-    if (error != nullptr) *error = "variance kernel: negative rectangle count";
+    error = "variance kernel: negative rectangle count";
     return false;
   }
   if (count == 0) return true;
   if (d_luma == nullptr || d_rects == nullptr || d_costs == nullptr ||
       luma_stride <= 0) {
-    if (error != nullptr) {
-      *error = "variance kernel: null device pointer or invalid stride";
-    }
+error = "variance kernel: null device pointer or invalid stride";
     return false;
   }
   constexpr int kThreads = 128;

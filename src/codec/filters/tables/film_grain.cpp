@@ -480,9 +480,9 @@ void AddNoise(const FilmGrainModel& m, const ConstrainedImage& luma_grain,
 }  // namespace
 
 bool FilmGrainModelValid(const FilmGrainModel& m, int sub_x, int sub_y,
-                         int bit_depth, int num_planes, std::string* why) {
+                         int bit_depth, int num_planes, std::string& why) {
   auto fail = [&](const char* reason) {
-    if (why != nullptr) *why = reason;
+    why = reason;
     return false;
   };
   if (bit_depth < 8 || bit_depth > 12) return fail("bit_depth outside 8..12");
@@ -530,8 +530,9 @@ bool FilmGrainModelValid(const FilmGrainModel& m, int sub_x, int sub_y,
 
 void ApplyFilmGrain(const FilmGrainModel& model, FilmGrainFrame& frame,
                     std::uint16_t grain_seed) {
+  std::string ignored;
   if (!FilmGrainModelValid(model, frame.sub_x, frame.sub_y, frame.bit_depth,
-                           frame.num_planes, nullptr)) {
+                           frame.num_planes, ignored)) {
     return;
   }
   if (frame.plane[0].data == nullptr) return;

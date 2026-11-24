@@ -20,37 +20,37 @@ bool config_valid(const RdoConfig& config) noexcept {
   return std::isfinite(lambda) && lambda >= 0.0;
 }
 
-bool validate_config(const RdoConfig& config, std::string* error) {
+bool validate_config(const RdoConfig& config, std::string& error) {
   std::string lambda_error;
   if (!av2enc::still::rdo_decide::validate_lambda_config(config.lambda,
                                                       &lambda_error)) {
-    if (error != nullptr) *error = lambda_error;
+    error = lambda_error;
     return false;
   }
   if (static_cast<unsigned>(config.metric) >
       static_cast<unsigned>(av2enc::rdo::DistortionMetric::kSatd)) {
-    if (error != nullptr) *error = "RdoConfig.metric is not valid";
+    error = "RdoConfig.metric is not valid";
     return false;
   }
   if (static_cast<unsigned>(config.tie_break) >
       static_cast<unsigned>(av2enc::rdo::TieBreak::kRateThenDistortion)) {
-    if (error != nullptr) *error = "RdoConfig.tie_break is not valid";
+    error = "RdoConfig.tie_break is not valid";
     return false;
   }
   const double lambda = lambda_for_metric(config);
   if (!std::isfinite(lambda) || lambda < 0.0) {
-    if (error != nullptr) *error = "RdoConfig.lambda is not finite";
+    error = "RdoConfig.lambda is not finite";
     return false;
   }
   return true;
 }
 
-RdoConfig calibrated_video_config(std::string* error) {
+RdoConfig calibrated_video_config(std::string& error) {
   RdoConfig config;
   std::string still_error;
   config.lambda = av2enc::still::rdo_decide::calibrated_still_config(&still_error);
   if (!still_error.empty()) {
-    if (error != nullptr) *error = still_error;
+    error = still_error;
     return RdoConfig{};
   }
   config.metric = av2enc::rdo::DistortionMetric::kSsd;

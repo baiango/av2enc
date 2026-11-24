@@ -464,7 +464,7 @@ inline ::av2enc::still::StillOptions gpu_options_to_m1(const GpuOptions& options
 // receives the first unsupported flag (the gate classifies a message containing
 // "--still-" plus "not ported" as SKIP-REJECTED).
 inline bool gpu_m3_options_supported(const GpuOptions& options,
-                                     std::string* error) {
+                                     std::string& error) {
   // §7.14.4 full-trellis RDOQ: wired (device trellis + §7.16 rate model).  The
   // CPU reference rejects the QM / delta-Q combinations itself; mirror them by
   // name, plus the GPU-only restrictions (the TX-type search patches the block
@@ -472,33 +472,25 @@ inline bool gpu_m3_options_supported(const GpuOptions& options,
   // replaces the chroma TX/RDOQ path).
   if (options.rdoq) {
     if (options.qm) {
-      if (error != nullptr) {
-        *error = "M1 GPU: --still-qm is not supported with --still-rdoq yet";
-      }
+error = "M1 GPU: --still-qm is not supported with --still-rdoq yet";
       return false;
     }
     if (options.delta_q) {
-      if (error != nullptr) {
-        *error =
-            "M1 GPU: --still-dc-ac-delta-q is not supported with --still-rdoq "
-            "yet";
-      }
+error =
+    "M1 GPU: --still-dc-ac-delta-q is not supported with --still-rdoq "
+    "yet";
       return false;
     }
     if (options.tx_type || options.idtx) {
-      if (error != nullptr) {
-        *error =
-            "M1 GPU: --still-rdoq with --still-tx-type/--still-idtx is not "
-            "ported to the GPU pipeline yet; use --still (CPU)";
-      }
+error =
+    "M1 GPU: --still-rdoq with --still-tx-type/--still-idtx is not "
+    "ported to the GPU pipeline yet; use --still (CPU)";
       return false;
     }
     if (options.cctx) {
-      if (error != nullptr) {
-        *error =
-            "M1 GPU: --still-rdoq with --still-cctx is not ported to the GPU "
-            "pipeline yet; use --still (CPU)";
-      }
+error =
+    "M1 GPU: --still-rdoq with --still-cctx is not ported to the GPU "
+    "pipeline yet; use --still (CPU)";
       return false;
     }
   }
@@ -509,54 +501,40 @@ inline bool gpu_m3_options_supported(const GpuOptions& options,
   // the device after the TCQ eligibility test, so the combination is not wired.
   if (options.tcq) {
     if (options.rdoq) {
-      if (error != nullptr) {
-        *error = "M1 GPU: --still-tcq is not supported with --still-rdoq";
-      }
+error = "M1 GPU: --still-tcq is not supported with --still-rdoq";
       return false;
     }
     if (options.qm) {
-      if (error != nullptr) {
-        *error = "M1 GPU: --still-tcq is not supported with --still-qm yet";
-      }
+error = "M1 GPU: --still-tcq is not supported with --still-qm yet";
       return false;
     }
     if (options.delta_q) {
-      if (error != nullptr) {
-        *error =
-            "M1 GPU: --still-tcq is not supported with --still-dc-ac-delta-q "
-            "yet";
-      }
+error =
+    "M1 GPU: --still-tcq is not supported with --still-dc-ac-delta-q "
+    "yet";
       return false;
     }
     if (options.ist) {
-      if (error != nullptr) {
-        *error = "M1 GPU: --still-tcq is not supported with --still-ist yet";
-      }
+error = "M1 GPU: --still-tcq is not supported with --still-ist yet";
       return false;
     }
     if (options.tx_type || options.idtx) {
-      if (error != nullptr) {
-        *error =
-            "M1 GPU: --still-tcq with --still-tx-type/--still-idtx is not "
-            "ported to the GPU pipeline yet; use --still (CPU)";
-      }
+error =
+    "M1 GPU: --still-tcq with --still-tx-type/--still-idtx is not "
+    "ported to the GPU pipeline yet; use --still (CPU)";
       return false;
     }
   }
   if (options.tx_partition) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-tx-partition is not ported to the GPU pipeline yet; "
-          "use --still (CPU)";
-    }
+error =
+    "M1 GPU: --still-tx-partition is not ported to the GPU pipeline yet; "
+    "use --still (CPU)";
     return false;
   }
   if (options.rdo_intra) {
-    if (error != nullptr) {
-      *error =
-          "M1 GPU: --still-rdo-intra is not ported to the GPU pipeline yet; use "
-          "--still (CPU)";
-    }
+error =
+    "M1 GPU: --still-rdo-intra is not ported to the GPU pipeline yet; use "
+    "--still (CPU)";
     return false;
   }
   // §7.13.5 full-UV chroma search: the device `chroma_decide` candidate loop

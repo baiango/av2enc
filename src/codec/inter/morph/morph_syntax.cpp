@@ -119,24 +119,18 @@ bool morph_pred_present(const MorphPredGate& gate) noexcept {
 }
 
 bool morph_pred_allowed(const MorphPredGate& gate, bool offset_mv_valid,
-                        std::string* reason) {
+                        std::string& reason) {
   if (!morph_pred_present(gate)) {
-    if (reason != nullptr) {
-      *reason = "morph_pred is not signalled (FrameIsIntra && "
+      reason = "morph_pred is not signalled (FrameIsIntra && "
                 "allow_screen_content_tools && enable_bawp is false)";
-    }
     return false;
   }
   if (!gate.use_intrabc) {
-    if (reason != nullptr) {
-      *reason = "morph_pred is only read by read_intrabc_info()";
-    }
+      reason = "morph_pred is only read by read_intrabc_info()";
     return false;
   }
   if (!offset_mv_valid) {
-    if (reason != nullptr) {
-      *reason = "morph_pred requires is_offset_mv_valid(-1, -1) == 1";
-    }
+      reason = "morph_pred requires is_offset_mv_valid(-1, -1) == 1";
     return false;
   }
   return true;

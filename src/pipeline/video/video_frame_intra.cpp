@@ -265,8 +265,10 @@ bool InterFrameEncoder::choose_ibc_leaf(int r, int c, int bsize, std::int64_t in
 
   const auto consider = [&](ibc::BlockVector bv, int stack_index) {
     if ((bv.row & 7) != 0 || (bv.col & 7) != 0) return;
+    // The predicate is what decides; the message is not used here.
+    std::string ibc_why;
     if (!ibcs::is_bv_encodable(frame, ibc_config_, ibc_buffer_, r, c, bsize,
-                               bv, nullptr)) {
+                               bv, ibc_why)) {
       return;
     }
     std::vector<std::uint8_t> luma(static_cast<std::size_t>(w) *
@@ -286,7 +288,7 @@ bool InterFrameEncoder::choose_ibc_leaf(int r, int c, int bsize, std::int64_t in
     if (plan_morph_) {
       std::string why;
       if (ibcs::is_bv_offset_valid(frame, ibc_config_, ibc_buffer_, r, c,
-                                   bsize, bv, -1, -1, &why)) {
+                                   bsize, bv, -1, -1, why)) {
         // The fit reads the reconstructed above/left template and the source
         // block at refX/refY, so evaluate it on a full-plane snapshot where
         // only this block has been written.
@@ -516,7 +518,7 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
     txpart::SplitGeometry geometry;
     std::string geometry_error;
     if (!txpart::tx_partition_geometry(mi_size, 0, 0, option, &geometry,
-                                       &geometry_error)) {
+                                       geometry_error)) {
       continue;
     }
     bool inside = true;
@@ -667,7 +669,7 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
       txpart::SplitGeometry geometry;
       std::string geometry_error;
       if (!txpart::tx_partition_geometry(mi_size, 0, 0, part, &geometry,
-                                         &geometry_error)) {
+                                         geometry_error)) {
         error = "intra TX partition geometry failed: " + geometry_error;
         return false;
       }

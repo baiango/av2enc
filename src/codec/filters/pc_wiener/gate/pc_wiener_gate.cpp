@@ -97,12 +97,12 @@ std::string FindDecoder() {
   return {};
 }
 
-bool ReadFirstFrame(const std::string& path, Frame* frame, std::string* error) {
+bool ReadFirstFrame(const std::string& path, Frame* frame, std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame src;
   if (reader.read_frame(src, *error) != av2enc::Y4mReadResult::kFrame) {
-    if (error->empty()) *error = "source has no frames";
+    if (error.empty()) error = "source has no frames";
     return false;
   }
   frame->width = static_cast<int>(src.width());
@@ -170,7 +170,7 @@ void Downscale(const Frame& src, int width, int height, Frame* dst) {
 
 bool WriteIvf(const std::string& path,
               const std::vector<std::vector<std::uint8_t>>& units, int width,
-              int height, std::string* error) {
+              int height, std::string& error) {
   av2enc::IvfWriter writer;
   av2enc::IvfHeader header;
   header.width = static_cast<std::uint16_t>(width);
@@ -429,7 +429,7 @@ bool WriteFrameHeader(av2enc::BitWriter& writer,
                       const av2enc::tiles::TileLayout& layout,
                       pcw::LrParams* params,
                       const pcw::LrHeaderContext& context, int tile_size_bytes,
-                      std::string* error) {
+                      std::string& error) {
   PutUvlc(writer, 0);
   PutUvlc(writer, 0);
   const bool key = header.keyframe;
@@ -471,7 +471,7 @@ bool WriteFrameHeader(av2enc::BitWriter& writer,
     return false;
   }
   if (pcw::WriteLrParams(writer, params, context, error) == 0 &&
-      error != nullptr && !error->empty()) {
+      !error.empty()) {
     return false;
   }
   writer.put_bit(false);  // tx_mode_select
@@ -492,11 +492,11 @@ bool EncodeStream(const StreamOptions& options, const TileData& tile,
                   pcw::LrParams* params, const pcw::LrHeaderContext& context,
                   pcw::TileState* state,
                   const std::vector<pcw::UnitDecision>* units,
-                  const std::string& path, std::string* error) {
+                  const std::string& path, std::string& error) {
   const auto tile_plan = av2enc::video::post::plan_video_tiles(
       tile.plan.width, tile.plan.height, 1, 1);
   if (!tile_plan.ok) {
-    *error = tile_plan.error;
+    error = tile_plan.error;
     return false;
   }
   const auto& layout = tile_plan.layout;
@@ -518,7 +518,7 @@ bool EncodeStream(const StreamOptions& options, const TileData& tile,
   const int tile_size_bytes = av2enc::tiles::tile_size_bytes_for(
       static_cast<std::uint32_t>(payload.size()));
   if (tile_size_bytes == 0) {
-    *error = "tile size not representable";
+    error = "tile size not representable";
     return false;
   }
   av2enc::video::post::VideoTiledFrameHeader header;
@@ -550,23 +550,23 @@ bool EncodeStream(const StreamOptions& options, const TileData& tile,
 }
 
 bool Decode(const std::string& decoder, const std::string& ivf,
-            const std::string& y4m, std::string* error) {
+            const std::string& y4m, std::string& error) {
   const std::string command = "\"" + decoder + "\" -q -i \"" + ivf + "\" -o \"" +
                               y4m + "\" --threads 1 --strict 1";
   const int status = std::system(command.c_str());
   if (status != 0) {
-    *error = "dav2d failed: " + command;
+    error = "dav2d failed: " + command;
     return false;
   }
   return true;
 }
 
-bool ReadDecoded(const std::string& path, Frame* frame, std::string* error) {
+bool ReadDecoded(const std::string& path, Frame* frame, std::string& error) {
   av2enc::Y4mReader reader(path);
   if (!reader.open(*error)) return false;
   av2enc::Y4mFrame src;
   if (reader.read_frame(src, *error) != av2enc::Y4mReadResult::kFrame) {
-    if (error->empty()) *error = "decoded file has no frames";
+    if (error.empty()) error = "decoded file has no frames";
     return false;
   }
   frame->width = static_cast<int>(src.width());
@@ -621,28 +621,28 @@ pcw::DecisionPlanes MakePlanes(const Frame& base, const Frame& target) {
 
 bool SelfParse(const pcw::LrParams& params, const pcw::LrHeaderContext& context,
                const pcw::TileState& grid, const std::vector<pcw::UnitDecision>& units,
-               std::string* error) {
+               std::string& error) {
   av2enc::BitWriter writer;
   pcw::LrParams copy = params;
   const std::size_t bits = pcw::WriteLrParams(writer, &copy, context, error);
-  if (bits == 0 || (error != nullptr && !error->empty())) return false;
+  if (bits == 0 || (!error.empty())) return false;
   const std::vector<std::uint8_t> bytes(writer.bytes().begin(),
                                         writer.bytes().end());
   pcw::LrParams parsed;
   pcw::Reader reader(bytes.data(), bits);
   if (!pcw::ReadLrParams(reader, context, &parsed, error)) return false;
   if (parsed.frame_type[0] != params.frame_type[0]) {
-    *error = "self-parse frame type mismatch";
+    error = "self-parse frame type mismatch";
     return false;
   }
   for (int p = 0; p < 3; ++p) {
     if (parsed.frame_filters_on[p] != params.frame_filters_on[p]) {
-      *error = "self-parse frame_filters_on mismatch";
+      error = "self-parse frame_filters_on mismatch";
       return false;
     }
   }
   if (parsed.num_filter_classes != params.num_filter_classes) {
-    *error = "self-parse NumFilterClasses mismatch";
+    error = "self-parse NumFilterClasses mismatch";
     return false;
   }
   // Re-encode and re-decode every unit with an independent coder state.
@@ -660,7 +660,7 @@ bool SelfParse(const pcw::LrParams& params, const pcw::LrHeaderContext& context,
   av2enc::av2::Encoder encoder;
   if (encoder.init_symbol(buffer.data(), buffer.size()) !=
       av2enc::av2::Status::kOk) {
-    *error = "self-parse encoder init failed";
+    error = "self-parse encoder init failed";
     return false;
   }
   int cursor = 0;
@@ -669,7 +669,7 @@ bool SelfParse(const pcw::LrParams& params, const pcw::LrHeaderContext& context,
     for (int r = 0; r < write_state.unit_rows[plane]; ++r) {
       for (int c = 0; c < write_state.unit_cols[plane]; ++c) {
         if (cursor >= static_cast<int>(units.size())) {
-          *error = "self-parse unit list too short";
+          error = "self-parse unit list too short";
           return false;
         }
         if (!pcw::WriteUnit(encoder, write_state, plane, r, c, units[cursor],
@@ -682,13 +682,13 @@ bool SelfParse(const pcw::LrParams& params, const pcw::LrHeaderContext& context,
   }
   std::size_t payload = 0;
   if (encoder.exit_symbol(&payload) != av2enc::av2::Status::kOk) {
-    *error = "self-parse encoder exit failed";
+    error = "self-parse encoder exit failed";
     return false;
   }
   av2enc::av2::Decoder decoder;
   if (decoder.init_symbol(buffer.data(), buffer.size(), payload) !=
       av2enc::av2::Status::kOk) {
-    *error = "self-parse decoder init failed";
+    error = "self-parse decoder init failed";
     return false;
   }
   cursor = 0;
@@ -701,7 +701,7 @@ bool SelfParse(const pcw::LrParams& params, const pcw::LrHeaderContext& context,
           return false;
         }
         if (decoded.type != units[cursor].type) {
-          *error = "self-parse unit type mismatch";
+          error = "self-parse unit type mismatch";
           return false;
         }
         ++cursor;

@@ -46,19 +46,19 @@ struct MirrorStack {
 
 class StackMirror {
  public:
-  bool parse(std::span<const std::uint8_t> record, std::string* error);
+  bool parse(std::span<const std::uint8_t> record, std::string& error);
   const MirrorStack& stack() const { return stack_; }
 
   // Structural invariants that do not depend on the encoder.
-  bool validate(std::string* error) const;
+  bool validate(std::string& error) const;
 
   // Independent §5.20.7.13 resolution: mode 0 = NEARMV (stack entry),
   // 1 = GLOBALMV (GlobalMvs[0]), 2 = NEWMV (stack entry + MVD).
   bool resolve_mv(int drl_index, int mode, Mv global, Mv mvd, Mv* out,
-                  std::string* error) const;
+                  std::string& error) const;
 
   // Field-by-field comparison against the encoder's stack.
-  bool equals(const Stack& encoder, std::string* why) const;
+  bool equals(const Stack& encoder, std::string& why) const;
 
  private:
   MirrorStack stack_{};
@@ -67,7 +67,7 @@ class StackMirror {
 // Free-function form of the independent resolution, usable on a MirrorStack
 // that was copied out of a StackMirror.
 [[nodiscard]] bool mirror_resolve_mv(const MirrorStack& stack, int drl_index, int mode,
-                       Mv global, Mv mvd, Mv* out, std::string* error);
+                       Mv global, Mv mvd, Mv* out, std::string& error);
 
 struct LockstepReport {
   int drl_checked = 0;

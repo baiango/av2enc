@@ -8,8 +8,8 @@
 namespace av2enc::video::post {
 namespace {
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -39,7 +39,7 @@ int VideoPostFilterFrame::plane_height(int plane) const {
 
 bool VideoPostFilterFrame::init_from_recon(const VideoReconFrame& recon,
                                         int base_q_idx, bool frame_is_intra,
-                                        std::string* error) {
+                                        std::string& error) {
   if (recon.width == 0 || recon.height == 0) {
     return fail(error, "m2 post: empty reconstruction");
   }
@@ -156,7 +156,7 @@ bool VideoPostFilterFrame::init_from_recon(const VideoReconFrame& recon,
 }
 
 bool VideoPostFilterFrame::set_tile_layout(const tiles::TileLayout& layout,
-                                        std::string* error) {
+                                        std::string& error) {
   if (mi_cols_ == 0 || mi_rows_ == 0) {
     return fail(error, "m2 post: frame is not initialised");
   }
@@ -279,7 +279,7 @@ void VideoPostFilterFrame::fill_deblock_rect(int mi_row, int mi_col, int w4,
 
 bool run_video_post_filters(VideoPostFilterFrame& frame,
                          const VideoPostFilterConfig& config,
-                         VideoPostFilterReport& report, std::string* error) {
+                         VideoPostFilterReport& report, std::string& error) {
   report = VideoPostFilterReport{};
   report.bit_depth = frame.bit_depth_;
   if (frame.mi_cols_ <= 0 || frame.mi_rows_ <= 0) {
@@ -445,7 +445,7 @@ bool run_video_post_filters(VideoPostFilterFrame& frame,
 std::size_t write_video_deblock_params(
     BitWriter& writer, const bool apply_deblocking_filter[4],
     const bool df_delta_q_present[4], const int df_delta_q[4],
-    int df_par_bits_minus_2, std::string* error) {
+    int df_par_bits_minus_2, std::string& error) {
   if (apply_deblocking_filter == nullptr) {
     return 0;
   }
@@ -514,7 +514,7 @@ std::size_t write_video_deblock_params(
 
 std::size_t write_video_deblock_params(
     BitWriter& writer, const bool apply_deblocking_filter[4],
-    const bool df_delta_q_present[4], std::string* error) {
+    const bool df_delta_q_present[4], std::string& error) {
   static const int kZeroDelta[4] = {0, 0, 0, 0};
   return write_video_deblock_params(writer, apply_deblocking_filter,
                                  df_delta_q_present, kZeroDelta, 0, error);

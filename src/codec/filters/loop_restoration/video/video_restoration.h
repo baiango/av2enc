@@ -79,19 +79,19 @@ struct VideoRestorationTools {
 // Reasons a configuration cannot be turned into a conforming M2 stream or a
 // filter call.  Every failure is reported with an actionable string because
 // the missing normative data is a known blocker, not a coding error.
-[[nodiscard]] bool validate_tools(const VideoRestorationTools& tools, std::string* error);
+[[nodiscard]] bool validate_tools(const VideoRestorationTools& tools, std::string& error);
 
 // §5.4.10 sequence_filter_config() for M2 (single_picture_header_flag = 0).
 // The flags are intentionally identical to the M1 module so one sequence row
 // serves both stills and P-frame streams.  PC-Wiener is always disabled.
 fs::SequenceFilterConfig make_sequence_filter_config(
-    const VideoRestorationTools& tools, std::string* error);
+    const VideoRestorationTools& tools, std::string& error);
 
 std::size_t write_sequence_filter_config(BitWriter& writer,
                                          const VideoRestorationTools& tools,
-                                         std::string* error);
+                                         std::string& error);
 [[nodiscard]] bool read_sequence_filter_config(fs::BitReader& reader, VideoRestorationTools* tools,
-                                 std::string* error);
+                                 std::string& error);
 
 // ---------------------------------------------------------------------------
 // Frame header: §5.18.7.11 lr_params() and §5.18.7.12 ccso_params()
@@ -108,15 +108,15 @@ fs::CcsoHeaderContext make_ccso_header_context(const VideoRestorationTools& tool
 
 std::size_t write_lr_params(BitWriter& writer, fs::LrParams& params,
                             const fs::LrHeaderContext& context,
-                            std::string* error);
+                            std::string& error);
 [[nodiscard]] bool read_lr_params(fs::BitReader& reader, const fs::LrHeaderContext& context,
-                    fs::LrParams* params, std::string* error);
+                    fs::LrParams* params, std::string& error);
 
 std::size_t write_ccso_params(BitWriter& writer, fs::CcsoParams& params,
                               const fs::CcsoHeaderContext& context,
-                              std::string* error);
+                              std::string& error);
 [[nodiscard]] bool read_ccso_params(fs::BitReader& reader, const fs::CcsoHeaderContext& context,
-                      fs::CcsoParams* params, std::string* error);
+                      fs::CcsoParams* params, std::string& error);
 
 // Converts the parsed CCSO header into the CPU/GPU filter parameters.  The
 // luminance block grid is derived from the plane geometry; every unit is
@@ -128,7 +128,7 @@ std::size_t write_ccso_params(BitWriter& writer, fs::CcsoParams& params,
                             fs::CcsoTileState* state, int mi_cols, int mi_rows,
                             int sub_x, int sub_y,
                             rest::CcsoFrameParams* out,
-                            std::string* error);
+                            std::string& error);
 
 // ---------------------------------------------------------------------------
 // Tile syntax: §5.20.10.2 read_ccso()
@@ -136,13 +136,13 @@ std::size_t write_ccso_params(BitWriter& writer, fs::CcsoParams& params,
 
 [[nodiscard]] bool init_ccso_tile(fs::CcsoTileState* state, const fs::CcsoParams& params,
                     int mi_cols, int mi_rows, int sub_x, int sub_y,
-                    std::string* error);
+                    std::string& error);
 
 [[nodiscard]] bool write_read_ccso(av2::Encoder& encoder, fs::CcsoTileState& state,
                      int mi_row, int mi_col, const int blk[3],
-                     std::string* error);
+                     std::string& error);
 [[nodiscard]] bool read_ccso(av2::Decoder& decoder, fs::CcsoTileState& state, int mi_row,
-               int mi_col, int blk[3], std::string* error);
+               int mi_col, int blk[3], std::string& error);
 
 // ---------------------------------------------------------------------------
 // Tile syntax: §5.20.10.4 read_lr(), §5.20.10.5 read_lr_unit(),
@@ -151,7 +151,7 @@ std::size_t write_ccso_params(BitWriter& writer, fs::CcsoParams& params,
 
 [[nodiscard]] bool init_lr_tile(fs::LrState* state, const fs::LrParams& params, int mi_cols,
                   int mi_rows, int sub_x, int sub_y, int sb_size,
-                  std::string* error);
+                  std::string& error);
 
 int lr_block_unit_count(const fs::LrState& state, int mi_row, int mi_col,
                         int w4, int h4, int tile_mi_row_start,
@@ -163,23 +163,23 @@ int lr_block_unit_count(const fs::LrState& state, int mi_row, int mi_col,
                         int w4, int h4, int tile_mi_row_start,
                         int tile_mi_col_start,
                         std::vector<fs::LrUnitDecision>* decisions,
-                        std::string* error);
+                        std::string& error);
 
 [[nodiscard]] bool write_read_lr(av2::Encoder& encoder, fs::LrState& state, int mi_row,
                    int mi_col, int w4, int h4, int tile_mi_row_start,
                    int tile_mi_col_start,
                    const std::vector<fs::LrUnitDecision>& decisions,
-                   std::string* error);
+                   std::string& error);
 [[nodiscard]] bool read_lr(av2::Decoder& decoder, fs::LrState& state, int mi_row, int mi_col,
              int w4, int h4, int tile_mi_row_start, int tile_mi_col_start,
-             std::vector<fs::LrUnitDecision>* decisions, std::string* error);
+             std::vector<fs::LrUnitDecision>* decisions, std::string& error);
 
 [[nodiscard]] bool write_read_lr_unit(av2::Encoder& encoder, fs::LrState& state, int plane,
                         int unit_row, int unit_col,
-                        const fs::LrUnitDecision& decision, std::string* error);
+                        const fs::LrUnitDecision& decision, std::string& error);
 [[nodiscard]] bool read_lr_unit(av2::Decoder& decoder, fs::LrState& state, int plane,
                   int unit_row, int unit_col, fs::LrUnitDecision* decision,
-                  std::string* error);
+                  std::string& error);
 
 // Explicit aliases for the two §5.20.10.5/§5.20.10.6 entry points.  In this
 // implementation the per-unit Wiener filter symbols are the tail of
@@ -187,10 +187,10 @@ int lr_block_unit_count(const fs::LrState& state, int mi_row, int mi_col,
 [[nodiscard]] bool write_read_wienerns_filter(av2::Encoder& encoder, fs::LrState& state,
                                 int plane, int unit_row, int unit_col,
                                 const fs::LrUnitDecision& decision,
-                                std::string* error);
+                                std::string& error);
 [[nodiscard]] bool read_wienerns_filter(av2::Decoder& decoder, fs::LrState& state, int plane,
                           int unit_row, int unit_col,
-                          fs::LrUnitDecision* decision, std::string* error);
+                          fs::LrUnitDecision* decision, std::string& error);
 
 // ---------------------------------------------------------------------------
 // §7.20.4 class map handling
@@ -206,21 +206,21 @@ int lr_block_unit_count(const fs::LrState& state, int mi_row, int mi_col,
 //     §7.20.4 classifier; this module cannot derive them because the
 //     Pc_Wiener_* tables are absent from the spec text.
 [[nodiscard]] bool validate_class_map(const fs::LrParams& params, int mi_cols, int mi_rows,
-                        std::string* error);
+                        std::string& error);
 
 // Fills the single-class map (class 0, subclass 0) for the gated path.
 [[nodiscard]] bool make_single_class_map(fs::WienerNsClassMap* map, int mi_cols, int mi_rows,
-                           std::string* error);
+                           std::string& error);
 
 // Rejects PC-Wiener in the frame type or in any unit of a switchable plane.
 [[nodiscard]] bool validate_no_pc_wiener(const fs::LrParams& params, int mi_cols, int mi_rows,
-                           std::string* error);
+                           std::string& error);
 
 // Validates the deterministic group-0 frame-filter layout the writer supports
 // (no adaptive group search).  match_index 0 is the all-zero filter; class c
 // may match 0..c.
 [[nodiscard]] bool validate_frame_filter_layout(const fs::LrParams& params,
-                                  std::string* error);
+                                  std::string& error);
 
 // ---------------------------------------------------------------------------
 // CPU filter application (M2 chain: deblock/CDEF/CCSO already applied)
@@ -275,7 +275,7 @@ struct VideoRestorationCost {
                               const fs::CcsoParams* ccso,
                               const fs::CcsoTileState* ccso_state,
                               fs::LrState* lr_state, VideoRestorationCost* cost,
-                              std::string* error);
+                              std::string& error);
 
 }  // namespace av2enc::video::restoration
 

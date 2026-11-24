@@ -44,22 +44,18 @@ double coefficient_sse_scan(std::span<const double> original,
 // model when no hook is supplied.  `default_model` must outlive `model`.
 bool build_rate_model(const Request& request, const RateModelRequest& info,
                       rdoq::av2::Model* default_model, rdoq::RateModel* model,
-                      bool* custom, std::string* error) {
+                      bool* custom, std::string& error) {
   *custom = false;
   *model = rdoq::RateModel{};
   if (request.hooks != nullptr && request.hooks->build != nullptr) {
     std::string build_error;
     if (!request.hooks->build(request.hooks->user, info, model,
                               &build_error)) {
-      if (error != nullptr) {
-        *error = build_error.empty() ? "rate-model hook failed" : build_error;
-      }
+error = build_error.empty() ? "rate-model hook failed" : build_error;
       return false;
     }
     if (model->coefficient_rate == nullptr || model->eob_rate == nullptr) {
-      if (error != nullptr) {
-        *error = "rate-model hook returned an incomplete model";
-      }
+error = "rate-model hook returned an incomplete model";
       return false;
     }
     *custom = true;
@@ -73,9 +69,7 @@ bool build_rate_model(const Request& request, const RateModelRequest& info,
   av2_info.dc_sign_context = info.dc_sign_context;
   std::string init_error;
   if (!default_model->init(av2_info, info.scalar_levels_scan, &init_error)) {
-    if (error != nullptr) {
-      *error = init_error.empty() ? "AV2 rate-model init failed" : init_error;
-    }
+error = init_error.empty() ? "AV2 rate-model init failed" : init_error;
     return false;
   }
   *model = default_model->rate_model();
@@ -126,12 +120,12 @@ struct CandidateEval {
 
 bool evaluate_candidate(const Request& request, const TxTypeQuery& query,
                         const TxTypeCandidate& candidate, bool run_trellis,
-                        CandidateEval* eval, std::string* error) {
+                        CandidateEval* eval, std::string& error) {
   const txv::TxParams& params = candidate.params;
   const int area = params.w * params.h;
   const int coded_area = params.coded_w * params.coded_h;
   if (area <= 0 || coded_area <= 0) {
-    if (error != nullptr) *error = "invalid candidate geometry";
+    error = "invalid candidate geometry";
     return false;
   }
 
@@ -211,9 +205,7 @@ bool evaluate_candidate(const Request& request, const TxTypeQuery& query,
       request.hooks->release(request.hooks->user, &rate_model);
     }
     if (!ok) {
-      if (error != nullptr) {
-        *error = rdoq_error.empty() ? "RDOQ failed" : rdoq_error;
-      }
+error = rdoq_error.empty() ? "RDOQ failed" : rdoq_error;
       return false;
     }
     levels_scan = std::move(result.levels);
@@ -238,7 +230,7 @@ bool evaluate_candidate(const Request& request, const TxTypeQuery& query,
   }
 
   if (static_cast<int>(levels_scan.size()) != area) {
-    if (error != nullptr) *error = "RDOQ returned the wrong level count";
+    error = "RDOQ returned the wrong level count";
     return false;
   }
 
@@ -302,10 +294,10 @@ bool evaluate_candidate(const Request& request, const TxTypeQuery& query,
 // Validated, symbol-ordered candidate list.  `subset` may be empty.
 bool collect_candidates(const Request& request, const TxTypeQuery& query,
                         std::vector<TxTypeCandidate>* candidates,
-                        std::string* error) {
+                        std::string& error) {
   TxTypeSet set;
   if (!txtype::intra_tx_candidates(query, &set)) {
-    if (error != nullptr) *error = "unsupported TX size, mode or TX set";
+    error = "unsupported TX size, mode or TX set";
     return false;
   }
   candidates->clear();
@@ -322,9 +314,7 @@ bool collect_candidates(const Request& request, const TxTypeQuery& query,
         }
       }
       if (!found) {
-        if (error != nullptr) {
-          *error = "candidate TX type is not legal for this block";
-        }
+error = "candidate TX type is not legal for this block";
         return false;
       }
     }
@@ -342,40 +332,40 @@ bool collect_candidates(const Request& request, const TxTypeQuery& query,
     *candidates = std::move(filtered);
   }
   if (candidates->empty()) {
-    if (error != nullptr) *error = "empty candidate list";
+    error = "empty candidate list";
     return false;
   }
   return true;
 }
 
 bool prepare(const Request& request, TxTypeQuery* query,
-             std::vector<TxTypeCandidate>* candidates, std::string* error) {
+             std::vector<TxTypeCandidate>* candidates, std::string& error) {
   if (request.residual_coded == nullptr) {
-    if (error != nullptr) *error = "null residual";
+    error = "null residual";
     return false;
   }
   if (!txv::tx_size_supported(request.coded_w, request.coded_h)) {
-    if (error != nullptr) *error = "unsupported coded TX size";
+    error = "unsupported coded TX size";
     return false;
   }
   if (!finite_non_negative(request.lambda)) {
-    if (error != nullptr) *error = "lambda must be finite and >= 0";
+    error = "lambda must be finite and >= 0";
     return false;
   }
   if (request.prev_level_cap < 0 || request.prev_level_cap > 63) {
-    if (error != nullptr) *error = "prev_level_cap must be in [0, 63]";
+    error = "prev_level_cap must be in [0, 63]";
     return false;
   }
   if (request.level_cap < 0) {
-    if (error != nullptr) *error = "level_cap must be >= 0";
+    error = "level_cap must be >= 0";
     return false;
   }
   if (request.reduced_tx_set < 0 || request.reduced_tx_set > 3) {
-    if (error != nullptr) *error = "reduced_tx_set must be in [0, 3]";
+    error = "reduced_tx_set must be in [0, 3]";
     return false;
   }
   if (request.plane < 0 || request.plane > 2) {
-    if (error != nullptr) *error = "plane must be 0, 1 or 2";
+    error = "plane must be 0, 1 or 2";
     return false;
   }
 
@@ -383,7 +373,7 @@ bool prepare(const Request& request, TxTypeQuery* query,
       request.intra_mode, request.angle_delta, request.coded_w,
       request.coded_h);
   if (mapped_mode < 0) {
-    if (error != nullptr) *error = "invalid intra mode, angle delta or size";
+    error = "invalid intra mode, angle delta or size";
     return false;
   }
 
@@ -418,9 +408,9 @@ void fill_decision(const CandidateEval& eval, Decision* decision) {
 }
 
 bool decide(const Request& request, bool run_trellis, Decision* decision,
-            std::string* error) {
+            std::string& error) {
   if (decision == nullptr) {
-    if (error != nullptr) *error = "null decision output";
+    error = "null decision output";
     return false;
   }
   *decision = Decision{};
@@ -456,7 +446,7 @@ bool decide(const Request& request, bool run_trellis, Decision* decision,
   }
 
   if (!best.ok) {
-    if (error != nullptr) *error = "no codable TX-type candidate";
+    error = "no codable TX-type candidate";
     return false;
   }
 
@@ -471,9 +461,9 @@ bool decide(const Request& request, bool run_trellis, Decision* decision,
 
 bool evaluate_candidates(const Request& request,
                          std::vector<Decision>* decisions,
-                         std::string* error) {
+                         std::string& error) {
   if (decisions == nullptr) {
-    if (error != nullptr) *error = "null candidate output";
+    error = "null candidate output";
     return false;
   }
   decisions->clear();
@@ -579,12 +569,12 @@ TxTypeSymbol classify_tx_type(const txtype::TxTypeQuery& query,
 }
 
 bool quantize_block(const Request& request, Decision* decision,
-                    std::string* error) {
+                    std::string& error) {
   return decide(request, /*run_trellis=*/true, decision, error);
 }
 
 bool quantize_block_scalar(const Request& request, Decision* decision,
-                           std::string* error) {
+                           std::string& error) {
   return decide(request, /*run_trellis=*/false, decision, error);
 }
 

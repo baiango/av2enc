@@ -174,7 +174,7 @@ struct InterResidualBlock {
 [[nodiscard]] bool build_coeff_plan(int plane, int eob, int adj_w, int adj_h,
                       std::span<const std::int32_t> levels_scan,
                       int dc_sign_ctx, std::vector<CoeffPlanEntry>* plan,
-                      std::string* error);
+                      std::string& error);
 
 // §8.3.2 dc_sign context from the AboveDc/LeftDc grids.
 int dc_sign_context(const CoeffContextView& contexts, int plane, int x4, int y4,

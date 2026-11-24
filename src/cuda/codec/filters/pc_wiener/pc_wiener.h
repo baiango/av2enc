@@ -79,7 +79,7 @@ class PcWienerWorkspace {
   // arena must provide; any partial allocation is rewound, so the arena is
   // left exactly as it was on entry.
   Status create(Arena& arena, const PcWienerConfig& config,
-                std::string* error = nullptr);
+                std::string& error);
 
   // Forget all pointers.  Arena memory is not freed (the arena owns it).
   void reset() noexcept;

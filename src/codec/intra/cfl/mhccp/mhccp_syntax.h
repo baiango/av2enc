@@ -63,10 +63,10 @@ CflSyntax make_multi_syntax(int cfl_mh_dir);
 [[nodiscard]] bool write_cfl_alphas(av2::Encoder& encoder, CflCdfs& cdfs,
                       const CflSyntax& syntax, bool enable_cfl_intra,
                       bool mhccp_allowed, int size_group,
-                      std::string* error);
+                      std::string& error);
 [[nodiscard]] bool read_cfl_alphas(av2::Decoder& decoder, CflCdfs& cdfs,
                      bool enable_cfl_intra, bool mhccp_allowed,
-                     int size_group, CflSyntax* syntax, std::string* error);
+                     int size_group, CflSyntax* syntax, std::string& error);
 
 }  // namespace av2enc::cfl::mhccp
 

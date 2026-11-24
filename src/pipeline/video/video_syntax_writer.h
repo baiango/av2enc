@@ -1068,7 +1068,7 @@ class Writer {
       std::string qp_error;
       if (!video::deltaq::begin_frame(dqp_, qp_plan, frame_header, mi_cols_,
                                       mi_rows_, plan_.prev_segment_ids,
-                                      &qp_error)) {
+                                      qp_error)) {
         dqp_init_error_ = "delta-Q setup: " + qp_error;
       } else if (plan_.delta_q.present &&
                  static_cast<int>(plan_.delta_steps.size()) !=

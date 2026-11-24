@@ -310,29 +310,23 @@ bool lambda_params_valid(const LambdaParams& params) noexcept {
          std::isfinite(params.sse_scale) && params.sse_scale >= 0.0;
 }
 
-bool validate_lambda_params(const LambdaParams& params, std::string* error) {
+bool validate_lambda_params(const LambdaParams& params, std::string& error) {
   if (std::isfinite(params.step_at_qp0) && params.step_at_qp0 > 0.0) {
     // ok
   } else {
-    if (error != nullptr) {
-      *error = "LambdaParams.step_at_qp0 must be finite and > 0";
-    }
+error = "LambdaParams.step_at_qp0 must be finite and > 0";
     return false;
   }
   if (std::isfinite(params.qp_per_octave) && params.qp_per_octave > 0.0) {
     // ok
   } else {
-    if (error != nullptr) {
-      *error = "LambdaParams.qp_per_octave must be finite and > 0";
-    }
+error = "LambdaParams.qp_per_octave must be finite and > 0";
     return false;
   }
   if (std::isfinite(params.sse_scale) && params.sse_scale >= 0.0) {
     // ok
   } else {
-    if (error != nullptr) {
-      *error = "LambdaParams.sse_scale must be finite and >= 0";
-    }
+error = "LambdaParams.sse_scale must be finite and >= 0";
     return false;
   }
   return true;
@@ -405,25 +399,19 @@ bool rdo_config_valid(const RdoConfig& config) noexcept {
              static_cast<std::uint8_t>(TieBreak::kRateThenDistortion);
 }
 
-bool validate_rdo_config(const RdoConfig& config, std::string* error) {
+bool validate_rdo_config(const RdoConfig& config, std::string& error) {
   if (!std::isfinite(config.lambda) || config.lambda < 0.0) {
-    if (error != nullptr) {
-      *error = "RdoConfig.lambda must be finite and >= 0";
-    }
+error = "RdoConfig.lambda must be finite and >= 0";
     return false;
   }
   if (static_cast<std::uint8_t>(config.metric) >
       static_cast<std::uint8_t>(DistortionMetric::kSatd)) {
-    if (error != nullptr) {
-      *error = "RdoConfig.metric is not a valid DistortionMetric";
-    }
+error = "RdoConfig.metric is not a valid DistortionMetric";
     return false;
   }
   if (static_cast<std::uint8_t>(config.tie_break) >
       static_cast<std::uint8_t>(TieBreak::kRateThenDistortion)) {
-    if (error != nullptr) {
-      *error = "RdoConfig.tie_break is not a valid TieBreak";
-    }
+error = "RdoConfig.tie_break is not a valid TieBreak";
     return false;
   }
   return true;
@@ -477,20 +465,16 @@ bool candidate_better(const CandidateScore& a,
 CandidateSelector::CandidateSelector(const RdoConfig& config) noexcept
     : config_(config) {}
 
-bool CandidateSelector::add(const CandidateCost& candidate, std::string* error) {
+bool CandidateSelector::add(const CandidateCost& candidate, std::string& error) {
   if (!rdo_config_valid(config_)) {
     ++decision_.rejected_count;
-    if (error != nullptr) {
-      *error = "invalid RdoConfig";
-    }
+error = "invalid RdoConfig";
     return false;
   }
   if (!std::isfinite(candidate.distortion) || candidate.distortion < 0.0 ||
       !std::isfinite(candidate.rate_bits) || candidate.rate_bits < 0.0) {
     ++decision_.rejected_count;
-    if (error != nullptr) {
-      *error = "candidate distortion/rate must be finite and >= 0";
-    }
+error = "candidate distortion/rate must be finite and >= 0";
     return false;
   }
 
@@ -499,9 +483,7 @@ bool CandidateSelector::add(const CandidateCost& candidate, std::string* error) 
   score.cost = candidate_cost(candidate, config_.lambda);
   if (!std::isfinite(score.cost)) {
     ++decision_.rejected_count;
-    if (error != nullptr) {
-      *error = "candidate cost is not finite";
-    }
+error = "candidate cost is not finite";
     return false;
   }
   score.input_index = decision_.candidate_count;
@@ -529,13 +511,13 @@ void CandidateSelector::reset() noexcept { decision_ = RdoDecision{}; }
 
 RdoDecision select_best(std::span<const CandidateCost> candidates,
                         const RdoConfig& config,
-                        std::string* error) {
+                        std::string& error) {
   CandidateSelector selector(config);
   for (const CandidateCost& candidate : candidates) {
     std::string local_error;
-    if (!selector.add(candidate, &local_error)) {
-      if (error != nullptr && error->empty()) {
-        *error = local_error;
+    if (!selector.add(candidate, local_error)) {
+      if (error.empty()) {
+        error = local_error;
       }
     }
   }
@@ -612,29 +594,21 @@ bool rdoq_config_valid(const RdoqConfig& config) noexcept {
          config.max_coefficients >= 0;
 }
 
-bool validate_rdoq_config(const RdoqConfig& config, std::string* error) {
+bool validate_rdoq_config(const RdoqConfig& config, std::string& error) {
   if (!std::isfinite(config.lambda) || config.lambda < 0.0) {
-    if (error != nullptr) {
-      *error = "RdoqConfig.lambda must be finite and >= 0";
-    }
+error = "RdoqConfig.lambda must be finite and >= 0";
     return false;
   }
   if (!std::isfinite(config.quant_step) || config.quant_step <= 0.0) {
-    if (error != nullptr) {
-      *error = "RdoqConfig.quant_step must be finite and > 0";
-    }
+error = "RdoqConfig.quant_step must be finite and > 0";
     return false;
   }
   if (config.max_level_delta < 0 || config.max_level_delta > 1024) {
-    if (error != nullptr) {
-      *error = "RdoqConfig.max_level_delta must be in [0, 1024]";
-    }
+error = "RdoqConfig.max_level_delta must be in [0, 1024]";
     return false;
   }
   if (config.max_coefficients < 0) {
-    if (error != nullptr) {
-      *error = "RdoqConfig.max_coefficients must be >= 0";
-    }
+error = "RdoqConfig.max_coefficients must be >= 0";
     return false;
   }
   return true;
@@ -681,29 +655,23 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
                    const RdoqConfig& config,
                    const RdoqRateModel& rate_model,
                    RdoqResult& result,
-                   std::string* error) {
+                   std::string& error) {
   result = RdoqResult{};
 
   if (!rdoq_config_valid(config)) {
-    if (error != nullptr) {
-      *error = "invalid RdoqConfig";
-    }
+error = "invalid RdoqConfig";
     return false;
   }
 
   const std::size_t count = coefficients.size();
   if (count >
       static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
-    if (error != nullptr) {
-      *error = "coefficient count does not fit in int32";
-    }
+error = "coefficient count does not fit in int32";
     return false;
   }
   const std::int32_t num_coefficients = static_cast<std::int32_t>(count);
   if (num_coefficients > config.max_coefficients) {
-    if (error != nullptr) {
-      *error = "coefficient count exceeds RdoqConfig.max_coefficients";
-    }
+error = "coefficient count exceeds RdoqConfig.max_coefficients";
     return false;
   }
 
@@ -728,9 +696,7 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
   for (std::size_t i = count; i-- > 0;) {
     const double original = coefficients[i].original;
     if (!std::isfinite(original)) {
-      if (error != nullptr) {
-        *error = "RdoqCoefficient.original must be finite";
-      }
+error = "RdoqCoefficient.original must be finite";
       return false;
     }
     suffix_zero_distortion[i] =
@@ -740,16 +706,12 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
   const double eob_at_end =
       eob_rate(rate_context, num_coefficients, num_coefficients);
   if (!valid_rate(eob_at_end)) {
-    if (error != nullptr) {
-      *error = "RdoqEobRateFn returned an invalid value";
-    }
+error = "RdoqEobRateFn returned an invalid value";
     return false;
   }
   const double eob_at_end_cost = lambda * eob_at_end;
   if (!std::isfinite(eob_at_end_cost)) {
-    if (error != nullptr) {
-      *error = "RDOQ terminal EOB cost is not finite";
-    }
+error = "RDOQ terminal EOB cost is not finite";
     return false;
   }
 
@@ -771,9 +733,7 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
     const double termination_rate =
         eob_rate(rate_context, scan_pos, num_coefficients);
     if (!valid_rate(termination_rate)) {
-      if (error != nullptr) {
-        *error = "RdoqEobRateFn returned an invalid value";
-      }
+error = "RdoqEobRateFn returned an invalid value";
       return false;
     }
     const double termination_cost =
@@ -805,9 +765,7 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
         const double rate = coefficient_rate(rate_context, scan_pos, state,
                                              abs_level, coefficient.context);
         if (!valid_rate(rate)) {
-          if (error != nullptr) {
-            *error = "RdoqRateFn returned an invalid value";
-          }
+error = "RdoqRateFn returned an invalid value";
           return false;
         }
         const std::int32_t next_state = magnitude_state(abs_level);
@@ -840,9 +798,7 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
   }
 
   if (!std::isfinite(dp_next[0])) {
-    if (error != nullptr) {
-      *error = "RDOQ trellis has no valid path";
-    }
+error = "RDOQ trellis has no valid path";
     return false;
   }
 
@@ -877,9 +833,7 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
                                            abs_level,
                                            coefficients[i].context);
       if (!valid_rate(rate)) {
-        if (error != nullptr) {
-          *error = "RdoqRateFn returned an invalid value";
-        }
+error = "RdoqRateFn returned an invalid value";
         result = RdoqResult{};
         return false;
       }
@@ -890,18 +844,14 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
   const double final_eob_rate =
       eob_rate(rate_context, eob, num_coefficients);
   if (!valid_rate(final_eob_rate)) {
-    if (error != nullptr) {
-      *error = "RdoqEobRateFn returned an invalid value";
-    }
+error = "RdoqEobRateFn returned an invalid value";
     result = RdoqResult{};
     return false;
   }
   rate_bits += final_eob_rate;
   if (!std::isfinite(distortion) || !std::isfinite(rate_bits) ||
       !valid_rate(rate_bits)) {
-    if (error != nullptr) {
-      *error = "RDOQ result is not finite";
-    }
+error = "RDOQ result is not finite";
     result = RdoqResult{};
     return false;
   }
@@ -911,9 +861,7 @@ bool rdoq_quantize(std::span<const RdoqCoefficient> coefficients,
   result.rate_bits = rate_bits;
   result.cost = distortion + lambda * rate_bits;
   if (!std::isfinite(result.cost)) {
-    if (error != nullptr) {
-      *error = "RDOQ cost is not finite";
-    }
+error = "RDOQ cost is not finite";
     result = RdoqResult{};
     return false;
   }

@@ -157,44 +157,36 @@ class BitReader {
 // ---------------------------------------------------------------------------
 
 bool validate_seg_info(const SegInfo& seg, int segments, bool strict,
-                       std::string* error) {
+                       std::string& error) {
   for (int i = 0; i < kMaxSegments; ++i) {
     for (int j = 0; j < kSegLvlMax; ++j) {
       const SegmentFeature& feature = seg.feature[static_cast<std::size_t>(i)][static_cast<std::size_t>(j)];
       if (i >= segments) {
         if (strict && (feature.enabled || feature.value != 0)) {
-          if (error != nullptr) {
-            *error = "seg_info row " + std::to_string(i) +
-                     " is outside the coded segment count " +
-                     std::to_string(segments);
-          }
+error = "seg_info row " + std::to_string(i) +
+         " is outside the coded segment count " +
+         std::to_string(segments);
           return false;
         }
         continue;
       }
       if (!feature.enabled && feature.value != 0) {
-        if (error != nullptr) {
-          *error = "seg_info feature " + std::to_string(i) + "/" +
-                   std::to_string(j) + " has a value but is disabled";
-        }
+error = "seg_info feature " + std::to_string(i) + "/" +
+         std::to_string(j) + " has a value but is disabled";
         return false;
       }
       if (j == kSegLvlAltQ) {
         if (feature.value < -kSegAltQMax || feature.value > kSegAltQMax) {
-          if (error != nullptr) {
-            *error = "seg_info ALT_Q value " + std::to_string(feature.value) +
-                     " is outside [-" + std::to_string(kSegAltQMax) + ", " +
-                     std::to_string(kSegAltQMax) + "]";
-          }
+error = "seg_info ALT_Q value " + std::to_string(feature.value) +
+         " is outside [-" + std::to_string(kSegAltQMax) + ", " +
+         std::to_string(kSegAltQMax) + "]";
           return false;
         }
       } else if (feature.value != 0) {
         // SEG_LVL_SKIP and SEG_LVL_GLOBALMV have zero feature bits and a
         // zero maximum, so only zero is representable.
-        if (error != nullptr) {
-          *error = "seg_info feature " + std::to_string(j) +
-                   " must be zero (zero coded bits)";
-        }
+error = "seg_info feature " + std::to_string(j) +
+         " must be zero (zero coded bits)";
         return false;
       }
     }
@@ -241,24 +233,20 @@ bool read_seg_info(BitReader& reader, bool ext_seg, SegInfo* seg) {
   return true;
 }
 
-bool check_header_ranges(const MultiFrameHeader& header, std::string* error) {
+bool check_header_ranges(const MultiFrameHeader& header, std::string& error) {
   if (header.seq_header_id >= kMaxSeqNum) {
-    if (error != nullptr) {
-      *error = "mfh_seq_header_id " + std::to_string(header.seq_header_id) +
-               " >= MAX_SEQ_NUM (" + std::to_string(kMaxSeqNum) + ")";
-    }
+error = "mfh_seq_header_id " + std::to_string(header.seq_header_id) +
+         " >= MAX_SEQ_NUM (" + std::to_string(kMaxSeqNum) + ")";
     return false;
   }
   if (header.mfh_id == 0 || header.mfh_id >= kMaxMfhNum) {
-    if (error != nullptr) {
-      *error = "mfh_id " + std::to_string(header.mfh_id) +
-               " is outside [1, MAX_MFH_NUM) = [1, " +
-               std::to_string(kMaxMfhNum) + ")";
-    }
+error = "mfh_id " + std::to_string(header.mfh_id) +
+         " is outside [1, MAX_MFH_NUM) = [1, " +
+         std::to_string(kMaxMfhNum) + ")";
     return false;
   }
   if (header.tlayer_id > 3U) {
-    if (error != nullptr) *error = "obu_tlayer_id must be in [0, 3]";
+    error = "obu_tlayer_id must be in [0, 3]";
     return false;
   }
   return true;
@@ -287,15 +275,13 @@ const char* to_string(FieldSource source) {
 }
 
 bool validate_multi_frame_header(const MultiFrameHeader& header,
-                                 std::string* error) {
-  if (error != nullptr) error->clear();
+                                 std::string& error) {
+  error.clear();
   if (!check_header_ranges(header, error)) return false;
 
   if (header.frame_size_present) {
     if (header.frame_width == 0 || header.frame_height == 0) {
-      if (error != nullptr) {
-        *error = "mfh_frame_size_present_flag is set but the width/height is 0";
-      }
+error = "mfh_frame_size_present_flag is set but the width/height is 0";
       return false;
     }
     const unsigned width_bits =
@@ -308,43 +294,33 @@ bool validate_multi_frame_header(const MultiFrameHeader& header,
             : header.frame_height_bits;
     if (width_bits < 1U || width_bits > 16U || height_bits < 1U ||
         height_bits > 16U) {
-      if (error != nullptr) {
-        *error = "mfh frame size bit widths must be in [1, 16]";
-      }
+error = "mfh frame size bit widths must be in [1, 16]";
       return false;
     }
     if (header.frame_width - 1U >= (1ULL << width_bits)) {
-      if (error != nullptr) {
-        *error = "mfh_frame_width_minus_1 does not fit in " +
-                 std::to_string(width_bits) + " bits";
-      }
+error = "mfh_frame_width_minus_1 does not fit in " +
+         std::to_string(width_bits) + " bits";
       return false;
     }
     if (header.frame_height - 1U >= (1ULL << height_bits)) {
-      if (error != nullptr) {
-        *error = "mfh_frame_height_minus_1 does not fit in " +
-                 std::to_string(height_bits) + " bits";
-      }
+error = "mfh_frame_height_minus_1 does not fit in " +
+         std::to_string(height_bits) + " bits";
       return false;
     }
   } else if (header.frame_width != 0 || header.frame_height != 0 ||
              header.frame_width_bits != 0 || header.frame_height_bits != 0) {
-    if (error != nullptr) {
-      *error =
-          "frame size fields must be zero when mfh_frame_size_present_flag "
-          "is 0";
-    }
+error =
+    "frame size fields must be zero when mfh_frame_size_present_flag "
+    "is 0";
     return false;
   }
 
   if (!header.deblocking_filter_update) {
     for (int i = 0; i < 4; ++i) {
       if (header.apply_deblocking_filter[static_cast<std::size_t>(i)]) {
-        if (error != nullptr) {
-          *error =
-              "mfh_apply_deblocking_filter is absent when "
-              "mfh_deblocking_filter_update is 0";
-        }
+error =
+    "mfh_apply_deblocking_filter is absent when "
+    "mfh_deblocking_filter_update is 0";
         return false;
       }
     }
@@ -352,11 +328,9 @@ bool validate_multi_frame_header(const MultiFrameHeader& header,
 
   if (!header.seg_info_present) {
     if (header.allow_seg_info_change) {
-      if (error != nullptr) {
-        *error =
-            "mfh_allow_seg_info_change is absent when "
-            "mfh_seg_info_present_flag is 0";
-      }
+error =
+    "mfh_allow_seg_info_change is absent when "
+    "mfh_seg_info_present_flag is 0";
       return false;
     }
     for (int i = 0; i < kMaxSegments; ++i) {
@@ -365,11 +339,9 @@ bool validate_multi_frame_header(const MultiFrameHeader& header,
             header.seg_info.feature[static_cast<std::size_t>(i)]
                                    [static_cast<std::size_t>(j)];
         if (feature.enabled || feature.value != 0) {
-          if (error != nullptr) {
-            *error =
-                "segment features are absent when "
-                "mfh_seg_info_present_flag is 0";
-          }
+error =
+    "segment features are absent when "
+    "mfh_seg_info_present_flag is 0";
           return false;
         }
       }
@@ -383,11 +355,11 @@ bool validate_multi_frame_header(const MultiFrameHeader& header,
 
 std::size_t write_multi_frame_header_syntax(BitWriter& writer,
                                             const MultiFrameHeader& header,
-                                            std::string* error) {
-  if (error != nullptr) error->clear();
+                                            std::string& error) {
+  error.clear();
   std::string local_error;
-  if (!validate_multi_frame_header(header, &local_error)) {
-    if (error != nullptr) *error = local_error;
+  if (!validate_multi_frame_header(header, local_error)) {
+    error = local_error;
     return 0;
   }
   const std::size_t start = writer.bit_size();
@@ -425,11 +397,11 @@ std::size_t write_multi_frame_header_syntax(BitWriter& writer,
 }
 
 std::vector<std::uint8_t> make_multi_frame_header_obu(
-    const MultiFrameHeader& header, std::string* error) {
+    const MultiFrameHeader& header, std::string& error) {
   BitWriter syntax;
   std::string local_error;
-  if (write_multi_frame_header_syntax(syntax, header, &local_error) == 0) {
-    if (error != nullptr) *error = local_error;
+  if (write_multi_frame_header_syntax(syntax, header, local_error) == 0) {
+    error = local_error;
     return {};
   }
   // §5.2.1 open_bitstream_unit(): OBU_MULTI_FRAME_HEADER is extensible
@@ -455,16 +427,16 @@ std::vector<std::uint8_t> make_multi_frame_header_obu(
 // ---------------------------------------------------------------------------
 
 bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
-               ObuView* out, std::string* error) {
-  if (error != nullptr) error->clear();
+               ObuView* out, std::string& error) {
+  error.clear();
   if (out == nullptr) {
-    if (error != nullptr) *error = "parse_obu: null output";
+    error = "parse_obu: null output";
     return false;
   }
   *out = ObuView{};
   out->offset = offset;
   if (offset >= bytes.size()) {
-    if (error != nullptr) *error = "parse_obu: offset past end of buffer";
+    error = "parse_obu: offset past end of buffer";
     return false;
   }
   std::size_t pos = offset;
@@ -474,7 +446,7 @@ bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
   bool done = false;
   for (unsigned i = 0; i < 8; ++i) {
     if (pos >= bytes.size()) {
-      if (error != nullptr) *error = "parse_obu: truncated leb128 size";
+      error = "parse_obu: truncated leb128 size";
       return false;
     }
     const std::uint8_t byte = bytes[pos++];
@@ -487,15 +459,15 @@ bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
     }
   }
   if (!done) {
-    if (error != nullptr) *error = "parse_obu: leb128 size exceeds 8 bytes";
+    error = "parse_obu: leb128 size exceeds 8 bytes";
     return false;
   }
   if (size > 0xFFFFFFFFULL) {
-    if (error != nullptr) *error = "parse_obu: OBU size exceeds 32 bits";
+    error = "parse_obu: OBU size exceeds 32 bits";
     return false;
   }
   if (pos >= bytes.size()) {
-    if (error != nullptr) *error = "parse_obu: truncated OBU header";
+    error = "parse_obu: truncated OBU header";
     return false;
   }
   const std::uint8_t header = bytes[pos++];
@@ -505,7 +477,7 @@ bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
   std::size_t header_bytes = pos - (offset + leb_bytes);
   if (out->extension_flag) {
     if (pos >= bytes.size()) {
-      if (error != nullptr) *error = "parse_obu: truncated OBU extension";
+      error = "parse_obu: truncated OBU extension";
       return false;
     }
     const std::uint8_t extension = bytes[pos++];
@@ -514,31 +486,29 @@ bool parse_obu(std::span<const std::uint8_t> bytes, std::size_t offset,
     ++header_bytes;
   }
   if (size < header_bytes) {
-    if (error != nullptr) {
-      *error = "parse_obu: OBU size is smaller than its header";
-    }
+error = "parse_obu: OBU size is smaller than its header";
     return false;
   }
   const std::size_t payload_size = static_cast<std::size_t>(size) - header_bytes;
   if (payload_size > bytes.size() - pos) {
-    if (error != nullptr) *error = "parse_obu: truncated OBU payload";
+    error = "parse_obu: truncated OBU payload";
     return false;
   }
   out->payload_offset = pos;
   out->payload_size = payload_size;
   out->total_size = leb_bytes + static_cast<std::size_t>(size);
   if (out->total_size > bytes.size() - offset) {
-    if (error != nullptr) *error = "parse_obu: OBU overruns the buffer";
+    error = "parse_obu: OBU overruns the buffer";
     return false;
   }
   return true;
 }
 
 bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
-                                      MultiFrameHeader* out, std::string* error) {
-  if (error != nullptr) error->clear();
+                                      MultiFrameHeader* out, std::string& error) {
+  error.clear();
   if (out == nullptr) {
-    if (error != nullptr) *error = "parse_multi_frame_header_payload: null out";
+    error = "parse_multi_frame_header_payload: null out";
     return false;
   }
   *out = MultiFrameHeader{};
@@ -548,7 +518,7 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
   std::uint32_t mfh_id_minus_1 = 0;
   if (!reader.read_uvlc(&seq_header_id) ||
       !reader.read_uvlc(&mfh_id_minus_1)) {
-    if (error != nullptr) *error = reader.error();
+    error = reader.error();
     return false;
   }
   out->seq_header_id = seq_header_id;
@@ -556,7 +526,7 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
 
   bool size_present = false;
   if (!reader.read_bit(&size_present)) {
-    if (error != nullptr) *error = reader.error();
+    error = reader.error();
     return false;
   }
   out->frame_size_present = size_present;
@@ -565,7 +535,7 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
     std::uint32_t height_bits_minus_1 = 0;
     if (!reader.read_bits(4U, &width_bits_minus_1) ||
         !reader.read_bits(4U, &height_bits_minus_1)) {
-      if (error != nullptr) *error = reader.error();
+      error = reader.error();
       return false;
     }
     const unsigned width_bits = width_bits_minus_1 + 1U;
@@ -576,7 +546,7 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
     std::uint32_t height_minus_1 = 0;
     if (!reader.read_bits(width_bits, &width_minus_1) ||
         !reader.read_bits(height_bits, &height_minus_1)) {
-      if (error != nullptr) *error = reader.error();
+      error = reader.error();
       return false;
     }
     out->frame_width = width_minus_1 + 1U;
@@ -585,7 +555,7 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
 
   bool deblocking_update = false;
   if (!reader.read_bit(&deblocking_update)) {
-    if (error != nullptr) *error = reader.error();
+    error = reader.error();
     return false;
   }
   out->deblocking_filter_update = deblocking_update;
@@ -593,7 +563,7 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
     for (int i = 0; i < 4; ++i) {
       bool flag = false;
       if (!reader.read_bit(&flag)) {
-        if (error != nullptr) *error = reader.error();
+        error = reader.error();
         return false;
       }
       out->apply_deblocking_filter[static_cast<std::size_t>(i)] = flag;
@@ -602,7 +572,7 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
 
   bool seg_present = false;
   if (!reader.read_bit(&seg_present)) {
-    if (error != nullptr) *error = reader.error();
+    error = reader.error();
     return false;
   }
   out->seg_info_present = seg_present;
@@ -610,12 +580,12 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
     bool ext_seg = false;
     bool allow_change = false;
     if (!reader.read_bit(&ext_seg) || !reader.read_bit(&allow_change)) {
-      if (error != nullptr) *error = reader.error();
+      error = reader.error();
       return false;
     }
     out->allow_seg_info_change = allow_change;
     if (!read_seg_info(reader, ext_seg, &out->seg_info)) {
-      if (error != nullptr) *error = reader.error();
+      error = reader.error();
       return false;
     }
   }
@@ -627,23 +597,21 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
   // set flag (and this module does not implement obu_extension_data).
   bool obu_extension_flag = false;
   if (!reader.read_bit(&obu_extension_flag)) {
-    if (error != nullptr) *error = reader.error();
+    error = reader.error();
     return false;
   }
   if (obu_extension_flag) {
-    if (error != nullptr) {
-      *error = "OBU_MULTI_FRAME_HEADER has obu_extension_flag == 1";
-    }
+error = "OBU_MULTI_FRAME_HEADER has obu_extension_flag == 1";
     return false;
   }
   if (!reader.read_trailing_bits()) {
-    if (error != nullptr) *error = reader.error();
+    error = reader.error();
     return false;
   }
 
   std::string range_error;
-  if (!check_header_ranges(*out, &range_error)) {
-    if (error != nullptr) *error = range_error;
+  if (!check_header_ranges(*out, range_error)) {
+    error = range_error;
     return false;
   }
   return true;
@@ -651,22 +619,18 @@ bool parse_multi_frame_header_payload(std::span<const std::uint8_t> payload,
 
 bool parse_multi_frame_header_obu(std::span<const std::uint8_t> bytes,
                                   std::size_t offset, MultiFrameHeader* out,
-                                  ObuView* obu, std::string* error) {
-  if (error != nullptr) error->clear();
+                                  ObuView* obu, std::string& error) {
+  error.clear();
   ObuView view;
   if (!parse_obu(bytes, offset, &view, error)) return false;
   if (view.obu_type != kObuTypeMultiFrameHeader) {
-    if (error != nullptr) {
-      *error = "expected OBU_MULTI_FRAME_HEADER (3), found type " +
-               std::to_string(view.obu_type);
-    }
+error = "expected OBU_MULTI_FRAME_HEADER (3), found type " +
+         std::to_string(view.obu_type);
     return false;
   }
   if (view.extension_flag) {
     // §6.2.1: conforming bitstreams must have obu_extension_flag == 0.
-    if (error != nullptr) {
-      *error = "OBU_MULTI_FRAME_HEADER has obu_extension_flag == 1";
-    }
+error = "OBU_MULTI_FRAME_HEADER has obu_extension_flag == 1";
     return false;
   }
   MultiFrameHeader header;
@@ -688,8 +652,8 @@ void MfhStore::reset() {
   count_ = 0;
 }
 
-bool MfhStore::insert(const MultiFrameHeader& header, std::string* error) {
-  if (error != nullptr) error->clear();
+bool MfhStore::insert(const MultiFrameHeader& header, std::string& error) {
+  error.clear();
   if (!check_header_ranges(header, error)) return false;
   if (header.seg_info_present) {
     if (!validate_seg_info(header.seg_info, header.seg_info.segments(), false,
@@ -711,7 +675,7 @@ const MultiFrameHeader* MfhStore::find(std::uint32_t mfh_id) const {
 
 bool MfhStore::parse_and_insert(std::span<const std::uint8_t> bytes,
                                 std::size_t offset, MultiFrameHeader* parsed,
-                                std::string* error) {
+                                std::string& error) {
   MultiFrameHeader header;
   if (!parse_multi_frame_header_obu(bytes, offset, &header, nullptr, error)) {
     return false;
@@ -723,10 +687,10 @@ bool MfhStore::parse_and_insert(std::span<const std::uint8_t> bytes,
 
 bool scan_multi_frame_headers(std::span<const std::uint8_t> bytes,
                               MfhStore* store, std::size_t* mfh_count,
-                              std::string* error) {
-  if (error != nullptr) error->clear();
+                              std::string& error) {
+  error.clear();
   if (store == nullptr) {
-    if (error != nullptr) *error = "scan_multi_frame_headers: null store";
+    error = "scan_multi_frame_headers: null store";
     return false;
   }
   std::size_t count = 0;
@@ -746,7 +710,7 @@ bool scan_multi_frame_headers(std::span<const std::uint8_t> bytes,
       ++count;
     }
     if (view.total_size == 0) {
-      if (error != nullptr) *error = "scan_multi_frame_headers: zero-size OBU";
+      error = "scan_multi_frame_headers: zero-size OBU";
       return false;
     }
     offset += view.total_size;
@@ -774,10 +738,10 @@ bool resolve_frame_fields(const MfhStore& mfh_store,
                           const SequenceFrameFields& sequence,
                           const FrameHeaderFields& frame,
                           const LayerDependencyMap* deps,
-                          ResolvedFrameFields* out, std::string* error) {
-  if (error != nullptr) error->clear();
+                          ResolvedFrameFields* out, std::string& error) {
+  error.clear();
   if (out == nullptr) {
-    if (error != nullptr) *error = "resolve_frame_fields: null out";
+    error = "resolve_frame_fields: null out";
     return false;
   }
   *out = ResolvedFrameFields{};
@@ -785,28 +749,22 @@ bool resolve_frame_fields(const MfhStore& mfh_store,
   const MultiFrameHeader* mfh = nullptr;
   if (frame.cur_mfh_id > 0) {
     if (frame.cur_mfh_id >= kMaxMfhNum) {
-      if (error != nullptr) {
-        *error = "cur_mfh_id " + std::to_string(frame.cur_mfh_id) +
-                 " >= MAX_MFH_NUM";
-      }
+error = "cur_mfh_id " + std::to_string(frame.cur_mfh_id) +
+         " >= MAX_MFH_NUM";
       return false;
     }
     mfh = mfh_store.find(frame.cur_mfh_id);
     if (mfh == nullptr) {
-      if (error != nullptr) {
-        *error = "cur_mfh_id " + std::to_string(frame.cur_mfh_id) +
-                 " references an MFH that is not available";
-      }
+error = "cur_mfh_id " + std::to_string(frame.cur_mfh_id) +
+         " references an MFH that is not available";
       return false;
     }
     if (mfh->seq_header_id >= kMaxSeqNum ||
         !sequence.sequence_headers[mfh->seq_header_id]) {
-      if (error != nullptr) {
-        *error = "MFH " + std::to_string(frame.cur_mfh_id) +
-                 " references sequence header " +
-                 std::to_string(mfh->seq_header_id) +
-                 " which is not available";
-      }
+error = "MFH " + std::to_string(frame.cur_mfh_id) +
+         " references sequence header " +
+         std::to_string(mfh->seq_header_id) +
+         " which is not available";
       return false;
     }
     out->seq_header_id = mfh->seq_header_id;
@@ -814,44 +772,36 @@ bool resolve_frame_fields(const MfhStore& mfh_store,
       const int m = frame.obu_mlayer_id;
       const int t = frame.obu_tlayer_id;
       if (m >= 8 || t >= 4) {
-        if (error != nullptr) *error = "frame layer ids are out of range";
+        error = "frame layer ids are out of range";
         return false;
       }
       if (!deps->mlayer[m][0]) {
-        if (error != nullptr) {
-          *error =
-              "MLayerDependencyMap[frame_mlayer][MfhMLayerId] is not 1";
-        }
+error =
+    "MLayerDependencyMap[frame_mlayer][MfhMLayerId] is not 1";
         return false;
       }
       if (!deps->tlayer[m][t][mfh->tlayer_id]) {
-        if (error != nullptr) {
-          *error =
-              "TLayerDependencyMap[frame_mlayer][frame_tlayer][MfhTLayerId] "
-              "is not 1";
-        }
+error =
+    "TLayerDependencyMap[frame_mlayer][frame_tlayer][MfhTLayerId] "
+    "is not 1";
         return false;
       }
     } else if (frame.obu_mlayer_id != 0 ||
                mfh->tlayer_id > frame.obu_tlayer_id) {
       // Without explicit dependency maps only the single-embedded-layer
       // default (layer t may depend on temporal layers <= t) is decidable.
-      if (error != nullptr) {
-        *error =
-            "multi-layer or forward-temporal MFH reference requires an "
-            "explicit LayerDependencyMap";
-      }
+error =
+    "multi-layer or forward-temporal MFH reference requires an "
+    "explicit LayerDependencyMap";
       return false;
     }
   } else {
     out->seq_header_id = frame.seq_header_id;
     if (frame.seq_header_id >= kMaxSeqNum ||
         !sequence.sequence_headers[frame.seq_header_id]) {
-      if (error != nullptr) {
-        *error = "seq_header_id_in_frame_header " +
-                 std::to_string(frame.seq_header_id) +
-                 " is not available";
-      }
+error = "seq_header_id_in_frame_header " +
+         std::to_string(frame.seq_header_id) +
+         " is not available";
       return false;
     }
   }
@@ -866,26 +816,22 @@ bool resolve_frame_fields(const MfhStore& mfh_store,
     inherited_source = FieldSource::kMfh;
     if (mfh->frame_width > sequence.max_frame_width ||
         mfh->frame_height > sequence.max_frame_height) {
-      if (error != nullptr) {
-        *error = "MFH frame size " + std::to_string(mfh->frame_width) + "x" +
-                 std::to_string(mfh->frame_height) +
-                 " exceeds the sequence maximum " +
-                 std::to_string(sequence.max_frame_width) + "x" +
-                 std::to_string(sequence.max_frame_height);
-      }
+error = "MFH frame size " + std::to_string(mfh->frame_width) + "x" +
+         std::to_string(mfh->frame_height) +
+         " exceeds the sequence maximum " +
+         std::to_string(sequence.max_frame_width) + "x" +
+         std::to_string(sequence.max_frame_height);
       return false;
     }
   }
   if (frame.frame_size_override) {
     if (frame.frame_width == 0 || frame.frame_height == 0) {
-      if (error != nullptr) *error = "frame_size_override with zero size";
+      error = "frame_size_override with zero size";
       return false;
     }
     if (frame.frame_width > sequence.max_frame_width ||
         frame.frame_height > sequence.max_frame_height) {
-      if (error != nullptr) {
-        *error = "explicit frame size exceeds the sequence maximum";
-      }
+error = "explicit frame size exceeds the sequence maximum";
       return false;
     }
     out->frame_width = frame.frame_width;

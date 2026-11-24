@@ -109,7 +109,7 @@ class TileWriter {
     enc_.disable_cdf_update = 1;  // the gate's frame headers pin this
   }
 
-  bool run(TileOutput* out, std::string* error) {
+  bool run(TileOutput* out, std::string& error) {
     const int sb_cols = (mi_cols_ + 15) / 16;
     const int sb_rows = (mi_rows_ + 15) / 16;
     std::size_t leaf_index = 0;
@@ -123,7 +123,7 @@ class TileWriter {
     }
     std::size_t bytes = 0;
     if (enc_.exit_symbol(&bytes) != av2::Status::kOk) {
-      *error = "exit_symbol failed";
+      error = "exit_symbol failed";
       return false;
     }
     out->payload.assign(buffer_.begin(),
@@ -209,16 +209,16 @@ class TileWriter {
   }
 
   bool write_node(int r, int c, int w4, int h4, std::size_t* leaf_index,
-                  TileOutput* out, std::string* error) {
+                  TileOutput* out, std::string& error) {
     const BlockSize size = block_size_from_extent(w4, h4);
     if (size == BlockSize::kInvalid) {
-      *error = "unsupported partition extent";
+      error = "unsupported partition extent";
       return false;
     }
     const int leaf_mi = config_.leaf_size / 4;
     if (w4 == leaf_mi && h4 == leaf_mi) {
       if (!code_do_split(0, r, c, size)) {
-        *error = error_;
+        error = error_;
         return false;
       }
       if (!write_leaf(r, c, w4, h4, *leaf_index, out, error)) return false;
@@ -226,12 +226,12 @@ class TileWriter {
       return true;
     }
     if (!code_do_split(1, r, c, size)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     const bool vertical = w4 >= h4;
     if (!code_rect_type(vertical ? 1 : 0, r, c, size)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     const int half_w = vertical ? w4 / 2 : w4;
@@ -330,7 +330,7 @@ class TileWriter {
   }
 
   bool write_leaf(int r, int c, int w4, int h4, std::size_t leaf_index,
-                  TileOutput* out, std::string* error) {
+                  TileOutput* out, std::string& error) {
     LeafStats stats;
     stats.mi_row = r;
     stats.mi_col = c;
@@ -361,7 +361,7 @@ class TileWriter {
     if (!me2::me2_frame_precision_to_bits(config_.frame_precision,
                                           config_.enable_flex_mvres ? 1 : 0, 0,
                                           &frame)) {
-      *error = "frame precision is not signallable";
+      error = "frame precision is not signallable";
       return false;
     }
     MvResConfig mv_config;
@@ -437,15 +437,15 @@ class TileWriter {
 
     // ---- symbols, in §5.20.7.6 order --------------------------------
     if (!sym(&cdfs_.is_inter[is_inter_context(r, c, w4, h4)][0], 2, 1)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     if (!sym(&cdfs_.skip[skip_context(r, c, w4, h4)][0], 2, 0)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     if (!sym(&cdfs_.single_mode[stats.new_mv_context][0], 3, 2)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     if (!write_use_amvd(enc_, cdfs_.mv,
@@ -455,7 +455,7 @@ class TileWriter {
     }
     // read_drl_idx(0, max_drl_bits_minus_1 + 1): index 0 is one zero symbol.
     if (!sym(&cdfs_.drl_mode[0][stats.new_mv_context][0], 2, 0)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     if (!write_block_precision(enc_, cdfs_.mv, stats.precision_context, pb_ctx,
@@ -493,15 +493,15 @@ class TileWriter {
     // plane a single block-sized txb: Y 16x16, U/V 8x8.  The U skip context
     // carries +6; V is exactly 0 here (no area excess, EobU == 0).
     if (!sym(cdfs_.txb_skip[1][tx_sz_ctx(2)][0], 2, 1)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     if (!sym(cdfs_.txb_skip[1][tx_sz_ctx(1)][6], 2, 1)) {
-      *error = error_;
+      error = error_;
       return false;
     }
     if (!sym(cdfs_.v_txb_skip[0], 2, 1)) {
-      *error = error_;
+      error = error_;
       return false;
     }
 
@@ -570,16 +570,16 @@ class TileWriter {
 }  // namespace
 
 bool write_tile(int width, int height, const TileConfig& config,
-                TileOutput* output, std::string* error) {
-  if (output == nullptr || error == nullptr) return false;
-  error->clear();
+                TileOutput* output, std::string& error) {
+  if (output == nullptr) return false;
+  error.clear();
   *output = TileOutput{};
   if (width <= 0 || height <= 0 || width % 64 != 0 || height % 64 != 0) {
-    *error = "tile requires 64-multiple dimensions";
+    error = "tile requires 64-multiple dimensions";
     return false;
   }
   if (config.leaf_size != 16) {
-    *error = "this gate writes 16x16 leaves only";
+    error = "this gate writes 16x16 leaves only";
     return false;
   }
   TileWriter writer(width, height, config);

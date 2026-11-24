@@ -12,8 +12,8 @@ namespace {
 namespace fs = av2enc::still::filters_stream;
 namespace rest = av2enc::restoration;
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -48,7 +48,7 @@ bool blk_grid(const HeaderContext& context, int plane, int* cols, int* rows) {
 bool resolve_reference(const HeaderContext& context, int plane, int ref_idx,
                        bool sb_reuse, const SlotStore& slots,
                        int* slot_out, const SavedPlane** saved_out,
-                       std::string* error) {
+                       std::string& error) {
   if (ref_idx < 0 || ref_idx >= context.num_total_refs) {
     return fail(error, "ccso_ref_idx outside NumTotalRefs");
   }
@@ -156,7 +156,7 @@ int ccso_offset_count(const PlaneParams& p) {
   return (1 << p.max_band_log2) * interval * interval;
 }
 
-bool validate_plane_params(const PlaneParams& p, std::string* error) {
+bool validate_plane_params(const PlaneParams& p, std::string& error) {
   if (!p.enabled) return true;
   if (p.scale_idx < 0 || p.scale_idx > 3 || p.quant_idx < 0 ||
       p.quant_idx > 3 || p.ext_filter < 0 || p.ext_filter > 6 ||
@@ -195,7 +195,7 @@ bool validate_plane_params(const PlaneParams& p, std::string* error) {
 }
 
 bool save_ccso_params(SlotStore& store, int i, const SavedFrame& frame,
-                      std::string* error) {
+                      std::string& error) {
   if (!store.in_range(i)) {
     return fail(error, "save_ccso_params: slot outside NUM_REF_FRAMES");
   }
@@ -248,7 +248,7 @@ bool save_ccso_params(SlotStore& store, int i, const SavedFrame& frame,
 
 std::size_t write_ccso_params(BitWriter& writer, FrameParams& params,
                               const HeaderContext& context,
-                              std::string* error) {
+                              std::string& error) {
   if (context.coded_lossless || !context.enable_ccso) {
     params.frame_flag = false;
     for (int plane = 0; plane < 3; ++plane) {
@@ -363,7 +363,7 @@ std::size_t write_ccso_params(BitWriter& writer, FrameParams& params,
 }
 
 bool read_ccso_params(BitReader& reader, const HeaderContext& context,
-                      FrameParams* params, std::string* error) {
+                      FrameParams* params, std::string& error) {
   if (params == nullptr) return fail(error, "null CCSO params");
   *params = FrameParams{};
   params->ccso_luma_size_log2 =
@@ -487,7 +487,7 @@ bool read_ccso_params(BitReader& reader, const HeaderContext& context,
 
 bool resolve_ccso_params(const HeaderContext& context,
                          const FrameParams& syntax, const SlotStore& slots,
-                         EffectiveFrame* out, std::string* error) {
+                         EffectiveFrame* out, std::string& error) {
   if (out == nullptr) return fail(error, "null effective CCSO frame");
   *out = EffectiveFrame{};
   out->frame_flag = syntax.frame_flag;
@@ -538,7 +538,7 @@ bool resolve_ccso_params(const HeaderContext& context,
 bool use_ccso(const PlaneParams& desired,
               const std::vector<std::uint8_t>& desired_blks, int blk_cols,
               int blk_rows, int plane, const HeaderContext& context,
-              const SlotStore& slots, ReuseChoice* out, std::string* error) {
+              const SlotStore& slots, ReuseChoice* out, std::string& error) {
   if (out == nullptr) return fail(error, "null CCSO reuse choice");
   *out = ReuseChoice{};
   if (plane < 0 || plane >= 3) {
@@ -597,7 +597,7 @@ bool use_ccso(const PlaneParams& desired,
 // ---------------------------------------------------------------------------
 
 bool TileState::init(const EffectiveFrame& frame, int mi_cols, int mi_rows,
-                     int sub_x, int sub_y, std::string* error) {
+                     int sub_x, int sub_y, std::string& error) {
   if (mi_cols <= 0 || mi_rows <= 0) {
     return fail(error, "invalid CCSO tile geometry");
   }
@@ -635,7 +635,7 @@ bool TileState::init(const EffectiveFrame& frame, int mi_cols, int mi_rows,
 }
 
 bool TileState::set_block_flags(int plane, const std::uint8_t* data, int cols,
-                                int rows, std::string* error) {
+                                int rows, std::string& error) {
   if (plane < 0 || plane >= 3) return fail(error, "CCSO plane out of range");
   EffectivePlane& e = frame_.plane[plane];
   if (!e.params.enabled) return true;
@@ -681,7 +681,7 @@ int TileState::block_context(int plane, int mi_row, int mi_col, int shift_row,
 }
 
 bool TileState::write_block(av2::Encoder& encoder, int mi_row, int mi_col,
-                            std::string* error) {
+                            std::string& error) {
   if (!frame_.frame_flag) return true;
   int shift_row = 0;
   int shift_col = 0;
@@ -722,7 +722,7 @@ bool TileState::write_block(av2::Encoder& encoder, int mi_row, int mi_col,
 }
 
 bool TileState::read_block(av2::Decoder& decoder, int mi_row, int mi_col,
-                           int blk[3], std::string* error) {
+                           int blk[3], std::string& error) {
   if (blk != nullptr) {
     blk[0] = 0;
     blk[1] = 0;
@@ -776,7 +776,7 @@ bool TileState::read_block(av2::Decoder& decoder, int mi_row, int mi_col,
 
 bool make_restoration_params(const TileState& state,
                              restoration::CcsoFrameParams* out,
-                             std::string* error) {
+                             std::string& error) {
   if (out == nullptr) return fail(error, "null restoration params");
   *out = restoration::CcsoFrameParams{};
   const EffectiveFrame& frame = state.frame();

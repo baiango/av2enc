@@ -271,26 +271,22 @@ struct TcqWorkspace {
 //                    and the arena is left untouched
 inline Status workspace_create(Arena& arena, const TcqConfig& config,
                                TcqWorkspace* out,
-                               std::uint64_t* out_required_bytes = nullptr,
-                               std::string* error = nullptr) {
+                               std::uint64_t* out_required_bytes,
+                               std::string& error) {
   const std::uint64_t required = required_device_bytes(config);
   if (out_required_bytes != nullptr) *out_required_bytes = required;
   if (out == nullptr || required == 0) {
-    if (error != nullptr) {
-      *error = "tcq: invalid workspace configuration";
-    }
+error = "tcq: invalid workspace configuration";
     return Status::kInvalidArgument;
   }
   *out = TcqWorkspace{};
   if (!arena.initialized()) {
-    if (error != nullptr) *error = "tcq: arena not initialized";
+    error = "tcq: arena not initialized";
     return Status::kNotInitialized;
   }
   if (arena.remaining() < required) {
-    if (error != nullptr) {
-      *error = "tcq: arena too small: need " + std::to_string(required) +
-               " bytes, have " + std::to_string(arena.remaining());
-    }
+error = "tcq: arena too small: need " + std::to_string(required) +
+         " bytes, have " + std::to_string(arena.remaining());
     return Status::kArenaExhausted;
   }
 
@@ -309,8 +305,8 @@ inline Status workspace_create(Arena& arena, const TcqConfig& config,
         reinterpret_cast<void**>(&out->name));                             \
     if (status != Status::kOk) {                                           \
       arena.rewind(start_mark);                                            \
-      if (error != nullptr) {                                              \
-        *error = "tcq: arena allocation failed for " #name;                \
+      {                                              \
+        error = "tcq: arena allocation failed for " #name;                \
       }                                                                    \
       return status;                                                       \
     }                                                                      \
@@ -326,11 +322,9 @@ inline Status workspace_create(Arena& arena, const TcqConfig& config,
   if (out->persistent_mark != required) {
     // The allocator rounds every request to the 256-byte alignment, so the
     // watermark must equal the reported total.  Treat a mismatch as a bug.
-    if (error != nullptr) {
-      *error = "tcq: workspace footprint mismatch (required " +
-               std::to_string(required) + ", used " +
-               std::to_string(out->persistent_mark) + ")";
-    }
+error = "tcq: workspace footprint mismatch (required " +
+         std::to_string(required) + ", used " +
+         std::to_string(out->persistent_mark) + ")";
     arena.rewind(start_mark);
     *out = TcqWorkspace{};
     return Status::kInvalidArgument;

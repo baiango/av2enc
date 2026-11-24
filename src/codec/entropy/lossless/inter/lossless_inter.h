@@ -104,7 +104,7 @@ struct Geometry {
 };
 
 [[nodiscard]] bool make_geometry(int width, int height, ChromaFormat format, Geometry* out,
-                   std::string* error);
+                   std::string& error);
 
 // ---------------------------------------------------------------------------
 // Reversible helpers (exposed for tests and for the FSC syntax tests)
@@ -238,7 +238,7 @@ struct EncodeResult {
 };
 
 [[nodiscard]] bool encode_video(std::span<const Picture> pictures, const Options& options,
-                  EncodeResult* result, std::string* error);
+                  EncodeResult* result, std::string& error);
 
 struct DecodeResult {
   std::vector<Picture> frames;
@@ -249,7 +249,7 @@ struct DecodeResult {
 };
 
 [[nodiscard]] bool decode_video(std::span<const std::vector<std::uint8_t>> units,
-                  DecodeResult* result, std::string* error);
+                  DecodeResult* result, std::string& error);
 
 // ---------------------------------------------------------------------------
 // FSC coefficient syntax (§5.20.7.27) at arbitrary lossless sizes
@@ -284,7 +284,7 @@ struct CoeffContext {
 // `levels` is raster order in the coded transform block.  Returns true on a
 // byte-exact round trip; `decoded` receives the reader's levels.
 [[nodiscard]] bool fsc_coeff_roundtrip(const int* levels, const CoeffContext& context,
-                         int* decoded, std::string* error);
+                         int* decoded, std::string& error);
 
 // ---------------------------------------------------------------------------
 // Pinned goldens
