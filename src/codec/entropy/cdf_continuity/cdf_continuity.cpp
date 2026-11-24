@@ -14,8 +14,8 @@
 namespace av2enc::entropy::continuity {
 namespace {
 
-bool fail(std::string* error, const std::string& text) {
-  if (error != nullptr) *error = text;
+bool fail(std::string& error, const std::string& text) {
+  error = text;
   return false;
 }
 
@@ -65,7 +65,7 @@ TileInfoCdfField tile_info_cdf_field(bool enable_avg_cdf, bool avg_cdf_type,
 
 bool validate_context_update_tile_id(const TileInfoCdfField& field,
                                      std::uint32_t context_update_tile_id,
-                                     std::string* error) {
+                                     std::string& error) {
   std::uint32_t tile_count = 0;
   if (!mul_overflow(field.tile_cols, field.tile_rows, &tile_count)) {
     return fail(error, "tile_info: TileCols * TileRows overflows");
@@ -178,7 +178,7 @@ FrameCdfPlan plan_frame_cdfs(const FrameCdfInput& input) noexcept {
   return plan;
 }
 
-bool validate_frame_cdfs(const FrameCdfInput& input, std::string* error) {
+bool validate_frame_cdfs(const FrameCdfInput& input, std::string& error) {
   std::uint32_t tile_count = 0;
   if (!mul_overflow(input.tile_cols == 0u ? 1u : input.tile_cols,
                     input.tile_rows == 0u ? 1u : input.tile_rows,
@@ -240,7 +240,7 @@ const char* continuity_status_name(ContinuityStatus status) noexcept {
 
 bool FrameCdfContinuity::init_owned(
     std::span<const avg_cdf::CdfSpec> specs,
-    std::uint32_t reference_contexts, std::string* error) {
+    std::uint32_t reference_contexts, std::string& error) {
   if (reference_contexts > kNumRefFrames) {
     return fail(error, "continuity: reference_contexts > NUM_REF_FRAMES");
   }
@@ -262,7 +262,7 @@ bool FrameCdfContinuity::init_owned(
 
 bool FrameCdfContinuity::init(std::span<const avg_cdf::CdfTable> tables,
                               std::uint32_t reference_contexts,
-                              std::string* error) {
+                              std::string& error) {
   if (reference_contexts > kNumRefFrames) {
     return fail(error, "continuity: reference_contexts > NUM_REF_FRAMES");
   }
@@ -281,7 +281,7 @@ bool FrameCdfContinuity::init(std::span<const avg_cdf::CdfTable> tables,
 }
 
 ContinuityStatus FrameCdfContinuity::begin_frame(const FrameCdfInput& input,
-                                                 std::string* error) {
+                                                 std::string& error) {
   if (!initialised_) return ContinuityStatus::kNotInitialised;
   if (frame_open_) return ContinuityStatus::kFrameAlreadyOpen;
   if (!validate_frame_cdfs(input, error)) {
@@ -311,7 +311,7 @@ ContinuityStatus FrameCdfContinuity::begin_frame(const FrameCdfInput& input,
   return ContinuityStatus::kOk;
 }
 
-ContinuityStatus FrameCdfContinuity::begin_tile(std::string* error) {
+ContinuityStatus FrameCdfContinuity::begin_tile(std::string& error) {
   if (!initialised_) return ContinuityStatus::kNotInitialised;
   if (!frame_open_) return ContinuityStatus::kFrameNotOpen;
   if (tile_open_) return ContinuityStatus::kTileAlreadyOpen;
@@ -326,7 +326,7 @@ ContinuityStatus FrameCdfContinuity::begin_tile(std::string* error) {
 }
 
 ContinuityStatus FrameCdfContinuity::end_tile(std::uint32_t tile_num,
-                                              std::string* error) {
+                                              std::string& error) {
   if (!initialised_) return ContinuityStatus::kNotInitialised;
   if (!frame_open_) return ContinuityStatus::kFrameNotOpen;
   if (!tile_open_) return ContinuityStatus::kTileNotOpen;
@@ -363,7 +363,7 @@ ContinuityStatus FrameCdfContinuity::end_tile(std::uint32_t tile_num,
   return ContinuityStatus::kOk;
 }
 
-ContinuityStatus FrameCdfContinuity::end_frame(std::string* error) {
+ContinuityStatus FrameCdfContinuity::end_frame(std::string& error) {
   if (!initialised_) return ContinuityStatus::kNotInitialised;
   if (!frame_open_) return ContinuityStatus::kFrameNotOpen;
   if (tile_open_) {
@@ -383,7 +383,7 @@ ContinuityStatus FrameCdfContinuity::end_frame(std::string* error) {
 }
 
 ContinuityStatus FrameCdfContinuity::save_reference(std::uint32_t slot,
-                                                    std::string* error) {
+                                                    std::string& error) {
   if (!initialised_) return ContinuityStatus::kNotInitialised;
   if (frame_open_) {
     fail(error, "continuity: save_cdfs before frame_end_update_cdf");

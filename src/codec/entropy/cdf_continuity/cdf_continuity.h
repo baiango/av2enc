@@ -98,7 +98,7 @@ TileInfoCdfField tile_info_cdf_field(bool enable_avg_cdf, bool avg_cdf_type,
 // absent the caller must pass 0 (the inference).
 [[nodiscard]] bool validate_context_update_tile_id(const TileInfoCdfField& field,
                                      std::uint32_t context_update_tile_id,
-                                     std::string* error = nullptr);
+                                     std::string& error);
 
 // §8.2.4 exit process decision for one tile.
 struct TileExitPlan {
@@ -179,7 +179,7 @@ struct FrameCdfPlan {
 FrameCdfPlan plan_frame_cdfs(const FrameCdfInput& input) noexcept;
 
 [[nodiscard]] bool validate_frame_cdfs(const FrameCdfInput& input,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 enum class ContinuityStatus {
   kOk = 0,
@@ -227,18 +227,18 @@ class FrameCdfContinuity {
   // load/save reference API and rejects any frame that needs it.
   bool init_owned(std::span<const avg_cdf::CdfSpec> specs,
                   std::uint32_t reference_contexts,
-                  std::string* error = nullptr);
+                  std::string& error);
   bool init(std::span<const avg_cdf::CdfTable> tables,
-            std::uint32_t reference_contexts, std::string* error = nullptr);
+            std::uint32_t reference_contexts, std::string& error);
 
   ContinuityStatus begin_frame(const FrameCdfInput& input,
-                               std::string* error = nullptr);
-  ContinuityStatus begin_tile(std::string* error = nullptr);
+                               std::string& error);
+  ContinuityStatus begin_tile(std::string& error);
   ContinuityStatus end_tile(std::uint32_t tile_num,
-                            std::string* error = nullptr);
-  ContinuityStatus end_frame(std::string* error = nullptr);
+                            std::string& error);
+  ContinuityStatus end_frame(std::string& error);
   ContinuityStatus save_reference(std::uint32_t slot,
-                                  std::string* error = nullptr);
+                                  std::string& error);
 
   bool frame_open() const noexcept { return frame_open_; }
   bool tile_open() const noexcept { return tile_open_; }
