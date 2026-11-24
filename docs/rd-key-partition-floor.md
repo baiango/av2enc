@@ -8,6 +8,13 @@ reference) and cuts the encode from **69 s to 16 s**. Unset the variable and
 every pinned stream is byte-identical. This is a measurement at 0.21 bpp, not a
 promotion: the 240p `--nightly-b` ladder has not been run.
 
+Experiment 0 (§7.3) has since been run and **the calibration branch fired**: a
+tree-only price of `AV2ENC_RD_DRIVER_LAMBDA=1024` reaches **46.74**, so the
+root cause is the driver's *flat* tree price (`kKeyTxLambdaFit`, exponent 0 =>
+2.0 SSE/bit at every qindex) rather than the floor itself. The floor stays the
+recommended lever here because a price cannot shrink the search: 16.3 s
+against 83.7 s.
+
 Provenance: measured 2026-11-24/25 on `~/Downloads/src720.png` (1280x720 RGB)
 converted with ffmpeg to `src720_1f.y4m` (1 frame, yuv420p, limited range,
 bt709, md5 `80708336148219e2d20c502a43675f94`, 1,382,485 B). Encoder
@@ -33,12 +40,16 @@ every score live outside the tree in `~/Downloads/av2enc-src720/`
    buy **QP187 instead of QP229**.
 3. **It is worth +15.10 K and 4.2x speed.** K 31.84 -> **46.94** (AVM p6
    reference 50.27); wall 69 s -> **16 s**.
-4. **It is not a price you can tune away.** `AV2ENC_RD_DRIVER_LAMBDA` scales
-   only the driver's tree lambda (not the TX search): x4 -> +0.87 K, x16 ->
-   +2.28 K, moving the 25 KB point QP229 -> 219 while the floor moves it to
-   187. Going the other way (`--video-force-single`, 64x64) gives **43.60**,
-   3.34 K *below* the 16x16 floor. The win is specifically *floor at 16 and
-   then let the driver decide*, not *coarser is better*.
+4. **The underlying defect is a calibration bug, but the floor still wins
+   here.** §7.3 sweeps `AV2ENC_RD_DRIVER_LAMBDA` (tree-only): 31.84 at x1,
+   37.57 at x64, 45.67 at x256, peaking at **46.74 at x1024** — 0.20 K from the
+   floor — then declining toward the x->infinity collapse limit (43.60).
+   So price alone *does* reach the floor's K, across a broad 64x plateau. But
+   it buys **no speed**: the prune still expands to 4x4 and measures every
+   node, so x1024 runs **83.7 s** against the floor's **16.3 s** (and the
+   baseline's 68.9 s). The floor dominates on both axes. Going the other way
+   (`--video-force-single`, 64x64) gives 43.60, 3.34 K *below* the 16x16
+   floor: the tree wants ~1,800-2,900 leaves, not "as coarse as possible".
 5. **One operating point.** 1280x720, one frame, 0.216 bpp. The ladder's key
    sits near 1.1 bpp where the meter says syntax is 1.45 %, so this arm's
    trigger should not fire there — but that is an inference from the meter,
@@ -119,6 +130,11 @@ in the arm column.
 | `+ --video-tx-context-rate` | 229 | 5.877 | 27.56 | -62.09 | 21.886 | 31.84 | 0.00 |
 | `AV2ENC_RD_DRIVER_LAMBDA=4` | 226 | 6.017 | 25.60 | -59.91 | 22.118 | 32.71 | +0.87 |
 | `AV2ENC_RD_DRIVER_LAMBDA=16` | 219 | 6.279 | 24.56 | -53.78 | 22.553 | 34.12 | +2.28 |
+| `AV2ENC_RD_DRIVER_LAMBDA=64` | 210 | 6.624 | 19.83 | -43.00 | 23.193 | 37.57 | +5.73 |
+| `AV2ENC_RD_DRIVER_LAMBDA=256` | 191 | 7.215 | 14.10 | -18.73 | 24.356 | 45.67 | +13.83 |
+| `AV2ENC_RD_DRIVER_LAMBDA=1024` | 184 | 7.357 | 16.05 | -13.89 | 24.605 | **46.74** | +14.90 |
+| `AV2ENC_RD_DRIVER_LAMBDA=4096` | 182 | 7.329 | 16.38 | -15.46 | 24.532 | 46.27 | +14.43 |
+| `AV2ENC_RD_DRIVER_LAMBDA=16384` | 181 | 7.322 | 17.68 | -15.92 | 24.509 | 45.91 | +14.07 |
 | `AV2ENC_RD_DRIVER_MIN=8` | 198 | 7.007 | 15.27 | -26.66 | 23.818 | 43.03 | +11.19 |
 | **`AV2ENC_RD_DRIVER_MIN=16`** | 187 | **7.309** | 14.20 | **-13.82** | 24.417 | **46.94** | **+15.10** |
 | `AV2ENC_RD_DRIVER_MIN=32` | 184 | 7.317 | 14.85 | -14.85 | 24.437 | 46.65 | +14.81 |
@@ -152,12 +168,20 @@ off its -50 floor. What is left is residual fidelity, not artifact structure.
 | arm | wall | driver leaf trials |
 |---|---:|---:|
 | baseline QP229 | 70.76 / 67.09 s | 139,107 |
-| `MIN=16` QP187 | **16.32 / 16.24 s** | 7,543 |
+| `LAMBDA=1024` QP184 | 84.12 / 83.32 s | 164,730 |
+| `MIN=16` QP187 | **16.32 / 16.24 s** | **7,543** |
 
-4.2x faster. The 18x trial reduction does not map 1:1 to wall time because the
-floor arm does far more real coding per byte (QP187 against QP229, 81 %
-coefficients against 39 %) — yet it still finishes 4.2x sooner, which is how
-much of the baseline's 69 s is the 4x4 expansion search rather than coding.
+The floor is **4.2x faster than baseline and 5.1x faster than the price arm**.
+The 18x trial reduction does not map 1:1 to wall time because the floor arm
+does far more real coding per byte (QP187 against QP229, 81 % coefficients
+against 39 %) — yet it still finishes 4.2x sooner, which is how much of the
+baseline's 69 s is the 4x4 expansion search rather than coding.
+
+The price arm is **slower than doing nothing**: its trial count is *higher*
+than baseline's (164,730 against 139,107) because the prune expands to 4x4 and
+measures every node regardless of price, and each trial costs more at QP184
+(86.9 % coefficients) than at QP229 (38.7 %). The floor shrinks the search;
+the price only changes which tree wins.
 
 ## 3. Mechanism — where the bits go
 
@@ -275,26 +299,76 @@ are separated by **42x** (61.0 % against 1.45 %), so any threshold in roughly
 `kappa = 1` exactly. `S_max = 0.30` sits 20x above the high-rate value and 2x
 below the low-rate value — not a knife edge.
 
-### 7.3 Experiment 0 — is it only price? (cheapest falsification, ~10 min)
+### 7.3 Experiment 0 — run; the calibration branch fired
 
 `AV2ENC_RD_DRIVER_LAMBDA` scales *only* the driver's tree lambda, so it is a
-clean tree-only price with no TX side effects. Measured x4 -> +0.87 K and
-x16 -> +2.28 K. Sweep **64 / 256 / 1024** at 25,010 B.
+clean tree-only price with no TX side effects. Swept at 25,010 B:
 
-* If one reaches >= 46, the defect is the `key_tx_rd_lambda * 0.25`
-  calibration (`docs/rd-engine0.md` §3, fitted at QP112) and the fix is a
-  recalibration — no new policy, no new state, smallest possible change.
-* If it plateaus below the hard floor — plausible, because monotone lambda
-  drives the tree toward the reference/collapse, which measures 43.60 — then
-  price alone cannot do it and §7.4 is required.
+| x (effective SSE/bit) | QP | leaves | coeff share | **K** |
+|---:|---:|---:|---:|---:|
+| 1 (2.0, default) | 229 | 23,569 | 38.7 % | 31.84 |
+| 4 (8) | 226 | — | — | 32.71 |
+| 16 (32) | 219 | — | — | 34.12 |
+| 64 (128) | 210 | — | — | 37.57 |
+| 256 (512) | 191 | 6,294 | 67.6 % | 45.67 |
+| **1024 (2048)** | 184 | **1,790** | **86.9 %** | **46.74** |
+| 4096 (8192) | 182 | — | — | 46.27 |
+| 16384 (32768) | 182 | — | — | 45.91 |
+| *`MIN=16` floor* | 187 | 2,935 | 81.4 % | *46.94* |
+| *`--video-force-single`* | 182 | ~240 | — | *43.60* |
 
-Run this first: it decides between "calibrate" and "new policy" for the cost of
-one ladder-free sweep.
+**The first branch fired: price alone reaches the floor's K.** x1024 gives
+**46.74**, 0.20 K from the floor's 46.94, and the plateau is broad — across a
+**64x range** (256..16384) every point is >= 45.67 (+13.8 K), so a
+recalibrated constant would be robust rather than knife-edged. It peaks gently
+at 1024 and declines toward the x->infinity limit (the reference tree, one
+64x64 leaf per SB, which measures 43.60), confirming the collapse argument
+rather than contradicting it.
 
-### 7.4 D1 — syntax-share surcharge in the prune (recommended if 7.3 fails)
+**Qualification: price buys no speed.** See §2.4 — x1024 runs 83.7 s against
+the floor's 16.3 s and the baseline's 68.9 s. The two mechanisms are not
+interchangeable, and at this operating point the floor dominates on both axes.
 
-Keep the driver's measured `D + lambda*R` and tax only the syntax half once the
-tree's syntax share exceeds a budget:
+**Root cause.** `src/pipeline/video/qp_lambda.h:60`:
+
+```cpp
+// The intra TX search wants ~4..8 at both keyframe points (QP 93 and QP 160):
+// the weight is content-calibrated, not QP-calibrated, so the measured
+// exponent is zero.
+inline constexpr LambdaPowerFit kKeyTxLambdaFit{8.0, 66.0, 0.0};
+```
+
+`lambda_from_fit(step, fit)` is `anchor * (step / anchor_step)^exponent`, so
+with exponent **0** the driver's tree price is `8.0 * 0.25 * LAMBDA` = **2.0
+SSE/bit at every qindex** — inherited from a calibration done for the intra
+TX search, never for the tree. Every other fit in that file scales:
+`kLeafLambdaFit` 0.72, `kTxLambdaFit` 0.3385, `kPartitionProbeFit` 0.22,
+`kRdoqSseScaleFit` -0.5. The tree is the one site with a flat price.
+
+From `rc::kQlookupQ0To255`, `qp_luma_step(82) = 52.0` and
+`qp_luma_step(184) = 992.0`, a **19.1x** step ratio. The ladder's key sits at
+qindex 82 published with 2.0; this operating point needs 2.0 x 1024 = 2048 at
+qindex 184, implying **exponent ~2.35**.
+
+Two caveats on that number. One point is "the default the ladder was published
+with", not "the default the ladder was optimised for" — **nobody has ever
+swept the price on the 240p ladder**, which is now the cheapest open question
+and would raise 88.2 as well if it wants more than 2.0. And the sweep is
+*joint* in price and qindex: every arm sits at 25,010 B but at a different
+qindex (x1 -> 229, x1024 -> 184), so the peak says "among all price/quantiser
+pairs that spend 25,010 B, price ~2048 with qindex 184 wins", not that price
+is separable from qindex.
+
+### 7.4 D1 — syntax-share surcharge in the prune (demoted: not needed for K)
+
+Experiment 0 (§7.3) reached the floor's K with a price, so this is **no longer
+the route to K**. It survives as one option only: the share-gated surcharge is
+the one control that is *rate-adaptive by construction*, which neither a fixed
+floor (§1) nor a fixed price (§7.3) is. Reach for it only if the ladder shows
+a fixed price is wrong there — the open question in §7.3.
+
+For the record, the mechanism: keep the driver's measured `D + lambda*R` and
+tax only the syntax half once the tree's syntax share exceeds a budget:
 
 ```text
 share  = sum_syntax / (sum_syntax + sum_coeff)     // over committed leaves, raster order
@@ -320,9 +394,13 @@ cost   = D + lambda * (coeff + kappa * syntax)
 
 Feed `kPartitionSignalBits` and `intra_luma_syntax_bits()` a price measured
 from `AV2ENC_SYMBOL_COST` at the leaf's own qindex (5.13 bits/leaf at QP229
-against 1.45 % of the tile at high rate). Ranked **below** D1: scaling the
-whole R by 16 only bought +2.28 K, which argues the *relative* D:R balance is
-off rather than R's scale.
+against 1.45 % of the tile at high rate).
+
+Experiment 0 is evidence *for* the direction — scaling R is exactly what
+closed the gap — but it scaled the whole R through λ, and §7.3 locates the
+defect on the **lambda** side (`kKeyTxLambdaFit`, exponent 0), not in R's
+terms. Fix the lambda first; revisit the per-term price only if the ladder
+disagrees with it.
 
 ### 7.6 D3 — qindex/resolution heuristic (fallback, not recommended)
 
@@ -348,11 +426,16 @@ as a stopgap if no policy change can land.
 
 ### 7.8 Measurement plan
 
-1. §7.3 lambda sweep — decides calibrate vs policy, ~10 min, no code.
-2. If policy: D1 behind an env gate; calibrate `S_max`/`alpha` at 0.21 bpp to
-   K >= 46; confirm the 1.1 bpp probe is byte-identical (`kappa` never fires);
-   then the ladder.
-3. Only then propose promotion, through an integrator.
+1. ~~§7.3 lambda sweep~~ **done** — the calibration branch fired: 46.74 at
+   x1024, plateau 45.67..46.74 across a 64x price range, turning over toward
+   the 43.60 collapse limit.
+2. **Sweep the price on the 240p ladder** — nobody has. Does the key at
+   qindex 82 want more than 2.0? If yes, a `kKeyTxLambdaFit` recalibration
+   raises 88.2 as well and the floor question becomes secondary. Validate with
+   `tools/validate_avmdec.py`, not `dav2d`.
+3. From step 2's answer, choose fixed floor vs share-gated D1, then run the
+   ladder with `AV2ENC_RD_DRIVER_MIN=16`.
+4. Only then propose promotion, through an integrator.
 
 ## 8. Files
 
@@ -373,10 +456,20 @@ per-leaf syntax** and the floor moves it to **81.4 % coefficients**. It closes
 
 It is **not** a promotion. One operating point, the ladder not run, and the
 standing probe negatives in `tool-improvement-queue-3` rows 10-11 are at a
-42x different syntax share through a different knob. What would change the
-verdict: §7.3 showing that a lambda recalibration reaches the same K (which
-would make this a calibration bug rather than a policy question), or §7.4's
-share-gated version holding 88.2 on the ladder while keeping K >= 46 here.
+42x different syntax share through a different knob.
+
+§7.3 has been run and **the calibration branch fired**: a tree-only price of
+x1024 reaches 46.74 against the floor's 46.94, so the underlying defect is
+`kKeyTxLambdaFit`'s zero exponent — a flat 2.0 SSE/bit tree price at every
+qindex — rather than a missing policy. The floor is still the recommended
+lever *here*, because it also shrinks the search 18x (16.3 s against the price
+arm's 83.7 s and the baseline's 68.9 s), which a price cannot do.
+
+What remains open, cheapest first: (i) **sweep the price on the 240p ladder** —
+nobody ever has, and if it wants more than 2.0 the recalibration raises 88.2 as
+well; (ii) whether a fixed floor or a share-gated one is right at the ladder's
+rate; (iii) the ladder itself, with `tools/validate_avmdec.py` (pinned `dav2d`
+cannot drain a chained multi-GOP stream).
 
 The transferable result is the **measurement**, not the constant: at 0.21 bpp
 the key driver spends most of the stream on signalling the tree instead of the
