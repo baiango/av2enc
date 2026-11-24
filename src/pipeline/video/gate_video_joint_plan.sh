@@ -15,10 +15,19 @@
 #   flat_joint112   --video-rd-preset best --qp 112, 25,007 B, strict dav2d
 #   flat_off116     AV2ENC_RD_JOINT_P=0 --video-rd-preset best --qp 116,
 #                   26,334 B / fba63446670b43888c3ac7b280ad44dc (control)
-#   b_joint16       --nightly-b 16 pictures, 19,723 B, avmdec + pinned dav2d
+#   b_joint16       --nightly-b 16 pictures, 17,222 B, avmdec + pinned dav2d
 #   b_joint118/119  --nightly-b 60 pictures QP118/119, avmdec 60/60
-#   b_off121        AV2ENC_RD_JOINT_P=0 --nightly-b QP121, 25,163 B /
-#                   dfa6b1aadd565a2adf47c7e186c1a973 (control)
+#   b_off121        AV2ENC_RD_JOINT_P=0 --nightly-b QP121, 23,066 B /
+#                   72e04413362910d48d69c46b504fb9ed (control)
+#
+# The four --nightly-b sizes were re-recorded on 2026-11-25 (BUG-GATES-002):
+# 6ec51ab4 moved the chained-B key offset -50 -> -37 on 2026-11-22, which
+# coarsens the key and shrinks every --nightly-b stream at a fixed QP.  The
+# flat pins below were unaffected (they set their own -39) and still pass.
+# Every re-recorded stream still decodes recon-exact (avmdec 60/60, encoder
+# recon == decoded), so this is a re-record, not a regression.  The values
+# agree with docs/negative-results.md and 80b1e267, which both already carry
+# the post-change sizes.
 #
 # Usage:
 #   src/pipeline/video/gate_video_joint_plan.sh --bin build-release/av2enc \
@@ -99,8 +108,8 @@ recon_equal() {
   --cpu-threads 8 --video-gops 2 --nightly-b \
   --video-recon "$OUT/b_joint16.y4m" > "$OUT/b_joint16.enc.log" 2>&1 || \
   bad "b_joint16: encode failed"
-check_pin b_joint16 "$OUT/b_joint16.ivf" 19723 \
-  505430de620af361a18b42503543dbda
+check_pin b_joint16 "$OUT/b_joint16.ivf" 17222 \
+  2a7fbe710542a89c3a9d2c93fab94101
 python3 "$ROOT/tools/validate_avmdec.py" "$OUT/b_joint16.ivf" \
   --ref "$INPUT" --recon "$OUT/b_joint16.y4m" > "$OUT/b_joint16.val.log" 2>&1 && \
   ok "b_joint16: avmdec recon equal" || bad "b_joint16: avmdec recon mismatch"
@@ -113,8 +122,8 @@ recon_equal b_joint16 "$OUT/b_joint16.y4m" "$OUT/b_joint16.dec.y4m"
 env AV2ENC_RD_JOINT_P=0 "$BIN" "$INPUT" -o "$OUT/b_off121.ivf" --video \
   --frames 60 --qp 121 --cpu-threads 8 --video-gops 7 --nightly-b \
   > "$OUT/b_off121.log" 2>&1 || bad "b_off121: encode failed"
-check_pin b_off121 "$OUT/b_off121.ivf" 25163 \
-  dfa6b1aadd565a2adf47c7e186c1a973
+check_pin b_off121 "$OUT/b_off121.ivf" 23066 \
+  72e04413362910d48d69c46b504fb9ed
 
 # Flat joint-off control: the 86.33 lead stack without the joint solve.
 env AV2ENC_RD_JOINT_P=0 "$BIN" "$INPUT" -o "$OUT/flat_off116.ivf" \
@@ -141,9 +150,9 @@ if [ "$SKIP_60" -eq 0 ]; then
   # Chained-B joint bracket (avmdec is the authority on the 60-picture chain;
   # the pinned dav2d has the known §7.21.6 drain defect).
   for q in 118 119; do
-    bytes=25093; md5=34103c1f26ca7225ebaf74f67e771175
+    bytes=22840; md5=9c7d37ecbc358684e09d464cfd2e661b
     if [ "$q" = "119" ]; then
-      bytes=24845; md5=40de8b687d929652a312407764227398
+      bytes=22576; md5=4b622b15a0715820114765e17259868f
     fi
     "$BIN" "$INPUT" -o "$OUT/b_joint$q.ivf" --video --frames 60 \
       --qp "$q" --cpu-threads 8 --video-gops 7 --nightly-b \

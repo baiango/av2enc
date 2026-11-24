@@ -99,12 +99,12 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | fast-decode QP110 | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
 | 720p QP217 (key −57, leaf 250, ext partitions) | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
 | `--video-rd-preset best` joint QP112 | 25,007 | `9a36aeb7c02733342e4ec5db300e4d6d` |
-| `--nightly-b` 16 f joint (QP116, gops 2) | 19,723 | `505430de620af361a18b42503543dbda` |
-| `--nightly-b` 60 f joint (QP118, gops 7) | 25,093 | `34103c1f26ca7225ebaf74f67e771175` |
-| `--nightly-b` 60 f joint (QP119, gops 7) | 24,845 | `40de8b687d929652a312407764227398` |
+| `--nightly-b` 16 f joint (QP116, gops 2) | 17,222 | `2a7fbe710542a89c3a9d2c93fab94101` |
+| `--nightly-b` 60 f joint (QP118, gops 7) | 22,840 | `9c7d37ecbc358684e09d464cfd2e661b` |
+| `--nightly-b` 60 f joint (QP119, gops 7) | 22,576 | `4b622b15a0715820114765e17259868f` |
 | joint-off control: `best` QP116 | 26,334 | `fba63446670b43888c3ac7b280ad44dc` |
-| joint-off control: `--nightly-b` 16 f exact (QP116) | 19,774 | `51b664515a897a3b19be4131790867fa` |
-| joint-off control: `--nightly-b` 60 f exact (QP121) | 25,163 | `dfa6b1aadd565a2adf47c7e186c1a973` |
+| joint-off control: `--nightly-b` 16 f exact (QP116) | 17,249 | `6c242e1819fcd062d3891d225f9721bf` |
+| joint-off control: `--nightly-b` 60 f exact (QP121) | 23,066 | `72e04413362910d48d69c46b504fb9ed` |
 | basic 64×64 / 640×360 | — | `c9294fa4…` / `0d90c958…` |
 | still 64×64 / 640×360 | — | `2b31e378…` / `8ffbe059…` |
 

@@ -13,11 +13,18 @@
 # plus --video-compound-near-near --video-cwp-weighted.
 #
 # Cases:
-#   depth16     16 pictures, 19,825 B, avmdec 16/16 recon, pinned dav2d exact
+#   depth16     16 pictures, 17,318 B, avmdec 16/16 recon, pinned dav2d exact
 #   depth60     60 pictures QP123, avmdec 60/60 recon
-#   tip_base    TIP control (--video-compound-depth-off), QP121, 25,299 B
-#   compound    --video-compound-depth-off + AV2ENC_TIP_LEAF=0, QP125, 24,988 B
+#   tip_base    TIP control (--video-compound-depth-off), QP121, 23,183 B
+#   compound    --video-compound-depth-off + AV2ENC_TIP_LEAF=0, QP125, 23,179 B
 #   flat106/110 --fast-decode pins
+#
+# The three --nightly-b sizes were re-recorded on 2026-11-25 (BUG-GATES-002):
+# 6ec51ab4 moved the chained-B key offset -50 -> -37 on 2026-11-22, coarsening
+# the key and shrinking every --nightly-b stream at a fixed QP.  All three
+# still decode recon-exact (avmdec), so this is a re-record rather than a
+# regression; the flat fast-decode pins are unaffected and depth60 carries no
+# size pin.
 #
 # Usage:
 #   src/pipeline/video/gate_video_compound_depth.sh --bin build-dev/av2enc \
@@ -101,8 +108,8 @@ arm_env "$BIN" "$INPUT" -o "$OUT/depth16.ivf" --video --frames 16 --qp 116 \
   --video-compound-near-near --video-cwp-weighted \
   --video-recon "$OUT/depth16.y4m" > "$OUT/depth16.enc.log" 2>&1 || \
   bad "depth16: encode failed"
-check_pin depth16 "$OUT/depth16.ivf" 19825 \
-  d6a55a0bd7cf11c5c4686cfe73b77330
+check_pin depth16 "$OUT/depth16.ivf" 17318 \
+  1a5b8a5a90be82208f6211348f9397f8
 python3 "$ROOT/tools/validate_avmdec.py" "$OUT/depth16.ivf" \
   --ref "$INPUT" --recon "$OUT/depth16.y4m" > "$OUT/depth16.val.log" 2>&1 && \
   ok "depth16: avmdec recon equal" || bad "depth16: avmdec recon mismatch"
@@ -132,15 +139,15 @@ env AV2ENC_TIP_LEAF=1 "$BIN" "$INPUT" -o "$OUT/tip_base.ivf" --video \
   --frames 60 --qp 121 --cpu-threads 8 --video-gops 7 --nightly-b \
   --video-compound-depth-off \
   > "$OUT/tip_base.log" 2>&1 || bad "tip_base: encode failed"
-check_pin tip_base "$OUT/tip_base.ivf" 25299 \
-  ca314db24a71fc1c28d7a1ba8eb1515f
+check_pin tip_base "$OUT/tip_base.ivf" 23183 \
+  fd6a7538dd3cf3c47af37f6d1555b585
 
 env AV2ENC_TIP_LEAF=0 "$BIN" "$INPUT" -o "$OUT/compound.ivf" --video \
   --frames 60 --qp 125 --cpu-threads 8 --video-gops 7 --nightly-b \
   --video-compound-depth-off \
   > "$OUT/compound.log" 2>&1 || bad "compound: encode failed"
-check_pin compound "$OUT/compound.ivf" 24988 \
-  3dbbad9847ab661c6c154903990ade75
+check_pin compound "$OUT/compound.ivf" 23179 \
+  b5330f2d60f7293ae202da319209d8d5
 
 "$BIN" "$INPUT" -o "$OUT/flat106.ivf" --video --frames 60 --qp 106 \
   --cpu-threads 8 --fast-decode > "$OUT/flat106.log" 2>&1 || \

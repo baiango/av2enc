@@ -19,13 +19,20 @@
 #                                  exact pricing)
 #
 # Cases:
-#   exact16   16 pictures, 19,774 B, avmdec 16/16, pinned dav2d 16/16 exact,
+#   exact16   16 pictures, 17,249 B, avmdec 16/16, pinned dav2d 16/16 exact,
 #             probe fallbacks = 0
-#   modes16   the NEWMV carrier 16 pictures, 19,800 B, avmdec + pinned dav2d
+#   modes16   the NEWMV carrier 16 pictures, 17,273 B, avmdec + pinned dav2d
 #             exact, and the trace proves all three modes selected
-#   exact60   60 pictures QP122, 24,859 B, avmdec 60/60
-#   modes60   60 pictures QP125, 24,628 B, avmdec 60/60
+#   exact60   60 pictures QP122, 22,807 B, avmdec 60/60
+#   modes60   60 pictures QP125, 22,718 B, avmdec 60/60
 #   controls  TIP 86.805 pin, compound 86.607 pin, flat fast-decode pins
+#
+# The six --nightly-b sizes were re-recorded on 2026-11-25 (BUG-GATES-002):
+# 6ec51ab4 moved the chained-B key offset -50 -> -37 on 2026-11-22, which
+# coarsens the key and shrinks every --nightly-b stream at a fixed QP.  The
+# flat fast-decode pins below are unaffected and still pass.  Every stream
+# still decodes recon-exact (avmdec 60/60 or 16/16), so this is a re-record,
+# not a regression; the 86.805 / 86.607 control K pins predate the move.
 #
 # Usage:
 #   src/pipeline/video/gate_video_compound_exact.sh --bin build-release/av2enc \
@@ -137,10 +144,10 @@ run_case_16() {
 }
 
 # 16-picture proofs.
-run_case_16 exact16 AV2ENC_COMPOUND_EXACT_RATE=1 19774 \
-  51b664515a897a3b19be4131790867fa
-run_case_16 modes16 AV2ENC_COMPOUND_NEWMV=1 19800 \
-  424abbe40d8040fcac2eedf78bf8046a
+run_case_16 exact16 AV2ENC_COMPOUND_EXACT_RATE=1 17249 \
+  6c242e1819fcd062d3891d225f9721bf
+run_case_16 modes16 AV2ENC_COMPOUND_NEWMV=1 17273 \
+  f7ed302d7beaf2a631f6c76c7b35dc6c
 
 # The modes16 trace proves each new compound mode is actually selected, not
 # merely explored.
@@ -178,8 +185,8 @@ run_case_60() {
   check_probe_exact "$name" "$OUT/$name.log"
 }
 
-run_case_60 exact60 AV2ENC_COMPOUND_EXACT_RATE=1 122 24859
-run_case_60 modes60 AV2ENC_COMPOUND_NEWMV=1 125 24628
+run_case_60 exact60 AV2ENC_COMPOUND_EXACT_RATE=1 122 22807
+run_case_60 modes60 AV2ENC_COMPOUND_NEWMV=1 125 22718
 
 if [ "$SKIP_CONTROLS" -eq 0 ]; then
   # Controls: the TIP-only pin, the compound-only pin and the flat pins.  The
@@ -189,15 +196,15 @@ if [ "$SKIP_CONTROLS" -eq 0 ]; then
     --frames 60 --qp 121 --cpu-threads 8 --video-gops 7 --nightly-b \
     --video-compound-depth-off \
     > "$OUT/tip_base.log" 2>&1 || bad "tip_base: encode failed"
-  check_pin tip_base "$OUT/tip_base.ivf" 25299 \
-    ca314db24a71fc1c28d7a1ba8eb1515f
+  check_pin tip_base "$OUT/tip_base.ivf" 23183 \
+    fd6a7538dd3cf3c47af37f6d1555b585
 
   env AV2ENC_TIP_LEAF=0 "$BIN" "$INPUT" -o "$OUT/compound.ivf" --video \
     --frames 60 --qp 125 --cpu-threads 8 --video-gops 7 --nightly-b \
     --video-compound-depth-off \
     > "$OUT/compound.log" 2>&1 || bad "compound: encode failed"
-  check_pin compound "$OUT/compound.ivf" 24988 \
-    3dbbad9847ab661c6c154903990ade75
+  check_pin compound "$OUT/compound.ivf" 23179 \
+    b5330f2d60f7293ae202da319209d8d5
 
   "$BIN" "$INPUT" -o "$OUT/flat106.ivf" --video --frames 60 --qp 106 \
     --cpu-threads 8 --fast-decode > "$OUT/flat106.log" 2>&1 || \

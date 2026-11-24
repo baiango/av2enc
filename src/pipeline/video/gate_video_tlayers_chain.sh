@@ -53,6 +53,15 @@
 #   nightly_b_*_compound_off  the pre-compound 85.472 arm
 #   pin106/110  the nightly gate pins are byte-identical with the gate off
 #
+# The nightly_b_* sizes were re-recorded on 2026-11-25 (BUG-GATES-002):
+# 6ec51ab4 moved the chained-B key offset -50 -> -37 on 2026-11-22, which
+# coarsens the key and shrinks every --nightly-b stream at a fixed QP.  Every
+# re-recorded stream still decodes recon-exact (avmdec), so this is a
+# re-record, not a regression.  The chainNN_b, pin106/110 and pin_case rungs
+# do not use --nightly-b and are untouched; the ablation K values quoted above
+# (87.023 / 86.805 / 86.607 / 85.472) predate the move and have not been
+# re-swept.
+#
 # Usage:
 #   src/pipeline/video/gate_video_tlayers_chain.sh --bin build-int/av2enc \
 #       [--dav2d /path/to/dav2d] [--input clip.y4m]
@@ -236,13 +245,27 @@ else
   fi
 fi
 
-# 1b. --nightly-b is the product entry point and needs a chained gop count.
-echo "== nightly_b_needs_gops: --nightly-b requires --video-gops M > 1"
+# 1b. --nightly-b is the product entry point.  dc64d05e made a single picture
+# legal without --video-gops (the schedule reduces to a lone key), so the old
+# "requires --video-gops M > 1" premise is gone: the gops<1 guard in
+# nightly.cpp is unreachable from the CLI (the parser rejects 0 first), and a
+# multi-picture stream is now stopped by the edge-inter guard instead.
+echo "== nightly_b_single_picture: --frames 1 encodes without --video-gops"
+if "$BIN" "$INPUT" -o "$OUT/nb_still.ivf" --video --frames 1 --qp 116 \
+    --nightly-b >"$OUT/nb_still.log" 2>&1 && [ -s "$OUT/nb_still.ivf" ]; then
+  ok "nightly_b_single_picture: accepted ($(wc -c < "$OUT/nb_still.ivf" | tr -d ' ') B)"
+else
+  bad "nightly_b_single_picture: a lone key needs --video-gops again"; \
+    tail -4 "$OUT/nb_still.log"
+fi
+
+echo "== nightly_b_needs_gops: a multi-picture chain without --video-gops is rejected"
 if "$BIN" "$INPUT" -o "$OUT/nb_bad.ivf" --video --frames 16 --qp 116 \
     --nightly-b >"$OUT/nb_bad.log" 2>&1; then
-  bad "nightly_b_needs_gops: accepted without --video-gops"
+  bad "nightly_b_needs_gops: accepted a multi-picture chain without --video-gops"
 else
-  if grep -q "pass --video-gops M" "$OUT/nb_bad.log"; then
+  if grep -qE -- "--video-edge-inter is measured on the low-delay P chain|--nightly-b needs --video-gops" \
+      "$OUT/nb_bad.log"; then
     ok "nightly_b_needs_gops: named rejection"
   else
     bad "nightly_b_needs_gops: wrong rejection"; tail -4 "$OUT/nb_bad.log"
@@ -332,16 +355,19 @@ run_chain chain60_b_edge B 60 7 60 - - \
 # arm + the exact compound-rate probe + partition-RD + partition fit + layer-0
 # anchor residual).  The 16-picture proof must also be pinned-dav2d exact;
 # the 60-picture streams are avmdec-only (dav2d §7.21.6 drain).  QP121
-# (25,163 B), QP122 (24,859 B) and QP123 (24,598 B) bracket the measured
-# K 87.284 at 100 kbps.
-run_nightly_b nightly_b_16 16 2 16 116 19774 \
-  51b664515a897a3b19be4131790867fa
-run_nightly_b nightly_b_60_121 60 7 60 121 25163 \
-  dfa6b1aadd565a2adf47c7e186c1a973
-run_nightly_b nightly_b_60_122 60 7 60 122 24859 \
-  1d21367557f3025ceaaff088a4a7f490
-run_nightly_b nightly_b_60_123 60 7 60 123 24598 \
-  bb2d606b8172ea5b8ec9602f79944aab
+# (23,066 B), QP122 (22,807 B) and QP123 (22,287 B) bracket the measured
+# K 87.284 at 100 kbps.  The three sizes were re-recorded on 2026-11-25
+# (BUG-GATES-002): 6ec51ab4 moved the chained-B key offset -50 -> -37 on
+# 2026-11-22, coarsening the key and shrinking every --nightly-b stream at a
+# fixed QP.  The 87.284 bracket itself predates that move.
+run_nightly_b nightly_b_16 16 2 16 116 17249 \
+  6c242e1819fcd062d3891d225f9721bf
+run_nightly_b nightly_b_60_121 60 7 60 121 23066 \
+  72e04413362910d48d69c46b504fb9ed
+run_nightly_b nightly_b_60_122 60 7 60 122 22807 \
+  f5c5c8c4b74b0be2212fb7feada9cc15
+run_nightly_b nightly_b_60_123 60 7 60 123 22287 \
+  d94eda9047ddd0a002da742c9cdafbe6
 
 # 3c. Controls.  AV2ENC_COMPOUND_EXACT_RATE=0 restores the heuristic-priced
 # depth arm (87.023); --video-compound-depth-off restores the TIP-only 86.805
@@ -353,27 +379,27 @@ run_nightly_b_exact_off() {
   run_nightly_b "$@"
   unset AV2ENC_COMPOUND_EXACT_RATE
 }
-run_nightly_b_exact_off nightly_b_16_depth 16 2 16 116 19825 \
-  d6a55a0bd7cf11c5c4686cfe73b77330
-run_nightly_b_exact_off nightly_b_60_depth 60 7 60 123 25105 \
-  291f361abdc8583ada9e71c769a7de53
-run_nightly_b nightly_b_16_tip_only 16 2 16 116 19727 \
-  f6c7b79b6ddeab45b5447a7c50522685 --video-compound-depth-off
-run_nightly_b nightly_b_60_tip_only 60 7 60 121 25299 \
-  ca314db24a71fc1c28d7a1ba8eb1515f --video-compound-depth-off
-run_nightly_b nightly_b_16_compound_off 16 2 16 116 19759 \
-  8720425796fe80f3ddce067643adfec2 --video-compound-off
-run_nightly_b nightly_b_60_compound_off 60 7 60 131 24911 \
-  a4c8853e3abd752503db17be769b80a4 --video-compound-off
+run_nightly_b_exact_off nightly_b_16_depth 16 2 16 116 17318 \
+  1a5b8a5a90be82208f6211348f9397f8
+run_nightly_b_exact_off nightly_b_60_depth 60 7 60 123 22683 \
+  72f855880986d6c3928c8033081d3ece
+run_nightly_b nightly_b_16_tip_only 16 2 16 116 17169 \
+  8a8c54b46fc424776d29b8cd53ce619b --video-compound-depth-off
+run_nightly_b nightly_b_60_tip_only 60 7 60 121 23183 \
+  fd6a7538dd3cf3c47af37f6d1555b585 --video-compound-depth-off
+run_nightly_b nightly_b_16_compound_off 16 2 16 116 17219 \
+  cf835d7354fc3c46967bf79c442b8a05 --video-compound-off
+run_nightly_b nightly_b_60_compound_off 60 7 60 131 23270 \
+  5851c10a866b01aae6541e73a9a5c085 --video-compound-off
 run_nightly_b_tip_off() {
   export AV2ENC_TIP_LEAF=0
   run_nightly_b "$@"
   unset AV2ENC_TIP_LEAF
 }
-run_nightly_b_tip_off nightly_b_16_compound_only 16 2 16 116 19865 \
-  325ce3ddad26a81efbf5ae7cc9b90f0b --video-compound-depth-off
-run_nightly_b_tip_off nightly_b_60_compound_only 60 7 60 125 24988 \
-  3dbbad9847ab661c6c154903990ade75 --video-compound-depth-off
+run_nightly_b_tip_off nightly_b_16_compound_only 16 2 16 116 17335 \
+  d1208679c8c49d56f3416fd3d3bcf905 --video-compound-depth-off
+run_nightly_b_tip_off nightly_b_60_compound_only 60 7 60 125 23179 \
+  b5330f2d60f7293ae202da319209d8d5 --video-compound-depth-off
 
 # 4. Gate off must keep the nightly pins byte-identical (dav2d territory).
 pin_case() {
