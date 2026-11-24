@@ -161,6 +161,12 @@ chunk-boundary state, not to a code-path difference.
 | 119 | serial joint | 24,845 | 462.0 s | 1.00× |
 | 119 | batch chain 1 round | 24,848 (+0.01 %) | 195.0 s | 2.37× |
 
+> The QP119 rows are the **-50** arm, measured 2026-11-21.  `6ec51ab4`
+> re-keyed the chained-B preset on 11-22, so the same command now yields
+> 22,576 B (`BUG-GATES-002`); the timings and speeds were not re-run.  The
+> *ratios* in this table are the result under test and still hold within the
+> measurement; only the absolute byte column is historical.
+
 Oracle at QP122: serial PSNR-Y 47.141 / SS2 85.881 / K 87.322; batch 47.167 /
 85.865 / K 87.218. The batch point is at a 0.19 % *lower* rate, so the fixed-QP
 K column is not the matched-rate reading; the fixed-QP bytes are neutral to
@@ -311,4 +317,6 @@ Evidence, `clang++ -fsanitize=thread`, `halt_on_error=1`, 8 threads, 320x240:
 
 The fixes are stats/flag plumbing only. Gate-off pins (QP106 25,008 /
 `0639b436`, QP110 23,690 / `1b99127a`) and the 16-frame chained-B stream
-(19,723 / `505430de`) are byte-identical after them.
+(17,222 / `2a7fbe71`) are byte-identical after them.  (Re-recorded
+2026-11-25 after `6ec51ab4` re-keyed the chain, `BUG-GATES-002`; the 11-21
+reading was 19,723 / `505430de`.)

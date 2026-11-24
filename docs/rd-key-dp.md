@@ -224,11 +224,14 @@ shape-set change, and were outside this time box.
   `0639b43630abb454f7be5ac494d2efb4`**; QP110: **23,690 B /
   `1b99127a4cd1d386fa5600fb63c57a83`** — byte-identical, the gate is inert
   without the key driver.
-* `env AV2ENC_RD_KEY_DP=1` (commit 0) 16 f chained B QP116: **19,723 B /
-  `505430de620af361a18b42503543dbda`** — the instrument does not change the
-  committed stream.
-* `env AV2ENC_RD_KEY_DP=1` (commit 0) 60 f chained B QP119: **24,845 B /
-  `40de8b687d929652a312407764227398`** — the published joint arm's stream.
+* `env AV2ENC_RD_KEY_DP=1` (commit 0) 16 f chained B QP116: **17,222 B /
+  `2a7fbe710542a89c3a9d2c93fab94101`** — the instrument does not change the
+  committed stream.  (Re-recorded 2026-11-25: `6ec51ab4` re-keyed every
+  `--nightly-b` stream, `BUG-GATES-002`; the 11-21 reading was 19,723 B /
+  `505430de…`.  The claim being tested — instrument off == instrument on — is
+  re-verified by `gate_video_joint_plan.sh`, now 11/11.)
+* `env AV2ENC_RD_KEY_DP=1` (commit 0) 60 f chained B QP119: **22,576 B /
+  `4b622b15a0715820114765e17259868f`** — the published joint arm's stream.
 * `env AV2ENC_RD_KEY_DP=1` (commit 0) 60 f flat QP112 `--video-rd-preset best`:
   **25,007 B / `9a36aeb7c02733342e4ec5db300e4d6d`** — the promoted `best` pin.
 * `AV2ENC_RD_KEY_DP=0` and unset are the existing paths; no byte moved.  The
