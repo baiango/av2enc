@@ -1222,7 +1222,7 @@ inline bool compute_tx(const VideoInputFrame& frame, int plane, int x0, int y0, 
     rdoq_config.max_coefficients = area;
     av2enc::rdoq::RdoqResult rdoq_result;
     if (!av2enc::rdoq::rdoq_quantize(input, rdoq_config, model.rate_model(),
-                                     rdoq_result, &rdoq_error)) {
+                                     rdoq_result, rdoq_error)) {
       error = "rdoq quantize failed: " + rdoq_error;
       return false;
     }

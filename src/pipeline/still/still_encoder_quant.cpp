@@ -292,7 +292,7 @@ bool Encoder::compute_tx(int plane, int x0, int y0, int cw, int ch,
         av2enc::rdoq::RdoqResult rdoq_result;
         if (!av2enc::rdoq::rdoq_quantize(input, rdoq_config,
                                          model.rate_model(), rdoq_result,
-                                         &rdoq_error)) {
+                                         rdoq_error)) {
           error_ = "rdoq quantize failed: " + rdoq_error;
           return false;
         }
@@ -725,7 +725,7 @@ bool Encoder::compute_chroma_cctx(int x0, int y0, int cw, int ch,
         av2enc::rdoq::RdoqResult rdoq_result;
         if (!av2enc::rdoq::rdoq_quantize(input, rdoq_config,
                                          model.rate_model(), rdoq_result,
-                                         &rdoq_error)) {
+                                         rdoq_error)) {
           error_ = "cctx rdoq quantize failed: " + rdoq_error;
           return false;
         }

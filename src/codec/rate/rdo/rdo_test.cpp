@@ -321,7 +321,7 @@ void test_rdoq_bruteforce() {
 
   RdoqResult result;
   std::string error;
-  CHECK(rdoq_quantize(coefficients, config, model, result, &error));
+  CHECK(rdoq_quantize(coefficients, config, model, result, error));
 
   const std::size_t count = coefficients.size();
   double best_cost = std::numeric_limits<double>::infinity();
@@ -405,7 +405,7 @@ void test_rdoq() {
 
   RdoqResult result;
   std::string error;
-  CHECK(rdoq_quantize(coefficients, config, zero_model, result, &error));
+  CHECK(rdoq_quantize(coefficients, config, zero_model, result, error));
   std::vector<std::int32_t> expected_levels = {2, -1, 0, 3};
   CHECK(result.levels == expected_levels);
   CHECK(result.eob == 4);
@@ -427,7 +427,7 @@ void test_rdoq() {
   eob_config.quant_step = 1.0;
   eob_config.lambda = 0.1;
   CHECK(rdoq_quantize(single_coefficient, eob_config, eob_model, result,
-                      &error));
+                      error));
   CHECK(result.levels[0] == 1);
   CHECK(result.eob == 1);
   CHECK(near(result.distortion, 0.0));
@@ -437,7 +437,7 @@ void test_rdoq() {
   // A huge lambda drives every coefficient to zero.
   config.lambda = 1.0e9;
   const RdoqRateModel default_model = default_rdoq_rate_model();
-  CHECK(rdoq_quantize(coefficients, config, default_model, result, &error));
+  CHECK(rdoq_quantize(coefficients, config, default_model, result, error));
   std::vector<std::int32_t> zero_levels = {0, 0, 0, 0};
   CHECK(result.levels == zero_levels);
   CHECK(result.eob == 0);
@@ -455,7 +455,7 @@ void test_rdoq() {
   std::vector<RdoqCoefficient> tie_coefficients = {{6.0, 2, 0}};
   config.lambda = 0.0;
   config.quant_step = 4.0;
-  CHECK(rdoq_quantize(tie_coefficients, config, tie_model, result, &error));
+  CHECK(rdoq_quantize(tie_coefficients, config, tie_model, result, error));
   CHECK(result.levels.size() == 1);
   CHECK(result.levels[0] == 1);
   CHECK(result.eob == 1);
@@ -468,13 +468,13 @@ void test_rdoq() {
   config.allow_level_increase = true;
   config.max_level_delta = 1;
   CHECK(rdoq_quantize(increase_coefficients, config, zero_model, result,
-                      &error));
+                      error));
   CHECK(result.levels[0] == 2);
   CHECK(near(result.distortion, 1.0));
 
   config.allow_level_increase = false;
   CHECK(rdoq_quantize(increase_coefficients, config, zero_model, result,
-                      &error));
+                      error));
   CHECK(result.levels[0] == 1);
   CHECK(near(result.distortion, 9.0));
 
@@ -484,12 +484,12 @@ void test_rdoq() {
   config.quant_step = 4.0;
   config.lambda = 0.0;
   config.allow_zero_to_one = true;
-  CHECK(rdoq_quantize(zero_to_one, config, zero_model, result, &error));
+  CHECK(rdoq_quantize(zero_to_one, config, zero_model, result, error));
   CHECK(result.levels[0] == 1);
   CHECK(near(result.distortion, 1.0));
 
   config.allow_zero_to_one = false;
-  CHECK(rdoq_quantize(zero_to_one, config, zero_model, result, &error));
+  CHECK(rdoq_quantize(zero_to_one, config, zero_model, result, error));
   CHECK(result.levels[0] == 0);
   CHECK(near(result.distortion, 9.0));
 
@@ -503,7 +503,7 @@ void test_rdoq() {
   config = RdoqConfig{};
   config.quant_step = 4.0;
   config.lambda = 0.0;
-  CHECK(rdoq_quantize(trailing_zeros, config, zero_model, result, &error));
+  CHECK(rdoq_quantize(trailing_zeros, config, zero_model, result, error));
   std::vector<std::int32_t> trailing_levels = {2, 0, 0, 0};
   CHECK(result.levels == trailing_levels);
   CHECK(result.eob == 1);
@@ -512,10 +512,10 @@ void test_rdoq() {
   // Determinism: identical inputs give bit-identical results.
   config.lambda = 1.0;
   RdoqResult first;
-  CHECK(rdoq_quantize(coefficients, config, default_model, first, &error));
+  CHECK(rdoq_quantize(coefficients, config, default_model, first, error));
   for (int repeat = 0; repeat < 8; ++repeat) {
     RdoqResult again;
-    CHECK(rdoq_quantize(coefficients, config, default_model, again, &error));
+    CHECK(rdoq_quantize(coefficients, config, default_model, again, error));
     CHECK(again.levels == first.levels);
     CHECK(again.eob == first.eob);
     CHECK(again.distortion == first.distortion);
@@ -526,41 +526,41 @@ void test_rdoq() {
   // Invalid configs and rate hooks fail with an error and reset the result.
   config.quant_step = 0.0;
   error.clear();
-  CHECK(!rdoq_quantize(coefficients, config, default_model, result, &error));
+  CHECK(!rdoq_quantize(coefficients, config, default_model, result, error));
   CHECK(!error.empty());
   CHECK(result.levels.empty());
 
   config.quant_step = 4.0;
   config.max_coefficients = 2;
   error.clear();
-  CHECK(!rdoq_quantize(coefficients, config, default_model, result, &error));
+  CHECK(!rdoq_quantize(coefficients, config, default_model, result, error));
   CHECK(!error.empty());
 
   config.max_coefficients = 4096;
   config.max_level_delta = 2048;
   error.clear();
   CHECK(!rdoq_config_valid(config));
-  CHECK(!rdoq_quantize(coefficients, config, default_model, result, &error));
+  CHECK(!rdoq_quantize(coefficients, config, default_model, result, error));
   CHECK(!error.empty());
   config.max_level_delta = 1;
 
   RdoqRateModel negative_model = default_model;
   negative_model.coefficient_rate = &negative_rate;
   error.clear();
-  CHECK(!rdoq_quantize(coefficients, config, negative_model, result, &error));
+  CHECK(!rdoq_quantize(coefficients, config, negative_model, result, error));
   CHECK(!error.empty());
 
   RdoqRateModel negative_eob_model = default_model;
   negative_eob_model.eob_rate = &negative_eob_rate;
   error.clear();
   CHECK(!rdoq_quantize(coefficients, config, negative_eob_model, result,
-                       &error));
+                       error));
   CHECK(!error.empty());
 
   // Empty block is a valid all-zero result.
   std::vector<RdoqCoefficient> empty;
   error.clear();
-  CHECK(rdoq_quantize(empty, config, default_model, result, &error));
+  CHECK(rdoq_quantize(empty, config, default_model, result, error));
   CHECK(result.levels.empty());
   CHECK(result.eob == 0);
   CHECK(near(result.cost, 0.0));

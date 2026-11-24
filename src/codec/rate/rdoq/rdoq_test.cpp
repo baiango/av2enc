@@ -307,12 +307,12 @@ void test_lambda_zero_recovers_scalar() {
   config.prev_level_cap = 2;
   RdoqResult result;
   std::string error;
-  check(rdoq_quantize(block, config, rate_model, result, &error),
+  check(rdoq_quantize(block, config, rate_model, result, error),
         "lambda=0 quantisation succeeds");
   std::vector<std::int32_t> scalar(count);
   std::int32_t scalar_eob = 0;
   check(estimate_scalar_levels(block, config.quant_step, scalar, &scalar_eob,
-                               &error),
+                               error),
         "scalar estimate succeeds");
   check(result.eob == scalar_eob, "lambda=0 matches scalar EOB");
   bool levels_match = true;
@@ -334,11 +334,11 @@ void test_determinism() {
   config.quant_step = 7.5;
   RdoqResult first;
   std::string error;
-  check(rdoq_quantize(block, config, rate_model, first, &error),
+  check(rdoq_quantize(block, config, rate_model, first, error),
         "determinism: first run succeeds");
   for (int trial = 0; trial < 5; ++trial) {
     RdoqResult again;
-    check(rdoq_quantize(block, config, rate_model, again, &error),
+    check(rdoq_quantize(block, config, rate_model, again, error),
           "determinism: repeated run succeeds");
     check(again.eob == first.eob, "determinism: EOB stable");
     check(again.levels == first.levels, "determinism: levels stable");
@@ -373,7 +373,7 @@ void test_exhaustive(std::size_t count,
 
   RdoqResult result;
   std::string error;
-  check(rdoq_quantize(block, config, rate_model, result, &error),
+  check(rdoq_quantize(block, config, rate_model, result, error),
         label);
   double brute_cost = 0.0;
   std::vector<std::int32_t> brute =
@@ -412,7 +412,7 @@ void test_random_larger_blocks() {
       config.allow_zero_to_one = true;
       RdoqResult result;
       std::string error;
-      check(rdoq_quantize(block, config, rate_model, result, &error),
+      check(rdoq_quantize(block, config, rate_model, result, error),
             "random larger block quantises");
 
       // Independent forward DP over exactly the same per-coefficient range
@@ -431,7 +431,7 @@ void test_random_larger_blocks() {
       std::int32_t scalar_eob = 0;
       std::string scalar_error;
       check(estimate_scalar_levels(block, config.quant_step, scalar,
-                                   &scalar_eob, &scalar_error),
+                                   &scalar_eob, scalar_error),
             "random larger block scalar estimate");
       const double scalar_cost =
           evaluate_path(block, scalar, scalar_eob, config, rate_model);
@@ -499,7 +499,7 @@ void test_batch() {
   output.status = status;
   BatchConfig config;
   std::string error;
-  check(rdoq_quantize_batch(input, config, rate_model, output, &error),
+  check(rdoq_quantize_batch(input, config, rate_model, output, error),
         "batch quantisation succeeds");
   for (int b = 0; b < 3; ++b) {
     const std::size_t block_offset = static_cast<std::size_t>(
@@ -521,7 +521,7 @@ void test_batch() {
     RdoqResult single;
     std::string single_error;
     check(rdoq_quantize(block, single_config, rate_model, single,
-                        &single_error),
+                        single_error),
           "batch: scalar path succeeds");
     check(status[static_cast<std::size_t>(b)] == 0, "batch status is ok");
     check(eob[static_cast<std::size_t>(b)] == single.eob,
@@ -547,13 +547,13 @@ void test_invalid_inputs() {
   RdoqResult result;
   std::string error;
   block[2].original = std::numeric_limits<double>::quiet_NaN();
-  check(!rdoq_quantize(block, config, rate_model, result, &error),
+  check(!rdoq_quantize(block, config, rate_model, result, error),
         "non-finite coefficient rejected");
   check(result.levels.empty(), "failed call leaves the result empty");
   block[2].original = 0.0;
 
   config.max_coefficients = 2;
-  check(!rdoq_quantize(block, config, rate_model, result, &error),
+  check(!rdoq_quantize(block, config, rate_model, result, error),
         "oversized block rejected");
 
   config.max_coefficients = 4096;
@@ -562,13 +562,13 @@ void test_invalid_inputs() {
                             std::int32_t, std::int32_t) -> double {
     return -1.0;
   };
-  check(!rdoq_quantize(block, config, bad, result, &error),
+  check(!rdoq_quantize(block, config, bad, result, error),
         "negative rate rejected");
   bad.coefficient_rate = [](void*, std::int32_t, std::int32_t, std::int32_t,
                             std::int32_t, std::int32_t) -> double {
     return std::numeric_limits<double>::quiet_NaN();
   };
-  check(!rdoq_quantize(block, config, bad, result, &error),
+  check(!rdoq_quantize(block, config, bad, result, error),
         "NaN rate rejected");
 }
 
@@ -652,7 +652,7 @@ void test_av2_model() {
   config.quant_step = 8.0;
   config.prev_level_cap = 2;
   RdoqResult result;
-  check(rdoq_quantize(block, config, model.rate_model(), result, &error),
+  check(rdoq_quantize(block, config, model.rate_model(), result, error),
         "RDOQ with the AV2 model succeeds");
   const double scalar_cost = [&]() {
     double distortion = 0.0;
@@ -670,7 +670,7 @@ void test_av2_model() {
   // txb_skip[1] and eob plane context 1, and the trellis runs on it.
   RdoqResult inter_result;
   check(rdoq_quantize(block, config, inter_model.rate_model(), inter_result,
-                      &error),
+                      error),
         "RDOQ with the AV2 inter model succeeds");
 }
 

@@ -299,7 +299,7 @@ inline bool trellis_plan(const LevelParams& p, const std::uint8_t* src,
   config.max_coefficients = area;
   av2enc::rdoq::RdoqResult result;
   if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), result,
-                                   &error)) {
+                                   error)) {
     return false;
   }
 

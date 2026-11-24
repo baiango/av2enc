@@ -93,7 +93,7 @@ struct Config {
 };
 
 [[nodiscard]] bool rdoq_config_valid(const Config& config) noexcept;
-[[nodiscard]] bool validate_rdoq_config(const Config& config, std::string* error = nullptr);
+[[nodiscard]] bool validate_rdoq_config(const Config& config, std::string& error);
 
 // Estimated bits for coding one signed coefficient level.
 //
@@ -188,7 +188,7 @@ struct RdoqResult {
                    const Config& config,
                    const RateModel& rate_model,
                    RdoqResult& result,
-                   std::string* error = nullptr);
+                   std::string& error);
 
 // Derives the largest magnitude the trellis searches for one coefficient under
 // `config` (derived bound + 64-level margin, or `Config::level_cap` when set).
@@ -205,7 +205,7 @@ std::int32_t rdoq_level_bound(const Coefficient& coefficient,
                             double quant_step,
                             std::span<std::int32_t> levels,
                             std::int32_t* eob,
-                            std::string* error = nullptr);
+                            std::string& error);
 
 // ---------------------------------------------------------------------------
 // Batch interface
@@ -261,6 +261,6 @@ struct BatchOutput {
                          const BatchConfig& config,
                          const RateModel& rate_model,
                          BatchOutput& output,
-                         std::string* error = nullptr);
+                         std::string& error);
 
 }  // namespace av2enc::rdoq

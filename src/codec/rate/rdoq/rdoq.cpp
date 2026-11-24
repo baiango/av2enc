@@ -129,25 +129,25 @@ bool rdoq_config_valid(const Config& config) noexcept {
          config.level_cap >= 0 && config.max_coefficients >= 0;
 }
 
-bool validate_rdoq_config(const Config& config, std::string* error) {
+bool validate_rdoq_config(const Config& config, std::string& error) {
   if (!std::isfinite(config.lambda) || config.lambda < 0.0) {
-    if (error != nullptr) *error = "RdoqConfig.lambda must be finite and >= 0";
+    error = "RdoqConfig.lambda must be finite and >= 0";
     return false;
   }
   if (!std::isfinite(config.quant_step) || config.quant_step <= 0.0) {
-    if (error != nullptr) *error = "RdoqConfig.quant_step must be finite and > 0";
+    error = "RdoqConfig.quant_step must be finite and > 0";
     return false;
   }
   if (config.prev_level_cap < 0 || config.prev_level_cap > 63) {
-    if (error != nullptr) *error = "RdoqConfig.prev_level_cap must be in [0, 63]";
+    error = "RdoqConfig.prev_level_cap must be in [0, 63]";
     return false;
   }
   if (config.level_cap < 0) {
-    if (error != nullptr) *error = "RdoqConfig.level_cap must be >= 0";
+    error = "RdoqConfig.level_cap must be >= 0";
     return false;
   }
   if (config.max_coefficients < 0) {
-    if (error != nullptr) *error = "RdoqConfig.max_coefficients must be >= 0";
+    error = "RdoqConfig.max_coefficients must be >= 0";
     return false;
   }
   return true;
@@ -208,19 +208,19 @@ bool estimate_scalar_levels(std::span<const Coefficient> coefficients,
                             double quant_step,
                             std::span<std::int32_t> levels,
                             std::int32_t* eob,
-                            std::string* error) {
+                            std::string& error) {
   if (!std::isfinite(quant_step) || quant_step <= 0.0) {
-    if (error != nullptr) *error = "quant_step must be finite and > 0";
+    error = "quant_step must be finite and > 0";
     return false;
   }
   if (levels.size() != coefficients.size()) {
-    if (error != nullptr) *error = "levels span size must match the block";
+    error = "levels span size must match the block";
     return false;
   }
   std::int32_t last = 0;
   for (std::size_t i = 0; i < coefficients.size(); ++i) {
     if (!std::isfinite(coefficients[i].original)) {
-      if (error != nullptr) *error = "Coefficient.original must be finite";
+      error = "Coefficient.original must be finite";
       return false;
     }
     const std::int32_t level = scalar_level_for(coefficients[i], quant_step);
@@ -237,7 +237,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
                    const Config& config,
                    const RateModel& rate_model,
                    RdoqResult& result,
-                   std::string* error) {
+                   std::string& error) {
   result.clear();
 
   if (!validate_rdoq_config(config, error)) {
@@ -245,14 +245,12 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   }
   const std::size_t count = coefficients.size();
   if (count > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
-    if (error != nullptr) *error = "coefficient count does not fit in int32";
+    error = "coefficient count does not fit in int32";
     return false;
   }
   const std::int32_t num_coefficients = static_cast<std::int32_t>(count);
   if (num_coefficients > config.max_coefficients) {
-    if (error != nullptr) {
-      *error = "coefficient count exceeds RdoqConfig.max_coefficients";
-    }
+    error = "coefficient count exceeds RdoqConfig.max_coefficients";
     return false;
   }
 
@@ -273,14 +271,14 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   if (count == 0) {
     const double bits = eob_rate(rate_context, 0, 0);
     if (!valid_rate(bits)) {
-      if (error != nullptr) *error = "RdoqEobRateFn returned an invalid value";
+      error = "RdoqEobRateFn returned an invalid value";
       return false;
     }
     result.eob = 0;
     result.rate_bits = bits;
     result.cost = lambda * bits;
     if (!std::isfinite(result.cost)) {
-      if (error != nullptr) *error = "RDOQ cost is not finite";
+      error = "RDOQ cost is not finite";
       result.clear();
       return false;
     }
@@ -292,7 +290,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   for (std::int32_t i = 0; i <= num_coefficients; ++i) {
     const double bits = eob_rate(rate_context, i, num_coefficients);
     if (!valid_rate(bits)) {
-      if (error != nullptr) *error = "RdoqEobRateFn returned an invalid value";
+      error = "RdoqEobRateFn returned an invalid value";
       return false;
     }
     eob_bits[static_cast<std::size_t>(i)] = bits;
@@ -304,7 +302,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   for (std::size_t i = count; i-- > 0;) {
     const double original = coefficients[i].original;
     if (!std::isfinite(original)) {
-      if (error != nullptr) *error = "Coefficient.original must be finite";
+      error = "Coefficient.original must be finite";
       return false;
     }
     suffix_zero[i] = suffix_zero[i + 1] + original * original;
@@ -359,7 +357,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
     std::int32_t bound = 0;
     bool clipped = false;
     if (!level_bound_for(coefficient, config, &bound, &clipped)) {
-      if (error != nullptr) *error = "Coefficient.original must be finite";
+      error = "Coefficient.original must be finite";
       return false;
     }
     truncated = truncated || clipped;
@@ -454,7 +452,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
         const double normal_bits = rate_for(magnitude, prev, /*is_eob=*/false,
                                             &normal_ok);
         if (!normal_ok) {
-          if (error != nullptr) *error = "RdoqRateFn returned an invalid value";
+          error = "RdoqRateFn returned an invalid value";
           return false;
         }
         const std::size_t next_index = static_cast<std::size_t>(next_state);
@@ -479,7 +477,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
           const double eob_coeff_bits =
               rate_for(magnitude, prev, /*is_eob=*/true, &eob_ok);
           if (!eob_ok) {
-            if (error != nullptr) *error = "RdoqRateFn returned an invalid value";
+            error = "RdoqRateFn returned an invalid value";
             return false;
           }
           Choice candidate;
@@ -530,7 +528,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   }
 
   if (!std::isfinite(dp_next[0])) {
-    if (error != nullptr) *error = "RDOQ trellis has no valid path";
+    error = "RDOQ trellis has no valid path";
     return false;
   }
 
@@ -574,7 +572,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
         rate_context, i, previous, level,
         coefficients[static_cast<std::size_t>(i)].level_context, is_eob);
     if (!valid_rate(bits)) {
-      if (error != nullptr) *error = "RdoqRateFn returned an invalid value";
+      error = "RdoqRateFn returned an invalid value";
       result.clear();
       return false;
     }
@@ -584,7 +582,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   const double cost = distortion + lambda * rate_bits;
   if (!std::isfinite(distortion) || !std::isfinite(rate_bits) ||
       !valid_rate(rate_bits) || !std::isfinite(cost)) {
-    if (error != nullptr) *error = "RDOQ result is not finite";
+    error = "RDOQ result is not finite";
     result.clear();
     return false;
   }
@@ -602,7 +600,7 @@ bool rdoq_quantize_batch(const BatchInput& input,
                          const BatchConfig& config,
                          const RateModel& rate_model,
                          BatchOutput& output,
-                         std::string* error) {
+                         std::string& error) {
   if (input.blocks.empty()) {
     return true;
   }
@@ -611,17 +609,17 @@ bool rdoq_quantize_batch(const BatchInput& input,
       output.rate_bits.size() < input.blocks.size() ||
       output.cost.size() < input.blocks.size() ||
       output.status.size() < input.blocks.size()) {
-    if (error != nullptr) *error = "batch output arrays are too small";
+    error = "batch output arrays are too small";
     return false;
   }
   const bool has_context = !input.level_context.empty();
   const bool has_scalar = !input.scalar_level.empty();
   if (has_context && input.level_context.size() != input.original.size()) {
-    if (error != nullptr) *error = "level_context size must match original";
+    error = "level_context size must match original";
     return false;
   }
   if (has_scalar && input.scalar_level.size() != input.original.size()) {
-    if (error != nullptr) *error = "scalar_level size must match original";
+    error = "scalar_level size must match original";
     return false;
   }
 
@@ -632,7 +630,7 @@ bool rdoq_quantize_batch(const BatchInput& input,
     output.status[block_index] = -1;
     if (block.coefficient_offset < 0 || block.num_coefficients < 0 ||
         block.level_offset < 0) {
-      if (error != nullptr) *error = "batch block has a negative offset/size";
+      error = "batch block has a negative offset/size";
       return false;
     }
     const std::size_t begin =
@@ -642,7 +640,7 @@ bool rdoq_quantize_batch(const BatchInput& input,
         static_cast<std::size_t>(block.level_offset);
     if (begin + n > input.original.size() ||
         level_begin + n > output.levels.size()) {
-      if (error != nullptr) *error = "batch block is outside its arrays";
+      error = "batch block is outside its arrays";
       return false;
     }
 
@@ -668,10 +666,8 @@ bool rdoq_quantize_batch(const BatchInput& input,
     RdoqResult result;
     std::string block_error;
     if (!rdoq_quantize(scratch, block_config, rate_model, result,
-                       &block_error)) {
-      if (error != nullptr) {
-        *error = "block " + std::to_string(block_index) + ": " + block_error;
-      }
+                       block_error)) {
+      error = "block " + std::to_string(block_index) + ": " + block_error;
       return false;
     }
     for (std::size_t i = 0; i < n; ++i) {

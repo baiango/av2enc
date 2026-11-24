@@ -739,7 +739,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     config.max_coefficients = area;
     av2enc::rdoq::RdoqResult& result = scratch.rdoq_result;
     if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), result,
-                                     &rdoq_error)) {
+                                     rdoq_error)) {
       if (error != nullptr) *error = "rdoq quantize failed: " + rdoq_error;
       return false;
     }
