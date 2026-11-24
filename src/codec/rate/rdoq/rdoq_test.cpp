@@ -672,6 +672,107 @@ void test_av2_model() {
         "RDOQ with the AV2 inter model succeeds");
 }
 
+// The all-zero fast path shares one immutable context table per
+// (w, h, plane).  Prove it is identical to the generic per-block build that
+// the same zero levels produce with sharing disabled: same EOB, same total
+// bits and the same per-position symbol cost for every magnitude that matters.
+void test_zero_table_matches_generic() {
+  const std::vector<std::pair<std::int32_t, std::int32_t>> shapes = {
+      {4, 4},  {8, 8},  {16, 16}, {32, 32}, {64, 64}, {8, 32},  {32, 8},
+      {16, 4}, {4, 16}, {16, 32}, {32, 16}, {64, 16}, {16, 64}, {4, 32}};
+  std::int32_t compared = 0;
+  for (const auto& [w, h] : shapes) {
+    for (int plane = 0; plane < 3; ++plane) {
+      av2::BlockInfo info;
+      info.params = av2enc::txv::TxParams{};
+      info.params.tx_size = 0;
+      info.params.coded_w = static_cast<std::int16_t>(w);
+      info.params.coded_h = static_cast<std::int16_t>(h);
+      info.params.w = static_cast<std::int16_t>(w);
+      info.params.h = static_cast<std::int16_t>(h);
+      info.plane = plane;
+      info.txb_skip_context = 0;
+      info.dc_sign_context = 0;
+      for (bool is_inter : {false, true}) {
+        info.is_inter = is_inter;
+        const std::vector<std::int32_t> zeros(
+            static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
+        av2::Model shared;
+        av2::Model generic;
+        std::string error;
+        av2::Model::set_zero_table_cache_for_testing(true);
+        check(shared.init(info, zeros, error),
+              "zero model initialises (shared)");
+        av2::Model::set_zero_table_cache_for_testing(false);
+        const bool generic_ok = generic.init(info, zeros, error);
+        av2::Model::set_zero_table_cache_for_testing(true);
+        check(generic_ok, "zero model initialises (generic)");
+        if (!generic_ok) continue;
+
+        check(shared.scalar_eob() == generic.scalar_eob() &&
+                  shared.scalar_eob() == 0,
+              "zero block has EOB 0 on both paths");
+        check(shared.scalar_bits() == generic.scalar_bits(),
+              "zero block total bits match the generic build");
+        // A copied model must price identically: the shared table is immutable
+        // and an owned table is reached through the copy's own buffer.
+        av2::Model copied = shared;
+        check(copied.scalar_bits() == shared.scalar_bits(),
+              "copied zero model prices like the original");
+        ++compared;
+
+        const std::int32_t area = w * h;
+        for (std::int32_t pos = 0; pos < area; ++pos) {
+          check(av2::Model::eob_rate(&shared, pos, area) ==
+                    av2::Model::eob_rate(&generic, pos, area),
+                "zero block EOB rate matches the generic build");
+          for (std::int32_t magnitude = 0; magnitude <= 9; ++magnitude) {
+            for (std::int32_t sign : {1, -1}) {
+              const std::int32_t level = magnitude == 0 ? 0 : sign * magnitude;
+              for (std::int32_t is_eob : {0, 1}) {
+                check(av2::Model::coefficient_rate(&shared, pos, 0, level, 0,
+                                                   is_eob) ==
+                          av2::Model::coefficient_rate(&generic, pos, 0, level,
+                                                       0, is_eob),
+                      "zero block coefficient rate matches the generic "
+                      "build");
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  check(compared > 0, "zero-table comparison ran");
+
+  // The owned (non-zero) path must survive a copy too: a copied model reads
+  // its own table, not the original's buffer.
+  av2::BlockInfo info;
+  info.params = av2enc::txv::TxParams{};
+  info.params.tx_size = 1;
+  info.params.coded_w = 8;
+  info.params.coded_h = 8;
+  info.params.w = 8;
+  info.params.h = 8;
+  std::vector<std::int32_t> levels(64, 0);
+  levels[0] = 9;
+  levels[5] = -4;
+  levels[21] = 3;
+  av2::Model model;
+  std::string error;
+  check(model.init(info, levels, error), "non-zero model initialises");
+  av2::Model model_copy = model;
+  check(model_copy.scalar_bits() == model.scalar_bits(),
+        "copied non-zero model prices like the original");
+  for (std::int32_t pos = 0; pos < 64; ++pos) {
+    for (std::int32_t level : {0, 1, -1, 4}) {
+      check(av2::Model::coefficient_rate(&model_copy, pos, 0, level, 0, 0) ==
+                av2::Model::coefficient_rate(&model, pos, 0, level, 0, 0),
+            "copied non-zero model keeps its context table");
+    }
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -689,6 +790,7 @@ int main() {
   test_batch();
   test_invalid_inputs();
   test_av2_model();
+  test_zero_table_matches_generic();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
   if (g_failures != 0) {
     std::printf("RESULT: FAIL\n");

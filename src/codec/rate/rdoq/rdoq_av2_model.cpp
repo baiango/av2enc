@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -153,6 +154,13 @@ std::int32_t pre_level_from_abs(std::int32_t abs_value,
   return base + (pre - base);
 }
 
+// All-zero table sharing.  Relaxed is enough: the flag is only flipped by the
+// single-threaded test before any model is used.
+std::atomic<bool> g_zero_cache{true};
+bool zero_cache_enabled() noexcept {
+  return g_zero_cache.load(std::memory_order_relaxed);
+}
+
 }  // namespace
 
 void build_scan(std::int32_t w, std::int32_t h,
@@ -200,7 +208,8 @@ bool Model::init(const BlockInfo& info,
               ? 0
               : (info.qctx >= av2enc::still::qctx::kSliceCount ? av2enc::still::qctx::kSliceCount - 1
                                                     : info.qctx);
-  positions_.clear();
+  owned_positions_.clear();
+  shared_positions_ = nullptr;
   levels_scan_.clear();
   scalar_eob_ = 0;
 
@@ -261,6 +270,16 @@ bool Model::init(const BlockInfo& info,
   // approximation.  Note that the neighbour values are magnitudes, not signed
   // levels.
   std::vector<std::int32_t> level_pre(static_cast<std::size_t>(area), 0);
+  // An all-zero block needs nothing from the loops below: every pre-level is
+  // already 0, its contexts are a pure function of (w, h, plane) and its
+  // escape predictors are all 0 (no level reaches max_level).  Take the shared
+  // table; ~93% of Model::init() calls on --nightly-b are this case.
+  if (scalar_eob_ == 0 && zero_cache_enabled()) {
+    if (const std::vector<Position>* zero = zero_positions(w, h, info.plane)) {
+      shared_positions_ = zero;
+      return true;
+    }
+  }
   for (std::int32_t c = 0; c < area; ++c) {
     const std::int32_t pos = scan[static_cast<std::size_t>(c)];
     const std::int32_t row = pos / w;
@@ -276,29 +295,53 @@ bool Model::init(const BlockInfo& info,
         pre_level_from_abs(abs_value, base_levels, base_max, pre_max);
   }
 
+  if (!build_positions(w, h, info.plane, scan, level_pre, owned_positions_,
+                       error)) {
+    return false;
+  }
+  // Escape predictor state from the scalar reverse scan.
+  std::int32_t hr_level_avg = 0;
+  for (std::int32_t c = area; c-- > 0;) {
+    Position& p = owned_positions_[static_cast<std::size_t>(c)];
+    p.hr_pred = hr_level_avg;
+    const std::int32_t abs_value =
+        abs_i32(levels_scan_[static_cast<std::size_t>(c)]);
+    if (abs_value >= p.max_level) {
+      const std::int32_t pre = pre_level_from_abs(
+          abs_value, p.base_levels, p.base_max, p.pre_max);
+      const std::int32_t x = abs_value - pre;
+      hr_level_avg = (x + hr_level_avg) >> 1;
+    }
+  }
+
+  return true;
+}
+
+bool Model::build_positions(std::int32_t w, std::int32_t h, int plane,
+                            std::span<const std::int32_t> scan,
+                            const std::vector<std::int32_t>& level_pre,
+                            std::vector<Position>& out, std::string& error) {
   static constexpr int kSigRef[5][2] = {
       {0, 1}, {1, 0}, {1, 1}, {0, 2}, {2, 0}};
   static constexpr int kMagRef[3][2] = {{0, 1}, {1, 0}, {1, 1}};
+  const std::int32_t area = w * h;
 
-  positions_.resize(static_cast<std::size_t>(area));
+  out.resize(static_cast<std::size_t>(area));
   for (std::int32_t c = 0; c < area; ++c) {
-    Position& p = positions_[static_cast<std::size_t>(c)];
+    Position& p = out[static_cast<std::size_t>(c)];
     p.pos = scan[static_cast<std::size_t>(c)];
     p.row = p.pos / w;
     p.col = p.pos % w;
-    p.is_lf = (info.plane == 0 ? (p.row + p.col) < 4
-                               : (p.row + p.col) < 1)
-                  ? 1
-                  : 0;
+    p.is_lf = (plane == 0 ? (p.row + p.col) < 4 : (p.row + p.col) < 1) ? 1 : 0;
     p.base_levels = p.is_lf ? 4 : 2;
     p.base_max = p.is_lf ? 5 : 3;
-    p.br_max = (p.is_lf && info.plane > 0) ? 0 : 3;
+    p.br_max = (p.is_lf && plane > 0) ? 0 : 3;
     p.pre_max = p.base_max + p.br_max;
-    p.max_level = p.is_lf ? (info.plane == 0 ? 8 : 5) : 6;
-    p.is_dc = (info.plane == 0 && p.pos == 0) ? 1 : 0;
+    p.max_level = p.is_lf ? (plane == 0 ? 8 : 5) : 6;
+    p.is_dc = (plane == 0 && p.pos == 0) ? 1 : 0;
 
     const std::int32_t limit = p.is_lf ? 5 : 3;
-    if (info.plane == 0) {
+    if (plane == 0) {
       std::int32_t mag = 0;
       for (int k = 0; k < 5; ++k) {
         const std::int32_t rr = p.row + kSigRef[k][0];
@@ -338,7 +381,7 @@ bool Model::init(const BlockInfo& info,
       }
       const std::int32_t mctx = (mag + 1) >> 1;
       const std::int32_t ctx2 = std::min(mctx, 3);
-      p.base_ctx = info.plane == 1 ? ctx2 : ctx2 + 4;
+      p.base_ctx = plane == 1 ? ctx2 : ctx2 + 4;
     }
 
     if (c == 0) {
@@ -361,7 +404,7 @@ bool Model::init(const BlockInfo& info,
       }
     }
     br_mag = std::min((br_mag + 1) >> 1, 6);
-    if (info.plane == 0) {
+    if (plane == 0) {
       if (p.is_lf != 0) {
         p.br_ctx = br_mag + (p.pos != 0 ? 7 : 0);
       } else {
@@ -372,24 +415,9 @@ bool Model::init(const BlockInfo& info,
     }
   }
 
-  // Escape predictor state from the scalar reverse scan.
-  std::int32_t hr_level_avg = 0;
-  for (std::int32_t c = area; c-- > 0;) {
-    Position& p = positions_[static_cast<std::size_t>(c)];
-    p.hr_pred = hr_level_avg;
-    const std::int32_t abs_value =
-        abs_i32(levels_scan_[static_cast<std::size_t>(c)]);
-    if (abs_value >= p.max_level) {
-      const std::int32_t pre = pre_level_from_abs(
-          abs_value, p.base_levels, p.base_max, p.pre_max);
-      const std::int32_t x = abs_value - pre;
-      hr_level_avg = (x + hr_level_avg) >> 1;
-    }
-  }
-
   // Validate the context ranges against the table dimensions.
-  for (const Position& p : positions_) {
-    if (info.plane == 0) {
+  for (const Position& p : out) {
+    if (plane == 0) {
       if (p.is_lf != 0 ? p.base_ctx > 32 : p.base_ctx > 19) {
         error = "coeff_base context out of range";
         return false;
@@ -404,6 +432,55 @@ bool Model::init(const BlockInfo& info,
     }
   }
   return true;
+}
+
+const std::vector<Model::Position>* Model::zero_positions(std::int32_t w,
+                                                         std::int32_t h,
+                                                         int plane) noexcept {
+  // Cached geometry: any legal transform dimensions, indexed by (w, h, plane).
+  // 64 is kMaxCodedTxDim, the largest dimension cached_scan() accepts.
+  constexpr int kDim = 64;
+  constexpr int kPlanes = 3;
+  constexpr std::size_t kSlots =
+      static_cast<std::size_t>(kDim + 1) * (kDim + 1) * kPlanes;
+  if (w <= 0 || h <= 0 || w > kDim || h > kDim || plane < 0 ||
+      plane >= kPlanes) {
+    return nullptr;
+  }
+  const std::size_t slot =
+      (static_cast<std::size_t>(w) * (kDim + 1) + static_cast<std::size_t>(h)) *
+          kPlanes +
+      static_cast<std::size_t>(plane);
+  // One atomic pointer per slot: publish once, then read without a lock.  A
+  // racer that builds the same entry twice computes the identical table, so
+  // either pointer is correct and the loser drops its copy.
+  static std::array<std::atomic<const std::vector<Position>*>, kSlots> cache{};
+  const std::vector<Position>* published =
+      cache[slot].load(std::memory_order_acquire);
+  if (published != nullptr) return published;
+  std::vector<Position> built;
+  const std::span<const std::int32_t> scan = cached_scan(w, h);
+  const std::vector<std::int32_t> level_pre(
+      static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
+  std::string ignored;
+  if (scan.size() !=
+          static_cast<std::size_t>(w) * static_cast<std::size_t>(h) ||
+      !build_positions(w, h, plane, scan, level_pre, built, ignored)) {
+    return nullptr;
+  }
+  auto* owned = new std::vector<Position>(std::move(built));
+  const std::vector<Position>* expected = nullptr;
+  if (!cache[slot].compare_exchange_strong(expected, owned,
+                                           std::memory_order_release,
+                                           std::memory_order_acquire)) {
+    delete owned;
+    return expected;
+  }
+  return owned;
+}
+
+void Model::set_zero_table_cache_for_testing(bool enabled) noexcept {
+  g_zero_cache.store(enabled, std::memory_order_relaxed);
 }
 
 RateModel Model::rate_model() noexcept {
@@ -472,7 +549,7 @@ double Model::coefficient_bits(std::int32_t scan_pos,
     return kImpossibleBits;
   }
   const av2enc::still::qctx::CoeffCdfSlice& q = slice();
-  const Position& p = positions_[static_cast<std::size_t>(scan_pos)];
+  const Position& p = positions()[static_cast<std::size_t>(scan_pos)];
   const std::int32_t tsc =
       (av2enc::still::kTxSizeSqr[info_.params.tx_size] +
        av2enc::still::kTxSizeSqrUp[info_.params.tx_size] + 1) >> 1;

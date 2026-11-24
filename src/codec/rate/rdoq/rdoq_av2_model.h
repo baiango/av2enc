@@ -122,6 +122,12 @@ class Model {
                          std::int32_t eob,
                          std::int32_t num_coefficients);
 
+  // Testing hook: when disabled, init() always builds the per-block table,
+  // even for an all-zero block, so a test can compare the shared zero table
+  // against the generic build bit for bit.  Enabled by default; the encoder
+  // never calls this.
+  static void set_zero_table_cache_for_testing(bool enabled) noexcept;
+
  private:
   struct Position {
     std::int32_t pos = 0;      // raster index
@@ -147,9 +153,40 @@ class Model {
   const std::uint16_t* txb_skip_cdf() const;
   std::int32_t scalar_level(std::int32_t scan_pos) const;
 
+  // Builds the per-scan-position context table from the coded "pre-level"
+  // plane.  Pure: the result is a function of (w, h, plane, scan, level_pre)
+  // only, which is what lets an all-zero block share one immutable table.
+  // `error` is set (and false returned) if a context leaves its table range.
+  static bool build_positions(std::int32_t w, std::int32_t h, int plane,
+                              std::span<const std::int32_t> scan,
+                              const std::vector<std::int32_t>& level_pre,
+                              std::vector<Position>& out, std::string& error);
+
+  // Context table for an all-zero block of this geometry, built once and
+  // shared by every later all-zero block of the same (w, h, plane).  Such a
+  // block is ~93% of Model::init() calls on the --nightly-b recipe and its
+  // table is identical every time, so this is pure work elimination.  Returns
+  // nullptr (caller falls back to the per-block build) for geometry outside
+  // the cached range.  Lock-free on the hot path.
+  static const std::vector<Position>* zero_positions(std::int32_t w,
+                                                     std::int32_t h,
+                                                     int plane) noexcept;
+
   BlockInfo info_{};
   int qctx_ = 0;  // == info_.qctx; clamped 0..3 in init()
-  std::vector<Position> positions_;
+  // The per-scan-position context table.  A block with any non-zero level owns
+  // it in `owned_positions_`; an all-zero block points at a shared immutable
+  // cache entry instead, because when every level is zero the whole table
+  // (contexts, escape predictors) is a pure function of (w, h, plane) and
+  // rebuilding it per candidate is pure wasted work.  Either way the table is
+  // read-only once init() returns.  `shared_positions_` is null unless the
+  // shared entry is in use, so a moved/copied model cannot leave it dangling
+  // on its own buffer.
+  std::vector<Position> owned_positions_;
+  const std::vector<Position>* shared_positions_ = nullptr;
+  const std::vector<Position>& positions() const noexcept {
+    return shared_positions_ != nullptr ? *shared_positions_ : owned_positions_;
+  }
   std::vector<std::int32_t> levels_scan_;
   std::int32_t area_ = 0;
   std::int32_t scalar_eob_ = 0;

@@ -538,3 +538,69 @@ the kernel untouched. Worth knowing: the two passes do **not** share a layout.
 **15.6 % off single-thread CPU time** (reps 108.52-108.76 vs 91.35-91.77), on
 top of the 12.1 % from the inverse pass. Together the two transform slots
 account for the bulk of the 21.1 % the transform subsystem held in the profile.
+
+## RDOQ `Model::init`: the all-zero table (2026-11-24)
+
+The `--nightly-b` profile puts the RDOQ model + trellis at ~33 % of work, and
+inside it `rdoq::Model::init` is the single largest function (~14–19 % of all
+work here). Instrumenting `init` on the 16-frame QP116 recipe showed why:
+
+| `Model::init` case | calls | time |
+|---|---:|---:|
+| all-zero block | 18,246,495 (**93 %**) | **13.80 s** |
+| any non-zero level | 1,397,514 | 1.85 s |
+
+For an all-zero block every pre-level is 0, so the whole position table
+(contexts and escape predictors) is a **pure function of `(w, h, plane)`** —
+yet it was rebuilt, for every TX candidate, eighteen million times.
+
+### What landed
+
+`Model::init` takes a shared immutable table for an all-zero block, built once
+per `(w, h, plane)` and published lock-free (one `atomic<const vector*>`
+compare-exchange per slot; a racing duplicate computes the identical table and
+is simply dropped). The context builder is now one static function,
+`Model::build_positions()`, used by both the per-block path and the cache, so
+the shared and generic tables cannot drift. The model reaches either table
+through `positions()`; a copied model reads its own buffers (tested).
+
+No arithmetic moved: this is work elimination, not vectorisation. That is
+deliberate — the remaining per-block gather is ~1.8 s and a 2× vectorised
+version would buy ~1.2 % of the encode, while the zero table was 14 %.
+
+### Correctness
+
+- `rdoq_test` `test_zero_table_matches_generic`: for 14 geometries × 3 planes ×
+  {intra, inter} it builds the shared and the generic table and compares EOB,
+  total bits and the per-position symbol rate for magnitudes 0..9, both signs,
+  EOB and non-EOB — **2.29 M checks, 0 failures** (and clean under
+  ASan/UBSan).
+- All five pinned streams **and** their Stage-0 dumps byte-identical at 1 and 8
+  threads (`check_wavefront_pins`): default `25,009 a1d0dba1`, quality
+  `25,141 3984677b`, nightly `23,690 1b99127a`, explambda `24,113 7f03eb6e`,
+  720p `36,572 c4ba2813`. `gate_video_nightly` OK; `ctest` 14/14.
+
+### Speed
+
+16 f QP116 `--nightly-b`, `--cpu-threads 1`, 7 interleaved reps, median of 3
+nearby reps each side:
+
+| arm | median | best |
+|---|---:|---:|
+| pre-change binary | 94.67 s | 84.26 s |
+| all-zero table | **79.78 s** | **68.06 s** |
+
+**−15.7 % median (−19.2 % best-case) of single-thread CPU time**, every stream
+`cmp`-identical. Re-profiling confirms the move: `Model::init` drops from
+**#1 at 13.9 %** to 1.7 % of work; the new #1 is the trellis itself
+(`rdoq_quantize`, 10.9 %) with the model pricing next (`cost_symbol` 4.1 %,
+`coefficient_bits` 4.0 %).
+
+### What is left
+
+The non-zero gather is now ~1.2 % of work. The large remaining blocks are the
+trellis DP and the per-symbol `-log2 p` pricing, which are double-precision
+reductions where a reordered sum would move a pin, plus `level_rates.assign`'s
+per-position fill. Those need a different shape of proof than a pixel kernel;
+do not reach for a `KernelTable` slot without measuring which of them actually
+dominates after this change.

@@ -234,3 +234,17 @@ Component `build_and_test.sh` gates compile the migrated TUs without
 original loop in the `#else` branch, and those were checked to compile and
 link standalone (`intra_modes.cpp`, `dip.cpp`, `ibc.cpp`, a hbd TU calling both
 16-bit wrappers).
+
+## 9. Not a `KernelTable` slot: the RDOQ model's all-zero table
+
+`rdoq::av2::Model::init` (`src/codec/rate/rdoq/rdoq_av2_model.cpp`) was the
+single largest function in the `--nightly-b` profile (14–19 % of work). 93 % of
+its calls are on an all-zero block, whose per-position context table is a pure
+function of `(w, h, plane)`; it is now built once per geometry and shared
+lock-free. See "RDOQ `Model::init`: the all-zero table" in `docs/simd-plan.md`
+for the measurement, the −15.7 % result and the exactness evidence.
+
+It is deliberately **not** a `KernelTable` slot: nothing is vectorised, the win
+is eliminating a recomputation, and the remaining per-block gather is ~1.2 % of
+work. The row is recorded here so the next profile pass does not re-open it as
+an unclaimed pixel kernel.
