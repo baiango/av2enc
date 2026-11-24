@@ -1,5 +1,21 @@
 # Bug-fix protocol for subagents
 
+> **Scope: subagents only.** This document contracts *subagents* working in
+> parallel; it does not bind the main agent. **The main agent is the
+> integrator** — there is no second integrator for anyone to hand to. Read the
+> rest with that in mind:
+>
+> * The role table in §1 divides work *among subagents*; "Integrator" there
+>   means the main agent.
+> * §5's "shared roots are integrator-only" means a subagent hands the hunk to
+>   the main agent instead of editing it. The main agent edits those files
+>   directly, with no claim, branch or fix worktree of its own.
+> * The claim / worktree / report workflow (§2, §4, §6, §9) is a *subagent*
+>   workflow. The main agent does not claim its own bugs or open fix worktrees
+>   for shared-root work.
+>
+> Do not cite this protocol to defer work to an integrator that does not exist.
+
 This is the contract for parallel bug fixing. It complements
 `refactor/integration-plan.md` (integration) and `AGENTS.md` (code rules).
 Read it before claiming a bug.
@@ -10,12 +26,14 @@ Read it before claiming a bug.
 |---|---:|---|---|
 | Scout | up to 16 | **no** (read-only repro) | no |
 | Fixer | 6–8 | own worktree only | no |
-| Integrator | 2 (still root, video root) | shared composition roots | yes |
+| Integrator | 1 — the main agent (still root + video root) | shared composition roots | yes |
 | GPU verifier | 1 | own worktree | no |
 | Coordinator | 1 | bug board/claims only | no |
 
-The caps exist because of the shared files listed in §5, not because of agent
-tooling. Twenty fixers would collide; twenty scouts are fine.
+Scout, Fixer, GPU verifier and Coordinator are the *subagent* roles, and they
+are what the caps below count; the Integrator is the main agent and is not a
+capped role. The caps exist because of the shared files listed in §5, not
+because of agent tooling. Twenty fixers would collide; twenty scouts are fine.
 
 ## 2. Bug IDs, board and claims
 
