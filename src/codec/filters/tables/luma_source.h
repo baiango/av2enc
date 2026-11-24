@@ -5,8 +5,7 @@
 // CDEF/CCSO); samples outside come from CurrFrame (pre CDEF/CCSO) with the
 // two-line clamp.
 
-#ifndef AV2ENC_ENCODER_FILTERS_SPEC_TABLES_LUMA_SOURCE_H_
-#define AV2ENC_ENCODER_FILTERS_SPEC_TABLES_LUMA_SOURCE_H_
+#pragma once
 
 #include <cstdint>
 
@@ -31,4 +30,3 @@ std::uint16_t luma_source_sample(const LumaSource& src, int x, int y);
 
 }  // namespace av2enc::filters::spec
 
-#endif  // AV2ENC_ENCODER_FILTERS_SPEC_TABLES_LUMA_SOURCE_H_

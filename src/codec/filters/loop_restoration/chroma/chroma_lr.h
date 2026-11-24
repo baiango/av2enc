@@ -30,8 +30,7 @@
 // explicitly.  This module writes/reads the explicit form so that the chroma
 // tool set is independent of luma.
 
-#ifndef AV2ENC_ENCODER_FILTERS_LR_CHROMA_CHROMA_LR_H_
-#define AV2ENC_ENCODER_FILTERS_LR_CHROMA_CHROMA_LR_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -313,4 +312,3 @@ rest::RestorationStatus chroma_apply(const ChromaLrInput& input,
 
 }  // namespace av2enc::lr_chroma
 
-#endif  // AV2ENC_ENCODER_FILTERS_LR_CHROMA_CHROMA_LR_H_

@@ -4,8 +4,7 @@
 // metadata grids, and to load a real reconstructed Y4M frame.  The CUDA test
 // includes this header and adds device upload/compare around it.
 
-#ifndef AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_TEST_COMMON_H_
-#define AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_TEST_COMMON_H_
+#pragma once
 
 #include <algorithm>
 #include <chrono>
@@ -589,4 +588,3 @@ struct Timer {
 
 }  // namespace av2enc::deblock::test
 
-#endif  // AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_TEST_COMMON_H_

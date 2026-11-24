@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_MHCCP_GPU_H_
-#define AV2ENC_ENCODER_CFL_MHCCP_GPU_H_
+#pragma once
 
 // CUDA entry points for MHCCP. The kernel uses the same POD descriptors and
 // integer arithmetic as the CPU reference (mhccp_common.h); the test compares
@@ -41,4 +40,3 @@ cudaError_t mhccp_predict_batch(const Job* d_jobs, int job_count,
 
 }  // namespace av2enc::cuda::mhccp
 
-#endif  // AV2ENC_ENCODER_CFL_MHCCP_GPU_H_

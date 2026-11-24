@@ -80,8 +80,7 @@ def render(table: list[list[list[int]]]) -> str:
     lines.append("// Indices 4/5 are only used when w <= 4 (horizontal pass) or")
     lines.append("// h <= 4 (vertical pass); their zero-padded entries let the same")
     lines.append("// eight-tap loop implement both.")
-    lines.append("#ifndef AV2ENC_ENCODER_INTER_MC_MC_SUBPEL_TABLES_H_")
-    lines.append("#define AV2ENC_ENCODER_INTER_MC_MC_SUBPEL_TABLES_H_")
+    lines.append("#pragma once")
     lines.append("")
     lines.append("#include <cstdint>")
     lines.append("")
@@ -121,7 +120,6 @@ def render(table: list[list[list[int]]]) -> str:
     lines.append("")
     lines.append("#undef AV2ENC_MC_SUBPEL_TABLE")
     lines.append("")
-    lines.append("#endif  // AV2ENC_ENCODER_INTER_MC_MC_SUBPEL_TABLES_H_")
     lines.append("")
     return "\n".join(lines)
 

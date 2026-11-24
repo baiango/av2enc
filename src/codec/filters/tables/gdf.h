@@ -8,8 +8,7 @@
 // are computed with the spec's own shifts; 10-bit is the only high bit depth
 // signalable in v1.0.0.
 
-#ifndef AV2ENC_ENCODER_FILTERS_SPEC_TABLES_GDF_H_
-#define AV2ENC_ENCODER_FILTERS_SPEC_TABLES_GDF_H_
+#pragma once
 
 #include <cstdint>
 
@@ -54,4 +53,3 @@ void ApplyGdfFilter(const LumaSource& src, std::uint16_t* lr, int lr_stride,
 
 }  // namespace av2enc::filters::spec
 
-#endif  // AV2ENC_ENCODER_FILTERS_SPEC_TABLES_GDF_H_

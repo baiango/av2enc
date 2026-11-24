@@ -3,8 +3,7 @@
 // v1.0.0 (commit 38f28e7).
 
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CDFS_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CDFS_H_
+#pragma once
 
 #include <cstdint>
 
@@ -57,4 +56,3 @@ inline constexpr std::uint16_t kFlexRestorationTypeCdf[3][3][3] = {
 
 }  // namespace av2enc::restoration::classes
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CDFS_H_

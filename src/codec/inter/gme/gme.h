@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_INTER_GME_GME_H_
-#define AV2ENC_ENCODER_INTER_GME_GME_H_
+#pragma once
 
 // AV2 v1.0.0 global motion estimation — CPU reference (encoder side).
 //
@@ -264,4 +263,3 @@ std::int64_t warp_plane_sse(const GmParams& params, const std::uint8_t* ref, int
 
 }  // namespace av2enc::inter::gme
 
-#endif  // AV2ENC_ENCODER_INTER_GME_GME_H_

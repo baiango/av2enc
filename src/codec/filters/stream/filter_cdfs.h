@@ -3,8 +3,7 @@
 // Generated from spec/tables/default_cdf.json (§9.3).  Do not hand-edit.
 // The CDEF CDFs already live in src/cuda/m1/cdef/still_cdef_cdf.h and are
 // included directly by filters_stream.cpp.
-#ifndef AV2ENC_ENCODER_STILL_FILTERS_STREAM_FILTER_CDFS_H_
-#define AV2ENC_ENCODER_STILL_FILTERS_STREAM_FILTER_CDFS_H_
+#pragma once
 
 #include <cstdint>
 
@@ -56,4 +55,3 @@ inline constexpr std::uint16_t kFlexRestorationTypeCdf[3][3][3] =
 
 }  // namespace av2enc::still::filters_stream
 
-#endif  // AV2ENC_ENCODER_STILL_FILTERS_STREAM_FILTER_CDFS_H_

@@ -16,8 +16,7 @@
 // This is a correctness oracle, not a performance target (docs/architecture.md).
 // The CUDA counterpart lives in src/cuda/inter/mc/ and must match bit-exactly.
 
-#ifndef AV2ENC_ENCODER_INTER_MC_MC_H_
-#define AV2ENC_ENCODER_INTER_MC_MC_H_
+#pragma once
 
 #include <cstdint>
 
@@ -185,4 +184,3 @@ std::int64_t sad_block(const std::uint8_t* a, int a_stride,
 
 }  // namespace av2enc::inter::mc
 
-#endif  // AV2ENC_ENCODER_INTER_MC_MC_H_

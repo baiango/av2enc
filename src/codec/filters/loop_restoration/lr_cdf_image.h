@@ -20,8 +20,7 @@
 // Defaults come from the generated §9.3 tables in `classes/wiener_cdfs.h` so
 // there is exactly one copy of each default row.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_LR_CDF_IMAGE_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_LR_CDF_IMAGE_H_
+#pragma once
 
 #include <cstdint>
 #include <cstring>
@@ -59,4 +58,3 @@ inline void SetDefaults(Image* image) {
 
 }  // namespace av2enc::filters::lr_cdf
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_LR_CDF_IMAGE_H_

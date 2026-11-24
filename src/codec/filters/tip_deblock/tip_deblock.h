@@ -58,8 +58,7 @@
 // consult segment ids, per-cell qindex, LosslessArray, Skips, TX sizes or
 // sub-PU bases, so this API has no MI grid at all.
 
-#ifndef AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_H_
-#define AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_H_
+#pragma once
 
 #include <cstdint>
 
@@ -181,4 +180,3 @@ TipDeblockCoreFrame tip_deblock_to_core(const TipDeblockFrame& frame);
 
 }  // namespace av2enc::tip_deblock
 
-#endif  // AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_H_

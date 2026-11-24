@@ -25,8 +25,7 @@
 // This component never writes M2-owned headers.  It produces the bits and the
 // OBU bytes; the gate in gate/ assembles a complete stream from them.
 
-#ifndef AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_SIGNALLING_H_
-#define AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_SIGNALLING_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -238,4 +237,3 @@ std::vector<std::uint8_t> make_tip_slice_bytes(const TipFrameSyntax& syntax,
 
 }  // namespace av2enc::inter::tip
 
-#endif  // AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_SIGNALLING_H_

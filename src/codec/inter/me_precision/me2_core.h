@@ -25,8 +25,7 @@
 // inline functions with different cost functors, so MVs, costs, precision
 // choices and evaluation counts are bit-exact.
 
-#ifndef AV2ENC_ENCODER_INTER_ME2_ME2_CORE_H_
-#define AV2ENC_ENCODER_INTER_ME2_ME2_CORE_H_
+#pragma once
 
 #include <cstdint>
 
@@ -474,4 +473,3 @@ AV2ENC_ME_HD Me2Result me2_search_core(const MeCoreFrame& cur,
 
 }  // namespace av2enc::me2
 
-#endif  // AV2ENC_ENCODER_INTER_ME2_ME2_CORE_H_

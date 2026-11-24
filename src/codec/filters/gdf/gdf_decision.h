@@ -9,8 +9,7 @@
 //     per 64x64 block, and costs the signalled bits with the real §8.2 coder.
 //
 // Spec-only: no encoder or decoder state outside the passed buffers.
-#ifndef AV2ENC_ENCODER_FILTERS_GDF_STREAM_GDF_DECISION_H_
-#define AV2ENC_ENCODER_FILTERS_GDF_STREAM_GDF_DECISION_H_
+#pragma once
 
 #include "codec/filters/gdf/gdf_syntax.h"
 
@@ -133,4 +132,3 @@ bool MeasureUseGdfSymbols(const GdfUnitLayout& layout,
 
 }  // namespace av2enc::filters::gdf
 
-#endif  // AV2ENC_ENCODER_FILTERS_GDF_STREAM_GDF_DECISION_H_

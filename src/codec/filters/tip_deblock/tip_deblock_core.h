@@ -26,8 +26,7 @@
 // get_q(), round2(), clip3(), kSideThresholds and friends come from
 // encoder/filters/deblock/deblock_core.h.
 
-#ifndef AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_CORE_H_
-#define AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_CORE_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -340,4 +339,3 @@ inline void tip_deblock_frame_core(const TipDeblockCoreFrame& frame,
 
 }  // namespace av2enc::tip_deblock
 
-#endif  // AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_CORE_H_

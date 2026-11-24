@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_COMMON_H_
-#define AV2ENC_ENCODER_CFL_COMMON_H_
+#pragma once
 
 // Chroma-from-luma (CfL) shared definitions — AV2 v1.0.0 §7.13.5.
 //
@@ -406,4 +405,3 @@ AV2ENC_CFL_HD inline AlphaPair pair_from_signalling(Signalling s) {
 
 }  // namespace av2enc::cfl
 
-#endif  // AV2ENC_ENCODER_CFL_COMMON_H_

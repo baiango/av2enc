@@ -8,8 +8,7 @@
 // Every pointer below is a device pointer.  Nothing is allocated, freed or
 // synchronised here; the caller owns the buffers and the stream.
 
-#ifndef AV2ENC_ENCODER_INTER_ME2_ME2_GPU_H_
-#define AV2ENC_ENCODER_INTER_ME2_ME2_GPU_H_
+#pragma once
 
 #include <cstdint>
 
@@ -40,4 +39,3 @@ cudaError_t me2_cost_batch(const me2::MeCoreFrame& cur,
 
 }  // namespace av2enc::cuda
 
-#endif  // AV2ENC_ENCODER_INTER_ME2_ME2_GPU_H_

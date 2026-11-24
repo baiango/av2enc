@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_INTER_GME_GME_CORE_H_
-#define AV2ENC_ENCODER_INTER_GME_GME_CORE_H_
+#pragma once
 
 // Shared integer arithmetic for AV2 global motion (AV2 v1.0.0 §7.12.2,
 // §5.18.9, §7.13.3.21). Header-only so a CUDA port can include the same
@@ -193,4 +192,3 @@ inline void reduce_warp_model_in_place(int p[6]) {
 
 }  // namespace av2enc::inter::gme
 
-#endif  // AV2ENC_ENCODER_INTER_GME_GME_CORE_H_

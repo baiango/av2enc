@@ -16,8 +16,7 @@
 //   * `StackMv::cwp` is CWP_EQUAL unless the caller seeded it otherwise.
 //   * `prune_count` maps to PruneCount; `derived->prune` to DerivedPruneCount.
 
-#ifndef AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_CANDIDATES_H_
-#define AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_CANDIDATES_H_
+#pragma once
 
 #include "codec/inter/temporal/temporal_types.h"
 
@@ -57,4 +56,3 @@ TemporalStatus tip_add_derived(const Mv sub_mvs[2], const TipConfig& tip,
 
 }  // namespace av2enc::inter::tip
 
-#endif  // AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_CANDIDATES_H_

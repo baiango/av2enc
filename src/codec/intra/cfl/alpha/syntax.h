@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_ALPHA_SYNTAX_H_
-#define AV2ENC_ENCODER_CFL_ALPHA_SYNTAX_H_
+#pragma once
 
 // Exact CfL alpha syntax, §5.20.7.32 read_cfl_alphas(), and the §9.3 default
 // CDFs it selects (§8.3, Tables 8.4/8.5).
@@ -173,4 +172,3 @@ av2::Status read_cfl_mode_and_alphas(av2::Decoder& dec, CflCdfs& cdfs,
 
 }  // namespace av2enc::cfl::alpha
 
-#endif  // AV2ENC_ENCODER_CFL_ALPHA_SYNTAX_H_

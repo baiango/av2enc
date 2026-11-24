@@ -13,8 +13,7 @@
 // `useRefArea` behaviour used by refine-MV; pass the full plane for ordinary
 // prediction.
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_PREDICT_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_PREDICT_H_
+#pragma once
 
 #include <cstdint>
 
@@ -226,4 +225,3 @@ inline std::int64_t refine_sad(const std::uint8_t* p0, int p0_stride,
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_PREDICT_H_

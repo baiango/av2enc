@@ -7,8 +7,7 @@
 //
 // Scope: luma (the only plane PC-Wiener filters).  BitDepth 8, 10 and 12.
 
-#ifndef AV2ENC_ENCODER_FILTERS_SPEC_TABLES_PC_WIENER_H_
-#define AV2ENC_ENCODER_FILTERS_SPEC_TABLES_PC_WIENER_H_
+#pragma once
 
 #include <cstdint>
 
@@ -99,4 +98,3 @@ void PcWienerProcess(const PcWienerFrame& frame, const PcWienerConfig& cfg, int 
 
 }  // namespace av2enc::filters::spec
 
-#endif  // AV2ENC_ENCODER_FILTERS_SPEC_TABLES_PC_WIENER_H_

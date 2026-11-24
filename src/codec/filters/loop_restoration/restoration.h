@@ -23,8 +23,7 @@
 // Output buffers never alias inputs; the reference writes LrFrame, a separate
 // plane pair, exactly as the spec does.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -291,4 +290,3 @@ LrCoreFrame loop_restoration_to_core(const RestorationFrame& frame,
 
 }  // namespace av2enc::restoration
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_H_

@@ -38,8 +38,7 @@
 // `CdefStrengths >= 2` is a component-only decision until that hook lands.
 // The exact hook order is documented in README.md; `TileIndexWriter` below is
 // the hook.
-#ifndef AV2ENC_ENCODER_VIDEO_CDEF_VIDEO_CDEF_H_
-#define AV2ENC_ENCODER_VIDEO_CDEF_VIDEO_CDEF_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -241,4 +240,3 @@ bool build_mi_grids(int mi_cols, int mi_rows, const std::uint8_t* skip,
 
 }  // namespace av2enc::video::cdef_adapter
 
-#endif  // AV2ENC_ENCODER_VIDEO_CDEF_VIDEO_CDEF_H_

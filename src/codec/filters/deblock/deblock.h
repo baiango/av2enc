@@ -20,8 +20,7 @@
 // partition tree / transform block parsing.  Bitstream syntax is not handled
 // here; see the README for the integration contract.
 
-#ifndef AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_H_
-#define AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_H_
+#pragma once
 
 #include <cstdint>
 
@@ -122,4 +121,3 @@ bool deblock_supported(const DeblockFrame& frame, const DeblockOptions& options,
 
 }  // namespace av2enc::deblock
 
-#endif  // AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_H_

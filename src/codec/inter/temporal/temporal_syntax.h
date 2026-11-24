@@ -14,8 +14,7 @@
 //   §5.20.7.6 inter_block_mode_info() (tip_pred_mode)
 //   §5.20.7.17 read_refinemv()
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_SYNTAX_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_SYNTAX_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -94,4 +93,3 @@ TemporalStatus read_refinemv_block_syntax(BitReader& reader,
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_SYNTAX_H_

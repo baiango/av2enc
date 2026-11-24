@@ -3,8 +3,7 @@
 // v1.0.0 (commit 38f28e7).
 
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_QLOOKUP_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_QLOOKUP_H_
+#pragma once
 
 #include <cstdint>
 
@@ -56,4 +55,3 @@ inline constexpr std::int32_t kQlookupQ0To255[256] = {
 
 }  // namespace av2enc::restoration::classes
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_QLOOKUP_H_

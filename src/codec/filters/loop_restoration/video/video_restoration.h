@@ -41,8 +41,7 @@
 //   * Multi-class frame filters need an encoder-supplied §7.20.4 class map.
 //     The single-class layout (`num_filter_classes == 1`) needs no class map
 //     and is the gated path.
-#ifndef AV2ENC_ENCODER_VIDEO_RESTORATION_VIDEO_RESTORATION_H_
-#define AV2ENC_ENCODER_VIDEO_RESTORATION_VIDEO_RESTORATION_H_
+#pragma once
 
 #include "core/bitstream/bitwriter.h"
 #include "codec/filters/loop_restoration/restoration.h"
@@ -280,4 +279,3 @@ bool measure_restoration_cost(const VideoRestorationTools& tools, int mi_cols,
 
 }  // namespace av2enc::video::restoration
 
-#endif  // AV2ENC_ENCODER_VIDEO_RESTORATION_VIDEO_RESTORATION_H_

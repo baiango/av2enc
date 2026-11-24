@@ -8,8 +8,7 @@
 // §5.20.10.4–§5.20.10.6.
 //
 // Spec-only; no entropy state and no CDFs here.
-#ifndef AV2ENC_ENCODER_STILL_FILTERS_STREAM_BIT_IO_H_
-#define AV2ENC_ENCODER_STILL_FILTERS_STREAM_BIT_IO_H_
+#pragma once
 
 #include "core/bitstream/bitwriter.h"
 
@@ -130,4 +129,3 @@ inline void put_tu(BitWriter& writer, unsigned mx, std::uint32_t value) {
 
 }  // namespace av2enc::still::filters_stream
 
-#endif  // AV2ENC_ENCODER_STILL_FILTERS_STREAM_BIT_IO_H_

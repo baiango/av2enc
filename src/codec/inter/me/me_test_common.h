@@ -4,8 +4,7 @@
 // canaries (to catch out-of-bounds reads) and load small 8-bit 4:2:0 Y4M
 // frames.  The CUDA test includes this header for the same generated data.
 
-#ifndef AV2ENC_ENCODER_INTER_ME_ME_TEST_COMMON_H_
-#define AV2ENC_ENCODER_INTER_ME_ME_TEST_COMMON_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -327,4 +326,3 @@ inline std::vector<MeCoreJob> make_block_grid(int width, int height, int bw,
 
 }  // namespace av2enc::me::test
 
-#endif  // AV2ENC_ENCODER_INTER_ME_ME_TEST_COMMON_H_

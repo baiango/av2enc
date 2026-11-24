@@ -9,8 +9,7 @@
 // final prediction uses EIGHTTAP_SHARP at 1/16 precision and a compound
 // average.
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_REFINEMV_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_REFINEMV_H_
+#pragma once
 
 #include <cstdint>
 
@@ -117,4 +116,3 @@ TemporalStatus refine_predict_block(const RefinePredictInput& in);
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_REFINEMV_H_

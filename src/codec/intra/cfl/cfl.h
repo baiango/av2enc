@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_H_
-#define AV2ENC_ENCODER_CFL_H_
+#pragma once
 
 // CPU reference implementation of AV2 v1.0.0 §7.13.5 chroma-from-luma.
 //
@@ -125,4 +124,3 @@ bool cfl_allowed(int chroma_w, int chroma_h, bool enable_cfl_intra,
 
 }  // namespace av2enc::cfl
 
-#endif  // AV2ENC_ENCODER_CFL_H_

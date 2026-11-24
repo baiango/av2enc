@@ -8,8 +8,7 @@
 // Indices 4/5 are only used when w <= 4 (horizontal pass) or
 // h <= 4 (vertical pass); their zero-padded entries let the same
 // eight-tap loop implement both.
-#ifndef AV2ENC_ENCODER_INTER_MC_MC_SUBPEL_TABLES_H_
-#define AV2ENC_ENCODER_INTER_MC_MC_SUBPEL_TABLES_H_
+#pragma once
 
 #include <cstdint>
 
@@ -143,4 +142,3 @@ AV2ENC_MC_SUBPEL_TABLE std::int16_t
 
 #undef AV2ENC_MC_SUBPEL_TABLE
 
-#endif  // AV2ENC_ENCODER_INTER_MC_MC_SUBPEL_TABLES_H_

@@ -13,8 +13,7 @@
 // BitDepth parameter; the filters reject other bit depths explicitly rather
 // than silently approximating them.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_COMMON_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_COMMON_H_
+#pragma once
 
 #include <cstdint>
 
@@ -259,4 +258,3 @@ constexpr int kCcsoOffsetEntries =
 
 }  // namespace av2enc::restoration
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_COMMON_H_

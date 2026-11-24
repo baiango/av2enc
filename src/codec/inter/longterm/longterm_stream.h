@@ -12,8 +12,7 @@
 // caller is responsible for encoding each tile against the reference picture
 // that its rewritten header will name. See longterm_gate.cpp for the worked
 // example and README.md for the integration contract.
-#ifndef AV2ENC_ENCODER_INTER_LONGTERM_LONGTERM_STREAM_H_
-#define AV2ENC_ENCODER_INTER_LONGTERM_LONGTERM_STREAM_H_
+#pragma once
 
 #include <cstdint>
 #include <span>
@@ -69,4 +68,3 @@ bool assemble_sequence(const SequenceConfig& config,
 
 }  // namespace av2enc::inter::longterm
 
-#endif  // AV2ENC_ENCODER_INTER_LONGTERM_LONGTERM_STREAM_H_

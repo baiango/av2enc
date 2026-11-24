@@ -12,8 +12,7 @@
 // Batch API, no per-block allocation: the caller supplies the job and result
 // arrays; the implementation uses fixed-size stack state only.
 
-#ifndef AV2ENC_ENCODER_INTER_ME_ME_H_
-#define AV2ENC_ENCODER_INTER_ME_ME_H_
+#pragma once
 
 #include <cstdint>
 
@@ -63,4 +62,3 @@ int me_collect_mv_candidates(const MeCoreMvField& field, int x, int y, int w,
 
 }  // namespace av2enc::me
 
-#endif  // AV2ENC_ENCODER_INTER_ME_ME_H_

@@ -31,8 +31,7 @@
 // subset and coefficients).  It is implemented here so the mixed switchable
 // case and the class-map mode have an exact writer/reader; PC-Wiener itself
 // never codes coefficients.
-#ifndef AV2ENC_ENCODER_FILTERS_PC_WIENER_STREAM_PC_WIENER_STREAM_H_
-#define AV2ENC_ENCODER_FILTERS_PC_WIENER_STREAM_PC_WIENER_STREAM_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -366,4 +365,3 @@ void BuildFilterClassGrid(const DecisionPlanes& planes,
 
 }  // namespace av2enc::filters::pc_wiener_stream
 
-#endif  // AV2ENC_ENCODER_FILTERS_PC_WIENER_STREAM_PC_WIENER_STREAM_H_

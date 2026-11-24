@@ -23,8 +23,7 @@
 //       id and before read_cdef/read_ccso): call GdfBlockCoder::WriteAt() /
 //       ReadAt() once per coding block.  The coder no-ops unless the block is
 //       the origin of a signalled GDF unit.
-#ifndef AV2ENC_ENCODER_FILTERS_GDF_STREAM_GDF_SYNTAX_H_
-#define AV2ENC_ENCODER_FILTERS_GDF_STREAM_GDF_SYNTAX_H_
+#pragma once
 
 #include "core/bitstream/bitwriter.h"
 #include "codec/filters/stream/bit_io.h"
@@ -205,4 +204,3 @@ int DeriveGdfBlkSize(int sb_size, bool unit_matches_sb_size,
 
 }  // namespace av2enc::filters::gdf
 
-#endif  // AV2ENC_ENCODER_FILTERS_GDF_STREAM_GDF_SYNTAX_H_

@@ -32,8 +32,7 @@
 //   * When ccso_bo_only is set the filter is band-offset only: both classes
 //     are forced to 0 (and only offsets[band][0][0] is signalled).
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CCSO_CORE_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_CCSO_CORE_H_
+#pragma once
 
 #include <cstdint>
 
@@ -290,4 +289,3 @@ inline int ccso_plane(const CcsoCoreFrame& f, int plane) {
 
 }  // namespace av2enc::restoration
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CCSO_CORE_H_

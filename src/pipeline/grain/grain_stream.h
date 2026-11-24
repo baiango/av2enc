@@ -16,8 +16,7 @@
 // inserted before the coded frame OBU in the same temporal unit (§7.3.3 /
 // §7.3.4), and film_grain_params_present is flipped on in the sequence header
 // only for streams that actually carry grain.
-#ifndef AV2ENC_ENCODER_FILTERS_FILM_GRAIN_STREAM_GRAIN_STREAM_H_
-#define AV2ENC_ENCODER_FILTERS_FILM_GRAIN_STREAM_GRAIN_STREAM_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -170,4 +169,3 @@ bool PatchSequenceHeaderFilmGrainPresent(std::vector<std::uint8_t>* unit,
 
 }  // namespace av2enc::filters::grain
 
-#endif  // AV2ENC_ENCODER_FILTERS_FILM_GRAIN_STREAM_GRAIN_STREAM_H_

@@ -6,8 +6,7 @@
 // These helpers are deliberately integer-only so the CPU reference and any
 // future device port produce identical results.
 
-#ifndef AV2ENC_ENCODER_FILTERS_SPEC_TABLES_SPEC_MATH_H_
-#define AV2ENC_ENCODER_FILTERS_SPEC_TABLES_SPEC_MATH_H_
+#pragma once
 
 #include <cstdint>
 
@@ -42,4 +41,3 @@ constexpr int MaxQ(int bit_depth) {
 
 }  // namespace av2enc::filters::spec
 
-#endif  // AV2ENC_ENCODER_FILTERS_SPEC_TABLES_SPEC_MATH_H_

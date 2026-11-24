@@ -24,8 +24,7 @@
 // luma sample is fetched directly, which the condition `sub_x && sub_y` below
 // expresses.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_WIENER_CORE_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_WIENER_CORE_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -547,4 +546,3 @@ inline int lr_plane(const LrCoreFrame& f, int plane) {
 
 }  // namespace av2enc::restoration
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_WIENER_CORE_H_

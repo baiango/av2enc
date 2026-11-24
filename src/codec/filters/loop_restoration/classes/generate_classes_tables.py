@@ -58,8 +58,7 @@ def write_cdfs() -> None:
     out = [
         BANNER.format(src="spec/tables/default_cdf.json"),
         "",
-        "#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CDFS_H_",
-        "#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CDFS_H_",
+        "#pragma once",
         "",
         "#include <cstdint>",
         "",
@@ -102,7 +101,6 @@ def write_cdfs() -> None:
     out += [
         "}  // namespace av2enc::restoration::classes",
         "",
-        "#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CDFS_H_",
         "",
     ]
     (HERE / "wiener_cdfs.h").write_text("\n".join(out))
@@ -118,8 +116,7 @@ def write_qlookup() -> None:
     out = [
         BANNER.format(src="spec/tables/quant.json"),
         "",
-        "#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_QLOOKUP_H_",
-        "#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_QLOOKUP_H_",
+        "#pragma once",
         "",
         "#include <cstdint>",
         "",
@@ -143,7 +140,6 @@ def write_qlookup() -> None:
         "",
         "}  // namespace av2enc::restoration::classes",
         "",
-        "#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_QLOOKUP_H_",
         "",
     ]
     (HERE / "wiener_qlookup.h").write_text("\n".join(out))

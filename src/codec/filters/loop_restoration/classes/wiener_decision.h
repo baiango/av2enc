@@ -23,8 +23,7 @@
 // in; otherwise multi-class candidates are skipped with a note and the search
 // stays conformant at one class.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_DECISION_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_DECISION_H_
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -156,4 +155,3 @@ void wiener_decision_to_loop_params(const WienerDecision& decision,
 
 }  // namespace av2enc::restoration::classes
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_DECISION_H_

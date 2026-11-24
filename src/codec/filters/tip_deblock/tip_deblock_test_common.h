@@ -4,8 +4,7 @@
 // applies simple patterns, and provides a conservative write-envelope mask
 // derived from the public inspection API.
 
-#ifndef AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_TEST_COMMON_H_
-#define AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_TEST_COMMON_H_
+#pragma once
 
 #include <algorithm>
 #include <chrono>
@@ -407,4 +406,3 @@ struct Timer {
 
 }  // namespace av2enc::tip_deblock::test
 
-#endif  // AV2ENC_ENCODER_FILTERS_TIP_DEBLOCK_TIP_DEBLOCK_TEST_COMMON_H_

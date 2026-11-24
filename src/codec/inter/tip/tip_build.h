@@ -23,8 +23,7 @@
 // reproduces the decoder's samples for every visible pixel without requiring
 // padding rows in the caller's buffer.
 
-#ifndef AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_BUILD_H_
-#define AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_BUILD_H_
+#pragma once
 
 #include <cstdint>
 
@@ -139,4 +138,3 @@ inline temporal::SavedMvField saved_mv_view(
 
 }  // namespace av2enc::inter::tip
 
-#endif  // AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_BUILD_H_

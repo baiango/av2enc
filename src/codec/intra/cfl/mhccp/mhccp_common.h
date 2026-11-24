@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_MHCCP_COMMON_H_
-#define AV2ENC_ENCODER_CFL_MHCCP_COMMON_H_
+#pragma once
 
 // MHCCP (multi-hypothesis cross-component prediction) shared core.
 //
@@ -640,4 +639,3 @@ AV2ENC_MHCCP_HD inline int predict_sample(const Block& block, const Refs& refs,
 
 }  // namespace av2enc::cfl::mhccp
 
-#endif  // AV2ENC_ENCODER_CFL_MHCCP_COMMON_H_

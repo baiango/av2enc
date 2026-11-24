@@ -5,8 +5,7 @@
 // blend of §7.13.3.1 with `Tip_Weighting_Factor` and the EIGHTTAP_SHARP /
 // configured TIP interpolation filter.
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_TIP_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_TIP_H_
+#pragma once
 
 #include <cstdint>
 
@@ -74,4 +73,3 @@ TemporalStatus tip_predict_block(const TipPredictInput& in);
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_TIP_H_

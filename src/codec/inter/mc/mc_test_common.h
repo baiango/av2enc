@@ -4,8 +4,7 @@
 // provides deterministic patterns.  The CUDA test includes this header and
 // adds device upload/compare around the same data.
 
-#ifndef AV2ENC_ENCODER_INTER_MC_MC_TEST_COMMON_H_
-#define AV2ENC_ENCODER_INTER_MC_MC_TEST_COMMON_H_
+#pragma once
 
 #include <algorithm>
 #include <cstdint>
@@ -313,4 +312,3 @@ inline TestFrame frame_from_y4m(const Y4mFrame& src) {
 
 }  // namespace av2enc::inter::mc::test
 
-#endif  // AV2ENC_ENCODER_INTER_MC_MC_TEST_COMMON_H_

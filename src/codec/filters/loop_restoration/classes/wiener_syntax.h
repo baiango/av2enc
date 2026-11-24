@@ -21,8 +21,7 @@
 // the spec text alone.  Writing a PC-Wiener or GDF selection returns an error
 // instead of emitting a stream that no local decoder can reproduce.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_SYNTAX_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_SYNTAX_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -263,4 +262,3 @@ bool wiener_unit_range(const WienerTileState& state, int plane, int mi_row,
 
 }  // namespace av2enc::restoration::classes
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_SYNTAX_H_

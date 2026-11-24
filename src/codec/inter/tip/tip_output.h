@@ -21,8 +21,7 @@
 //      a frame that neither refreshes nor is output has no effect and the
 //      spec's coded-frame-unit grammar has no use for it.
 
-#ifndef AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_OUTPUT_H_
-#define AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_OUTPUT_H_
+#pragma once
 
 #include <cstdint>
 
@@ -64,4 +63,3 @@ bool tip_implicit_output_inferred(bool monotonic_output_order_flag);
 
 }  // namespace av2enc::inter::tip
 
-#endif  // AV2ENC_ENCODER_INTER_TIP_STREAM_TIP_OUTPUT_H_

@@ -7,8 +7,7 @@
 // structure and the normative ordering, pruning and range checks.  Whether the
 // bank is enabled is `enable_refmvbank` in the sequence header.
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_REF_MV_BANK_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_REF_MV_BANK_H_
+#pragma once
 
 #include "codec/inter/temporal/temporal_types.h"
 
@@ -66,4 +65,3 @@ void fill_mvp_from_ref_mv_bank(const RefMvBank& bank, const int ref_frames[2],
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_REF_MV_BANK_H_

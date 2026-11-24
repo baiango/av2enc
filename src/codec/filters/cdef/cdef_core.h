@@ -24,8 +24,7 @@
 // ordering dependency and both the CPU and GPU implementations may filter them
 // in any order.
 
-#ifndef AV2ENC_ENCODER_FILTERS_CDEF_CDEF_CORE_H_
-#define AV2ENC_ENCODER_FILTERS_CDEF_CDEF_CORE_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -443,4 +442,3 @@ AV2ENC_CDEF_HD void cdef_direction(const std::uint8_t* luma,
 
 }  // namespace av2enc::cdef
 
-#endif  // AV2ENC_ENCODER_FILTERS_CDEF_CDEF_CORE_H_

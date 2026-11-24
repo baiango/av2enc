@@ -27,8 +27,7 @@
 // This is encoder-side decision data only.  Nothing here writes bitstream
 // syntax, and the emitted MV still goes through MC/entropy in other components.
 
-#ifndef AV2ENC_ENCODER_INTER_ME_ME_CORE_H_
-#define AV2ENC_ENCODER_INTER_ME_ME_CORE_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -1013,4 +1012,3 @@ AV2ENC_ME_HD MeCoreResult me_search_core(const MeCoreFrame& cur,
 
 }  // namespace av2enc::me
 
-#endif  // AV2ENC_ENCODER_INTER_ME_ME_CORE_H_

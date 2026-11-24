@@ -10,8 +10,7 @@
 // deltas (`MvDeltas`, 1/8 precision), exactly the arrays a caller needs for the
 // luma pass and for the chroma `predict_subblock()` path.
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_OPFL_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_OPFL_H_
+#pragma once
 
 #include <cstdint>
 
@@ -45,4 +44,3 @@ TemporalStatus opfl_compute(const OpflJob& job, const OpflOutput& out);
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_OPFL_H_

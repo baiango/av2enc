@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_DS_FILTERS_DS_FILTERS_H_
-#define AV2ENC_ENCODER_CFL_DS_FILTERS_DS_FILTERS_H_
+#pragma once
 
 // AV2 v1.0.0 §5.4.5 / §7.13.5 luma down-sampling filters for CfL.
 //
@@ -277,4 +276,3 @@ class SequenceFilterSearch {
 
 }  // namespace av2enc::cfl::ds
 
-#endif  // AV2ENC_ENCODER_CFL_DS_FILTERS_DS_FILTERS_H_

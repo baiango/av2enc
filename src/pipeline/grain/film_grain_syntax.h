@@ -19,8 +19,7 @@
 // CHROMA_FORMAT_422 = 3 (it is *not* the usual 0=400, 1=420 ordering).
 // GrainChromaIdc uses that numbering because fgm_chroma_idc is compared
 // directly against chroma_format_idc in §6.17.10.1.
-#ifndef AV2ENC_ENCODER_FILTERS_FILM_GRAIN_STREAM_FILM_GRAIN_SYNTAX_H_
-#define AV2ENC_ENCODER_FILTERS_FILM_GRAIN_STREAM_FILM_GRAIN_SYNTAX_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -290,4 +289,3 @@ class GrainBitReader {
 
 }  // namespace av2enc::filters::grain
 
-#endif  // AV2ENC_ENCODER_FILTERS_FILM_GRAIN_STREAM_FILM_GRAIN_SYNTAX_H_

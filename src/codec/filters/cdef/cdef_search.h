@@ -24,8 +24,7 @@
 //
 // Scope: 8-bit 4:2:0, MI-aligned planes, caller-owned memory.
 
-#ifndef AV2ENC_ENCODER_FILTERS_CDEF_CDEF_SEARCH_H_
-#define AV2ENC_ENCODER_FILTERS_CDEF_CDEF_SEARCH_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -984,4 +983,3 @@ inline bool cdef_search_plan(const CdefSearchFrame& frame,
 
 }  // namespace av2enc::cdef
 
-#endif  // AV2ENC_ENCODER_FILTERS_CDEF_CDEF_SEARCH_H_

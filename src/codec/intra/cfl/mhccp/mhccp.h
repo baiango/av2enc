@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_MHCCP_H_
-#define AV2ENC_ENCODER_CFL_MHCCP_H_
+#pragma once
 
 // CPU reference API for AV2 v1.0.0 §7.13.6-§7.13.8 MHCCP.
 //
@@ -135,4 +134,3 @@ Block make_block(const cfl::Block& base, int num4_above_right,
 
 }  // namespace av2enc::cfl::mhccp
 
-#endif  // AV2ENC_ENCODER_CFL_MHCCP_H_

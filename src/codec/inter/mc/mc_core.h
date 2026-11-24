@@ -12,8 +12,7 @@
 // Normative reference: AV2 Bitstream & Decoding Process Specification v1.0.0
 // (2026-05-28, commit 38f28e7), §7.13.3.17, §7.13.3.18.
 
-#ifndef AV2ENC_ENCODER_INTER_MC_MC_CORE_H_
-#define AV2ENC_ENCODER_INTER_MC_MC_CORE_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -198,4 +197,3 @@ AV2ENC_MC_HD std::uint8_t mc_predict_sample(
 
 }  // namespace av2enc::inter::mc
 
-#endif  // AV2ENC_ENCODER_INTER_MC_MC_CORE_H_

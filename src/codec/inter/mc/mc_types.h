@@ -14,8 +14,7 @@
 //   -1 NONE, 0 INTRA_FRAME, 1..7 inter reference slots.
 // This component never reads or writes bitstream syntax.
 
-#ifndef AV2ENC_ENCODER_INTER_MC_MC_TYPES_H_
-#define AV2ENC_ENCODER_INTER_MC_MC_TYPES_H_
+#pragma once
 
 #include <cstdint>
 
@@ -154,4 +153,3 @@ struct MiInfo {
 
 }  // namespace av2enc::inter::mc
 
-#endif  // AV2ENC_ENCODER_INTER_MC_MC_TYPES_H_

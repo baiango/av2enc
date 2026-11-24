@@ -26,8 +26,7 @@
 // Both tables are provided here so the requested data is present, but the IBP
 // code path uses only the former two.
 
-#ifndef AV2ENC_ENCODER_IBP_IBP_TABLES_H_
-#define AV2ENC_ENCODER_IBP_IBP_TABLES_H_
+#pragma once
 
 // §7.13.2.8.  Index = pAngle in degrees (0..89 reachable).
 #define AV2ENC_IBP_DR_INTRA_DERIVATIVE_TABLE                            \
@@ -84,4 +83,3 @@
       3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1,    \
       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
 
-#endif  // AV2ENC_ENCODER_IBP_IBP_TABLES_H_

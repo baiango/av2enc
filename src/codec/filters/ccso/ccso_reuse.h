@@ -28,8 +28,7 @@
 // streams stay byte-identical.  For CCSO-enabled streams without reuse the
 // writer is byte-identical to the existing non-reuse writer in
 // src/encoder/m1/filters_stream/filters_stream.cpp (pinned by the unit test).
-#ifndef AV2ENC_ENCODER_FILTERS_CCSO_REUSE_CCSO_REUSE_H_
-#define AV2ENC_ENCODER_FILTERS_CCSO_REUSE_CCSO_REUSE_H_
+#pragma once
 
 #include "core/bitstream/bitwriter.h"
 #include "codec/filters/loop_restoration/restoration.h"
@@ -307,4 +306,3 @@ int ceil_log2_int(int value);
 
 }  // namespace av2enc::ccso_reuse
 
-#endif  // AV2ENC_ENCODER_FILTERS_CCSO_REUSE_CCSO_REUSE_H_

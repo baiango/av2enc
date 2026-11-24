@@ -7,8 +7,7 @@
 // both the CPU reference and the CUDA kernels, so a shared transcription bug
 // in the production path is not hidden by a copy of itself.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_TEST_COMMON_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_TEST_COMMON_H_
+#pragma once
 
 #include <algorithm>
 #include <cstdint>
@@ -539,4 +538,3 @@ inline void naive_loop_restoration(const NaiveLrFrame& n,
 
 }  // namespace av2enc::restoration::test
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_RESTORATION_TEST_COMMON_H_

@@ -14,8 +14,7 @@
 // (see §9.8: "defined in the ... header file").  They are never transcribed
 // here; callers supply them through PcWienerTables.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_TABLES_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_TABLES_H_
+#pragma once
 
 #include <cstdint>
 
@@ -173,4 +172,3 @@ inline int wiener_predict_group(const int counts[3]) {
 
 }  // namespace av2enc::restoration::classes
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_TABLES_H_

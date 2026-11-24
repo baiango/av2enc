@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_MHCCP_SYNTAX_H_
-#define AV2ENC_ENCODER_CFL_MHCCP_SYNTAX_H_
+#pragma once
 
 // read_cfl_alphas() syntax for cfl_index == CFL_MULTI.
 //
@@ -71,4 +70,3 @@ bool read_cfl_alphas(av2::Decoder& decoder, CflCdfs& cdfs,
 
 }  // namespace av2enc::cfl::mhccp
 
-#endif  // AV2ENC_ENCODER_CFL_MHCCP_SYNTAX_H_

@@ -11,8 +11,7 @@
 // block's output.  This also means the component can be run in any block order,
 // which the CUDA kernel relies on.
 
-#ifndef AV2ENC_ENCODER_FILTERS_CDEF_CDEF_H_
-#define AV2ENC_ENCODER_FILTERS_CDEF_CDEF_H_
+#pragma once
 
 #include <cstdint>
 
@@ -175,4 +174,3 @@ CdefStatus cdef_inspect_block(const CdefFrame& frame,
 
 }  // namespace av2enc::cdef
 
-#endif  // AV2ENC_ENCODER_FILTERS_CDEF_CDEF_H_

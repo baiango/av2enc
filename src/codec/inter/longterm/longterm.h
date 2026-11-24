@@ -25,8 +25,7 @@
 //
 // The M2 path always codes one reference slot and one intra keyframe; this
 // module adds the OBU_OPEN_LOOP_KEY / long-term-reference layer above it.
-#ifndef AV2ENC_ENCODER_INTER_LONGTERM_LONGTERM_H_
-#define AV2ENC_ENCODER_INTER_LONGTERM_LONGTERM_H_
+#pragma once
 
 #include <array>
 #include <cstddef>
@@ -359,4 +358,3 @@ bool plan_inter_frame(const SequenceConfig& config, FrameRole role,
 
 }  // namespace av2enc::inter::longterm
 
-#endif  // AV2ENC_ENCODER_INTER_LONGTERM_LONGTERM_H_

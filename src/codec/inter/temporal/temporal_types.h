@@ -28,8 +28,7 @@
 // Everything here is fixed-size and standard-library-free so the same
 // arithmetic can be reused by a CUDA translation unit.
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_TYPES_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_TYPES_H_
+#pragma once
 
 #include <cstdint>
 
@@ -475,4 +474,3 @@ struct RefineMvBlockSyntaxConfig {
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_TYPES_H_

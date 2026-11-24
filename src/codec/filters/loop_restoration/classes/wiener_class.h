@@ -14,8 +14,7 @@
 // Mode_Offsets, Pc_Wiener_Normalizer, get_qval_given_tskip) are in the spec
 // text and live in wiener_tables.h.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CLASS_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CLASS_H_
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -110,4 +109,3 @@ WienerTableStatus wiener_build_subclass_grid(
 
 }  // namespace av2enc::restoration::classes
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_CLASS_H_

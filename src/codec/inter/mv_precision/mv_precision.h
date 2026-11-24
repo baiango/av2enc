@@ -36,8 +36,7 @@
 // The state is one copy per tile: the AV2 entropy coder mutates a CDF after
 // every symbol, and tiles must not share state.
 
-#ifndef AV2ENC_ENCODER_INTER_MV_PRECISION_MV_PRECISION_H_
-#define AV2ENC_ENCODER_INTER_MV_PRECISION_MV_PRECISION_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -524,4 +523,3 @@ std::int32_t mv_clamp_to_integer(std::int32_t value);
 
 }  // namespace av2enc::inter::mvprec
 
-#endif  // AV2ENC_ENCODER_INTER_MV_PRECISION_MV_PRECISION_H_

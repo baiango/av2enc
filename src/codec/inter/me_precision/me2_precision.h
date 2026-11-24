@@ -21,8 +21,7 @@
 // (2026-05-28, commit 38f28e7).  Constants: MV_LOW = -65536, MV_UPP = 65536
 // (MV_IN_USE_BITS = 16).
 
-#ifndef AV2ENC_ENCODER_INTER_ME2_ME2_PRECISION_H_
-#define AV2ENC_ENCODER_INTER_ME2_ME2_PRECISION_H_
+#pragma once
 
 #include <cstdint>
 
@@ -477,4 +476,3 @@ AV2ENC_ME_HD int me2_precision_side_bins(int frame_precision, int target,
 
 }  // namespace av2enc::me2
 
-#endif  // AV2ENC_ENCODER_INTER_ME2_ME2_PRECISION_H_

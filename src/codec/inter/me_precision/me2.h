@@ -10,8 +10,7 @@
 // the selected precision, distortion at that MV, and a deterministic MV-rate
 // proxy for RDO/mode decision.
 
-#ifndef AV2ENC_ENCODER_INTER_ME2_ME2_H_
-#define AV2ENC_ENCODER_INTER_ME2_ME2_H_
+#pragma once
 
 #include <cstdint>
 
@@ -52,4 +51,3 @@ Me2Status me2_interp_block(const MeCoreRef& ref, const me::MeInterpJob& job,
 
 }  // namespace av2enc::me2
 
-#endif  // AV2ENC_ENCODER_INTER_ME2_ME2_H_

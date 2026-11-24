@@ -7,8 +7,7 @@
 //
 // Scope: 4:0:0, 4:2:0, 4:2:2 and 4:4:4 with BitDepth 8, 10 or 12.
 
-#ifndef AV2ENC_ENCODER_FILTERS_SPEC_TABLES_FILM_GRAIN_H_
-#define AV2ENC_ENCODER_FILTERS_SPEC_TABLES_FILM_GRAIN_H_
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -83,4 +82,3 @@ void ApplyFilmGrain(const FilmGrainModel& model, FilmGrainFrame& frame,
 
 }  // namespace av2enc::filters::spec
 
-#endif  // AV2ENC_ENCODER_FILTERS_SPEC_TABLES_FILM_GRAIN_H_

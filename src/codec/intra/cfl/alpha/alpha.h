@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_ALPHA_ALPHA_H_
-#define AV2ENC_ENCODER_CFL_ALPHA_ALPHA_H_
+#pragma once
 
 // Explicit CfL alpha path (AV2 v1.0.0 §5.20.7.32, §6.19.7.25, §7.13.5).
 //
@@ -211,4 +210,3 @@ void apply_candidate(const Block& u, const Block& v, const Candidate& candidate,
 
 }  // namespace av2enc::cfl::alpha
 
-#endif  // AV2ENC_ENCODER_CFL_ALPHA_ALPHA_H_

@@ -24,8 +24,7 @@
 //
 // Spec-only.  The normative CDFs are in filter_cdfs.h and the CDEF tables in
 // src/cuda/m1/cdef/still_cdef_cdf.h.
-#ifndef AV2ENC_ENCODER_STILL_FILTERS_STREAM_FILTERS_STREAM_H_
-#define AV2ENC_ENCODER_STILL_FILTERS_STREAM_FILTERS_STREAM_H_
+#pragma once
 
 #include "core/bitstream/bitwriter.h"
 #include "cuda/pipeline/still/cdef/still_cdef_index_syntax.h"
@@ -444,4 +443,3 @@ bool lr_read_unit(av2::Decoder& decoder, LrState& state, int plane,
 
 }  // namespace av2enc::still::filters_stream
 
-#endif  // AV2ENC_ENCODER_STILL_FILTERS_STREAM_FILTERS_STREAM_H_

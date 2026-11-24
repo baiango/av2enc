@@ -8,8 +8,7 @@
 // Normative reference: AV2 v1.0.0 §7.9 (motion field estimation), §7.10 (TIP
 // motion field), §7.13.3.8–.12 (OPFL), §4.8 (rounding).
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_MATH_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_MATH_H_
+#pragma once
 
 #include <cstdint>
 
@@ -299,4 +298,3 @@ inline void divide_and_round_array(const int sol[2], int den, int shift,
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_TEMPORAL_MATH_H_

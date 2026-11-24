@@ -17,8 +17,7 @@
 // deterministic (fixed traversal order, deterministic pivoting, round-half-
 // away-from-zero) so two runs on the same inputs produce identical plans.
 
-#ifndef AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_FIT_H_
-#define AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_FIT_H_
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -112,4 +111,3 @@ const WienerFitCandidate* wiener_best_fit_candidate(
 
 }  // namespace av2enc::restoration::classes
 
-#endif  // AV2ENC_ENCODER_FILTERS_RESTORATION_CLASSES_WIENER_FIT_H_

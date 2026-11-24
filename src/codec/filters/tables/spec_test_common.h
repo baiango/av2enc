@@ -4,8 +4,7 @@
 // specification pseudocode.  They share only the normative generated tables
 // and this tiny harness, never the implementation under test.
 
-#ifndef AV2ENC_ENCODER_FILTERS_SPEC_TABLES_SPEC_TEST_COMMON_H_
-#define AV2ENC_ENCODER_FILTERS_SPEC_TABLES_SPEC_TEST_COMMON_H_
+#pragma once
 
 #include <cstdint>
 #include <cstdio>
@@ -101,4 +100,3 @@ inline int OracleSample(const Image& curr, const Image& cdef, int start_x,
 
 }  // namespace av2enc::filters::spec::test
 
-#endif  // AV2ENC_ENCODER_FILTERS_SPEC_TABLES_SPEC_TEST_COMMON_H_

@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_INTER_GME_GME_SYNTAX_H_
-#define AV2ENC_ENCODER_INTER_GME_GME_SYNTAX_H_
+#pragma once
 
 // AV2 v1.0.0 §5.18.9 global motion syntax writer/reader.
 //
@@ -124,4 +123,3 @@ bool read_global_param(GmBitReader& reader, int ref, int index, const std::int32
 
 }  // namespace av2enc::inter::gme
 
-#endif  // AV2ENC_ENCODER_INTER_GME_GME_SYNTAX_H_

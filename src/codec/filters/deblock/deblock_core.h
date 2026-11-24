@@ -25,8 +25,7 @@
 // An `sbEdge` (a vertical tile edge, or a horizontal edge on the 64x64 grid)
 // clamps maxWidthNeg to min(maxWidthPos, 2 chroma / 6 luma).
 
-#ifndef AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_CORE_H_
-#define AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_CORE_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -828,4 +827,3 @@ AV2ENC_DEBLOCK_HD void deblock_frame_core(const DeblockCoreFrameT<Sample>& frame
 
 }  // namespace av2enc::deblock
 
-#endif  // AV2ENC_ENCODER_FILTERS_DEBLOCK_DEBLOCK_CORE_H_

@@ -7,8 +7,7 @@
 // The CPU driver in this component owns storage.  All core functions take POD
 // views/pointers so the same code is usable from a CUDA kernel later.
 
-#ifndef AV2ENC_ENCODER_INTER_TEMPORAL_MOTION_FIELD_H_
-#define AV2ENC_ENCODER_INTER_TEMPORAL_MOTION_FIELD_H_
+#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -168,4 +167,3 @@ TemporalStatus store_motion_field_entry(const MotionFieldStoreEntry& in,
 
 }  // namespace av2enc::inter::temporal
 
-#endif  // AV2ENC_ENCODER_INTER_TEMPORAL_MOTION_FIELD_H_

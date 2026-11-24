@@ -40,8 +40,7 @@
 // All arithmetic is integer.  The CUDA device implementation in
 // src/cuda/ibp/ must reproduce these bytes exactly.
 
-#ifndef AV2ENC_ENCODER_IBP_IBP_H_
-#define AV2ENC_ENCODER_IBP_IBP_H_
+#pragma once
 
 #include "codec/intra/modes/intra_modes.h"
 
@@ -255,4 +254,3 @@ bool read_sequence_intra_config(bool monochrome, BitReader& reader,
 
 }  // namespace av2enc::ibp
 
-#endif  // AV2ENC_ENCODER_IBP_IBP_H_

@@ -1,5 +1,4 @@
-#ifndef AV2ENC_ENCODER_CFL_DS_FILTERS_GOLDENS_H_
-#define AV2ENC_ENCODER_CFL_DS_FILTERS_GOLDENS_H_
+#pragma once
 
 // Pinned §7.13.5 prediction goldens for every down-sampling filter.
 //
@@ -71,4 +70,3 @@ inline constexpr Golden kRealGoldens[] {
 
 }  // namespace av2enc::cfl::ds::test
 
-#endif  // AV2ENC_ENCODER_CFL_DS_FILTERS_GOLDENS_H_
