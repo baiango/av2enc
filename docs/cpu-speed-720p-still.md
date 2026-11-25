@@ -122,3 +122,34 @@ streams: `gate_video_rdoq`, `gate_video_nightly`, `gate_video_ext_nightly`,
 
 The component test (`src/codec/rate/rdoq/build_and_test.sh`): **2,296,120
 checks, 0 failures**, including the new state-free-vs-per-state equality sweep.
+
+### 4.2 The 240p ladder still reproduces every README pin
+
+The change is code-path independent of resolution, so the five 480x240 pins
+were re-encoded on the final binary (`--cpu-threads 8`):
+
+| pin | bytes | md5 |
+|---|---:|---|
+| default QP189 | 25,009 | `a1d0dba1259b20a4b628d4cd1e14c33c` |
+| `--video-rd-preset quality` QP190 | 25,141 | `3984677b9b665952984b07b7cf75c6ea` |
+| `--fast-decode` QP110 | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
+| `--fast-decode` QP106 | 25,008 | `0639b43630abb454f7be5ac494d2efb4` |
+| `--nightly-b` 16 f QP116 (gops 2) | 17,222 | `2a7fbe710542a89c3a9d2c93fab94101` |
+
+All five equal the README table exactly.
+
+## 5. Where the next exact win is, and where it is not
+
+The profile after this change still spends, on the 1-thread still:
+
+| share | where | can it be cut exactly? |
+|---:|---|---|
+| ~9 % | `txv::forward_block` + `inverse_block` | partially: the NEON row kernels exist, but the column passes and the sample-duplication tail are still scalar |
+| ~10 % | TX search driver (`evaluate_candidate`, `TxScratch`, `get_scan`) | `get_scan` is regenerated per candidate for the same `(tx_size, class)` in `uv_rd::trellis_plan`; caching it is pure work elimination |
+| ~14 % | `memmove`, now mostly the *frame-start* restore per superblock | not exactly removable: the raster walk is defined to leave the frame untouched between superblocks, so that restore is real work.  The per-node copies are gone |
+| ~35 % | RDOQ model + trellis | the model is down to its CDF lookups; further cuts mean changing the rate model, which changes decisions |
+
+`AV2ENC_RDOQ_PREV_CAP=0` (states = 1) measures the same stream here, i.e. the
+state dimension is inert on this picture — another reason the trellis change is
+exact but not the biggest lever.  `AV2ENC_SIMD=scalar` vs `auto` (NEON) was also
+byte-identical, so the NEON kernels are doing what the pins say.
