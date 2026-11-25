@@ -1641,13 +1641,24 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
   // under a carried CDF image: the sequence header is written once and every
   // frame reads the same value.  It IS ambiguous with the segmentation /
   // delta-Q machinery, which owns the same fields.
+  // The symmetric chroma offset (--video-uv-qp-offset) is a CONSTANT sequence
+  // field: main.cpp sets base_uv_ac_delta_q and deliberately does NOT set
+  // enable_uv_delta_q, because that flag is the one that switches on the
+  // per-superblock planner.  Only --video-uv-delta-q writes the same §5.4.8
+  // group (separate_uv_delta_q codes base_uv_dc/base_uv_ac itself), so that is
+  // the genuine collision.  The luma-side tools write nothing here:
+  // --video-segmentation/--video-per-segment-q code per-leaf segment ids and
+  // ALT_Q, --video-delta-q/--video-aq code per-superblock CurrentQIndex, and
+  // chroma derives as get_q(sb_qindex, resolved base) with the deblock
+  // splitting base from residual (video_frame_filters.cpp, uv_delta_enabled_
+  // covers the offset independent of the planner).  Refusing the pair outright
+  // priced --video-aq only without the chroma offset, i.e. at a different
+  // chroma operating point than the arm it was meant to improve.
   if ((options.seq_delta_q.base_uv_ac_delta_q != 0 ||
        options.seq_delta_q.base_uv_dc_delta_q != 0) &&
-      (options.enable_uv_delta_q || options.enable_segmentation ||
-       options.enable_delta_q || options.per_segment_q)) {
+      options.enable_uv_delta_q) {
     error = "the symmetric chroma offset (--video-uv-qp-offset) sets the "
-            "§5.4.8 base_uv_*_delta_q fields; drop --video-uv-delta-q / "
-            "--video-segmentation / --video-delta-q / --video-per-segment-q";
+            "§5.4.8 base_uv_*_delta_q fields; drop --video-uv-delta-q";
     return false;
   }
   if (qp_tools) {
@@ -1677,6 +1688,11 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
       error = "the per-segment Q delta must be in [-351, 351]";
       return false;
     }
+    // Rejected for every picture count, including one frame: the schedule is
+    // chosen by the OPTIONS (apply_video_nightly_b sets the chain form for a
+    // lone key too), not by frames.size(), and that writer does not signal the
+    // §5.18.7 rows.  See the matching note in src/cli/validate.cpp: every
+    // nightly-b + delta-Q variant fails dav2d at frame parse.
     if (options.b_frames > 0 || options.temporal_layers > 0 ||
         options.long_term || options.olk || options.leading_frames > 0 ||
         options.sef || options.ra_switch || options.ras) {

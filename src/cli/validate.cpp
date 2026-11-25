@@ -1241,6 +1241,16 @@ ParseStatus validate_options(Options& options, std::string& error) {
               "the §9.3 defaults per frame rather than carried";
       return ParseStatus::kError;
     }
+    // Rejected for every picture count, including --frames 1: the schedule
+    // selects its HEADER WRITER from the options, not from the picture count,
+    // so a lone key under --nightly-b (which sets video_tlayers = 8 with the
+    // chain form) still goes through the hierarchical writer, which does not
+    // signal the §5.18.7.1/.8 rows.  Measured 2026-11-25 after a
+    // frames==1 relaxation: every nightly-b + delta-Q/AQ variant --
+    // --video-cdf-per-frame-qp, --video-cdf-chain-off, AQ strength 0 and the
+    // plain --video-delta-q staircase -- is rejected by dav2d at frame parse
+    // ("Error decoding frame"), while --fast-decode (no chain writer) plus the
+    // same delta-Q decodes strictly and recon-exact (tools/gate_video_aq.sh).
     if (video_qp_tools &&
         (frame_modes != 0 || options.b_frames > 0 ||
          options.video_tlayers > 0 || options.video_tip)) {
