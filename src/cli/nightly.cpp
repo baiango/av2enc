@@ -515,6 +515,14 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   if (!options.video_uv_qp_offset_given && !options.video_uv_delta_q) {
     options.video_uv_qp_offset = -8;
   }
+  // Ablation switches, applied last so they win over the assignments above.
+  // Without these the flags were silently ignored under --nightly-b and
+  // measured byte-identical to the baseline (2026-11-25).
+  if (options.video_rdoq_off) options.video_rdoq = false;
+  if (options.video_tx_search_off) {
+    options.video_tx_search = false;
+    options.video_key_intra_txpart = false;
+  }
   // --video-deblock-off: the single-stage ablation.  The RD preset sets
   // video_deblock=true, so without this the flag was silently ignored under
   // --nightly-b and measured byte-identical to the baseline (2026-11-25).
