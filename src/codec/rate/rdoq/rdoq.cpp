@@ -267,6 +267,9 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   if (!validate_rdoq_config(config, error)) {
     return false;
   }
+  // AV2ENC_RDOQ_DIST_WEIGHT: one scale for both distortion terms below.
+  // 1.0 (the default) is the historical plain-SSE objective.
+  const double dist_weight = config.distortion_weight;
   const std::size_t count = coefficients.size();
   if (count > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
     error = "coefficient count does not fit in int32";
@@ -495,7 +498,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
         const double reconstructed =
             static_cast<double>(signed_level) * quant_step;
         const double difference = original - reconstructed;
-        const double distortion = difference * difference;
+        const double distortion = dist_weight * difference * difference;
         const std::int32_t next_state = std::min(magnitude, cap);
 
         // Continue coding: this coefficient is a normal (possibly zero) level
@@ -624,7 +627,7 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
     const double reconstructed =
         static_cast<double>(result.levels[i]) * quant_step;
     const double difference = coefficients[i].original - reconstructed;
-    distortion += difference * difference;
+    distortion += dist_weight * difference * difference;
   }
   double rate_bits = eob_bits[static_cast<std::size_t>(eob)];
   std::int32_t previous = 0;

@@ -119,6 +119,20 @@ inline const int g_rdoq_prev_cap = [] {
   const int parsed = std::atoi(v);
   return (parsed >= 0 && parsed <= 63) ? parsed : 2;
 }();
+// AV2ENC_RDOQ_DIST_WEIGHT: multiplier on the trellis squared-error distortion
+// (default 1.0 = the historical objective).  The trellis minimises
+// `D + lambda*R` with plain SSE, so it cannot prefer an allocation that puts
+// the same total error somewhere cheaper; a weight != 1 lets the arm spend
+// levels differently and is the coefficient-domain accuracy lever.  1.0
+// reproduces every pin exactly.
+inline const double g_rdoq_dist_weight = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_DIST_WEIGHT");
+  if (v == nullptr || *v == '\0') return 1.0;
+  char* end = nullptr;
+  const double parsed = std::strtod(v, &end);
+  if (end == v || !std::isfinite(parsed) || parsed <= 0.0) return 1.0;
+  return parsed;
+}();
 namespace ddt = av2enc::video::ddt;
 
 // Partition bit indices, identical to VideoTxPartitionBit.
@@ -763,6 +777,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     config.max_coefficients = area;
     config.allow_zero_to_one = g_rdoq_zero_to_one;
     config.prev_level_cap = g_rdoq_prev_cap;
+    config.distortion_weight = g_rdoq_dist_weight;
     av2enc::rdoq::RdoqResult& result = scratch.rdoq_result;
     if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), result,
                                      rdoq_error)) {

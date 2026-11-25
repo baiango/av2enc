@@ -90,6 +90,14 @@ struct Config {
   bool allow_zero_to_one = false;
   // Safety cap for the reference path.
   std::int32_t max_coefficients = 4096;
+  // AV2ENC_RDOQ_DIST_WEIGHT: multiplier on the squared-error distortion.  The
+  // trellis minimises `D + lambda * R` with plain SSE, so it is blind to *where*
+  // in the block the error sits; a value above 1 makes the block spend more
+  // levels for the same error, below 1 spends fewer.  1.0 (the default) is the
+  // historical objective and reproduces every pin exactly.  Applied to the
+  // per-coefficient distortion and to the all-zero suffix distortion, so the
+  // two halves of the objective stay on one scale.
+  double distortion_weight = 1.0;
 };
 
 [[nodiscard]] bool rdoq_config_valid(const Config& config) noexcept;
