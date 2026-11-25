@@ -173,3 +173,20 @@ it was checked directly:
   `--video-rd-preset quality` 240p runs: **zero** race reports.
 - **ASan + UBSan** component test (`RDOQ_SANITIZE=1`): 2,296,120 checks, 0
   failures, no reports.
+
+### 4.4 Decode and quality cross-check (not only md5)
+
+The pinned decoder accepts the stream and the reconstruction is the baseline's:
+
+```sh
+tools/bin/dav2d-macos -q --strict 1 -i out.ivf -o out_dec.y4m --threads 1   # exit 0
+python3 tools/quality.py --ref src720_1f.y4m --test out_dec.y4m
+# psnr_y 25.5859  psnr_u 32.3529  psnr_v 36.9191  jod 7.8012
+
+AV2ENC_RD_DRIVER_MIN=16 baseline-bin ... -o base.ivf ... && cmp base.ivf out.ivf
+# identical
+```
+
+The baseline and changed encoders' IVF files compare equal with `cmp`, not just
+with `md5`, at the QP 177 still; the 240p pins in §4.2 are likewise the README's
+exact byte counts and hashes.
