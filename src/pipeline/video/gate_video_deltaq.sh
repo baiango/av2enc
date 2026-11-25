@@ -171,6 +171,13 @@ CASES=(
   "d_temporal|$INPUT_360|4|1a47c6ee3e936c054af89c989f513684|--video --frames 4 --video-seg-temporal"
   "d_seg16|$INPUT_360|4|41f7e6c9ae6bdb83759bf49d36bbb971|--video --frames 4 --video-segmentation --video-segments 16"
   "d_all|$INPUT_360|4|c65a76f5404e40e8695ba9623698b818|--video --frames 4 --video-uv-delta-q 6 --video-seg-skip --video-seg-globalmv --video-seg-temporal --video-segments 16 --video-inter-residual --video-deblock"
+  # --- delta-Q on the chained-B schedule (video_frame_sequence.cpp) ----------
+  # The B/temporal-layer/TIP writers build header.qp at every make_frame_obu
+  # site, so delta_q_present reaches the hierarchical header.  Before that this
+  # combination was rejected by validation; when it was forced open, dav2d
+  # failed at frame parse ("Error decoding frame", 0 pictures) because the tile
+  # carried per-superblock deltas the header never announced.
+  "e_bframes_dq|$INPUT|4|3b64d67d9d91be1986dbea454ee6ff98|--video --frames 4 --video-delta-q --b-frames 2"
 )
 
 echo "== video delta-Q/segmentation gate =="
@@ -379,9 +386,9 @@ reject "delta-q + tiles" "does not support --tiles > 1x1" \
 reject "delta-q + rc crf" "fixed base_q_idx" \
   "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
   --video-delta-q --rc crf --crf 32
-reject "delta-q + b frames" "B/temporal-layer" \
+reject "segmentation + b frames" "does not compose with the B/temporal-layer" \
   "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 6 \
-  --video-delta-q --b-frames 2
+  --video-segmentation --b-frames 2
 reject "delta-q 10-bit" "only wired on the 8-bit 4:2:0" \
   "$INPUT" -o "${OUT}.sentinel.ivf" --video --frames 4 \
   --bit-depth 10 --video-delta-q

@@ -1241,21 +1241,42 @@ ParseStatus validate_options(Options& options, std::string& error) {
               "the §9.3 defaults per frame rather than carried";
       return ParseStatus::kError;
     }
-    // Rejected for every picture count, including --frames 1: the schedule
-    // selects its HEADER WRITER from the options, not from the picture count,
-    // so a lone key under --nightly-b (which sets video_tlayers = 8 with the
-    // chain form) still goes through the hierarchical writer, which does not
-    // signal the §5.18.7.1/.8 rows.  Measured 2026-11-25 after a
-    // frames==1 relaxation: every nightly-b + delta-Q/AQ variant --
-    // --video-cdf-per-frame-qp, --video-cdf-chain-off, AQ strength 0 and the
-    // plain --video-delta-q staircase -- is rejected by dav2d at frame parse
-    // ("Error decoding frame"), while --fast-decode (no chain writer) plus the
-    // same delta-Q decodes strictly and recon-exact (tools/gate_video_aq.sh).
-    if (video_qp_tools &&
-        (frame_modes != 0 || options.b_frames > 0 ||
-         options.video_tlayers > 0 || options.video_tip)) {
-      error = "segmentation/delta-Q does not compose with the B/temporal-"
-              "layer/random-access/TIP frame schedules";
+    // The chained writers now signal these rows themselves: every
+    // make_frame_obu site in video_frame_sequence.cpp builds header.qp through
+    // build_video_frame_qp before serialising, so delta-Q/AQ composes with
+    // --b-frames / --video-tlayers / --video-tip.  Two parts stay rejected:
+    //
+    //  * the frame-type wrappers (long-term/OLK/leading/SEF/SWITCH/RAS): their
+    //    header writers have not been audited for the §5.18.7.1/.8 rows;
+    //  * SEGMENTATION on a multi-picture chain.  delta_q_params() does not
+    //    depend on primary_ref_frame, but segmentation_params() codes
+    //    update_map/temporal_update only when the derived primary reference is
+    //    PRIMARY_REF_NONE, and these writers pass a constant to the frame codec
+    //    while the decoder derives it per frame from ref_frame_idx[0] -- so from
+    //    the second picture on the two sides disagree and the reader
+    //    desynchronises.  A --frames 1 stream has only FrameIsIntra pictures,
+    //    where both sides derive PRIMARY_REF_NONE, so it may take the full
+    //    surface.
+    if (video_qp_tools && frame_modes != 0) {
+      error = "segmentation/delta-Q does not compose with the frame-type "
+              "wrappers (--video-long-term/--video-olk, --video-leading, "
+              "--video-sef, --video-switch, --video-ras): their header writers "
+              "do not signal the §5.18.7.1/.8 rows";
+      return ParseStatus::kError;
+    }
+    const bool video_segmentation_surface =
+        options.video_segmentation || options.video_per_segment_q ||
+        options.video_seg_skip || options.video_seg_globalmv ||
+        options.video_seg_temporal || options.video_segments != 0 ||
+        options.video_uv_delta_q;
+    if (video_qp_tools && video_segmentation_surface &&
+        (options.b_frames > 0 || options.video_tlayers > 0 ||
+         options.video_tip) &&
+        options.max_frames != 1) {
+      error = "segmentation does not compose with the B/temporal-layer/TIP "
+              "schedules for a multi-picture stream (primary_ref_frame is "
+              "derived per frame there); delta-Q and --video-aq are allowed, "
+              "and a --frames 1 stream may take the full surface";
       return ParseStatus::kError;
     }
     if (video_qp_tools && options.tiles != "1x1") {

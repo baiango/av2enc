@@ -335,6 +335,26 @@ bool encode_b_sequence(std::span<const VideoInputFrame> frames,
       unit.insert(unit.end(), seq.begin(), seq.end());
       wrote_sequence_header = true;
     }
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.18.7.8 delta_q_present for this picture.  The tile payload already
+    // carries the per-superblock deltas whenever delta-Q/AQ is enabled
+    // (video_frame_write.cpp sets plan.delta_steps from sb_delta_steps_), so
+    // leaving header.qp default here makes the decoder read a delta-coded tile
+    // as a plain one: pinned dav2d then fails with "Error decoding frame" and
+    // decodes 0 pictures.  With no qp tool on, build_video_frame_qp returns
+    // before touching header.qp, so every existing stream stays byte-identical.
+    // primary_ref_is_none mirrors this function's InterFrameEncoder argument
+    // (true, line above); it only selects segmentation_update_map/
+    // temporal_update, which stays barred for multi-picture chains in
+    // src/cli/validate.cpp because the decoder derives it per frame.
+    if (!build_video_frame_qp(options, static_cast<int>(base_q),
+                              /*primary_ref_is_none=*/true,
+                              /*frame_is_intra=*/header.keyframe, header,
+                              error)) {
+      error = "B-frame display " + std::to_string(display) + ": " + error;
+      return false;
+    }
+#endif
     const std::vector<std::uint8_t> obu =
         make_frame_obu(frame_config, header, tile, 0);
     unit.insert(unit.end(), obu.begin(), obu.end());
@@ -1564,6 +1584,21 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
       unit.insert(unit.end(), seq.begin(), seq.end());
       wrote_sequence_header = true;
     }
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.18.7.8 delta_q_present for this picture; see the B-sequence copy of
+    // this note for why header.qp must be built before make_frame_obu runs.
+    // This is the writer --nightly-b reaches for a lone key (apply_video_
+    // nightly_b sets video_tlayers = 8 with the chain form even at --frames 1),
+    // which is why --video-aq was unreachable on the 720p still.  base_q is the
+    // same value this loop already fed frame_config.base_q_idx.
+    if (!build_video_frame_qp(options, static_cast<int>(base_q),
+                              /*primary_ref_is_none=*/true,
+                              /*frame_is_intra=*/header.keyframe, header,
+                              error)) {
+      error = "temporal-layer frame " + std::to_string(display) + ": " + error;
+      return false;
+    }
+#endif
     const std::vector<std::uint8_t> obu =
         make_frame_obu(frame_config, header, tile,
                        static_cast<std::uint8_t>(pf.obu_tlayer_id()));
@@ -1860,6 +1895,16 @@ bool encode_video_refinement_sequence(
       unit.insert(unit.end(), seq.begin(), seq.end());
       wrote_sequence_header = true;
     }
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.18.7.8 delta_q_present; see the B-sequence note.  primary_ref_is_none
+    // mirrors this loop's InterFrameEncoder construction (the defaulted true).
+    if (!build_video_frame_qp(options, static_cast<int>(base_q),
+                              /*primary_ref_is_none=*/true,
+                              /*frame_is_intra=*/false, header, error)) {
+      error = "refinement frame " + std::to_string(i) + ": " + error;
+      return false;
+    }
+#endif
     const std::vector<std::uint8_t> obu =
         make_frame_obu(frame_config, header, tile);
     unit.insert(unit.end(), obu.begin(), obu.end());
@@ -2064,6 +2109,17 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
   {
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> seq = make_sequence_header_obu(config);
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.18.7.8 delta_q_present; see the B-sequence note.  A key frame derives
+    // PRIMARY_REF_NONE (FrameIsIntra), so primary_ref_is_none = true is the
+    // decoder's value here, not just the encoder's assumption.
+    if (!build_video_frame_qp(options, static_cast<int>(config.base_q_idx),
+                              /*primary_ref_is_none=*/true,
+                              /*frame_is_intra=*/true, key_header, error)) {
+      error = "TIP keyframe: " + error;
+      return false;
+    }
+#endif
     const std::vector<std::uint8_t> obu =
         make_frame_obu(config, key_header, key_payload);
     std::vector<std::uint8_t> unit;
@@ -2153,6 +2209,16 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
       header.grain_seed = anchor_grain.grain_seed;
     }
 
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.18.7.8 delta_q_present; see the B-sequence note.  primary_ref_is_none
+    // mirrors this loop's InterFrameEncoder construction (the defaulted true).
+    if (!build_video_frame_qp(options, static_cast<int>(config.base_q_idx),
+                              /*primary_ref_is_none=*/true,
+                              /*frame_is_intra=*/false, header, error)) {
+      error = "TIP anchor: " + error;
+      return false;
+    }
+#endif
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> obu =
         make_frame_obu(config, header, payload);
@@ -2589,6 +2655,18 @@ bool encode_tip_sequence(std::span<const VideoInputFrame> frames,
       header.grain_seed = tail_grain.grain_seed;
     }
 
+#if defined(AV2ENC_VIDEO_DELTAQ)
+    // §5.18.7.8 delta_q_present; see the B-sequence note.  This loop's
+    // InterFrameEncoder passes primary_ref_is_none = false (the tail P's
+    // primary reference is an earlier P), which is also the decoder's
+    // derivation for this frame.
+    if (!build_video_frame_qp(options, static_cast<int>(config.base_q_idx),
+                              /*primary_ref_is_none=*/false,
+                              /*frame_is_intra=*/false, header, error)) {
+      error = "TIP tail P: " + error;
+      return false;
+    }
+#endif
     const std::vector<std::uint8_t> td = make_temporal_delimiter_obu();
     const std::vector<std::uint8_t> obu = make_frame_obu(config, header, payload);
     std::vector<std::uint8_t> unit;

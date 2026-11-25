@@ -1688,21 +1688,42 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
       error = "the per-segment Q delta must be in [-351, 351]";
       return false;
     }
-    // Rejected for every picture count, including one frame: the schedule is
-    // chosen by the OPTIONS (apply_video_nightly_b sets the chain form for a
-    // lone key too), not by frames.size(), and that writer does not signal the
-    // §5.18.7 rows.  See the matching note in src/cli/validate.cpp: every
-    // nightly-b + delta-Q variant fails dav2d at frame parse.
-    if (options.b_frames > 0 || options.temporal_layers > 0 ||
-        options.long_term || options.olk || options.leading_frames > 0 ||
+    // The chained writers build header.qp at every make_frame_obu site
+    // (video_frame_sequence.cpp), so delta-Q/AQ now composes with the B,
+    // temporal-layer and TIP schedules.  Two parts stay out:
+    //   * the frame-type wrappers (long-term/OLK/leading/SEF/SWITCH/RAS):
+    //     their header writers have not been audited for these rows;
+    //   * the planner surface (segmentation / per-segment-Q / UV delta-Q) on a
+    //     MULTI-picture chain.  delta_q_params() is derived only from
+    //     base_q_idx, but segmentation_params() codes update_map/
+    //     temporal_update from the DERIVED primary reference, and these writers
+    //     hand the frame codec a constant while the decoder derives it per
+    //     frame -- from the second picture on the two sides disagree and the
+    //     reader desynchronises.  One input frame has only FrameIsIntra
+    //     pictures, where both sides derive PRIMARY_REF_NONE.
+    const bool qp_planner_surface =
+        options.enable_segmentation || options.per_segment_q ||
+        options.enable_uv_delta_q;
+    const bool chain_schedule =
+        options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.enable_tip;
+    if (options.long_term || options.olk || options.leading_frames > 0 ||
         options.sef || options.ra_switch || options.ras) {
-      error = "segmentation/delta-Q does not compose with the B/temporal-layer/"
-              "random-access frame schedules (their header writers do not own "
-              "the §5.18.7.1/.8 rows)";
+      error = "segmentation/delta-Q does not compose with the frame-type "
+              "wrappers (long-term/OLK/leading/SEF/SWITCH/RAS): their header "
+              "writers do not own the §5.18.7.1/.8 rows";
       return false;
     }
-    if (options.enable_tip) {
-      error = "segmentation/delta-Q does not compose with --video-tip";
+    if (qp_planner_surface && chain_schedule && frames.size() > 1) {
+      error = "segmentation/delta-Q does not compose with the B/temporal-"
+              "layer/TIP schedules for a multi-picture stream (the primary "
+              "reference is derived per frame there)";
+      return false;
+    }
+    if (qp_planner_surface && options.enable_tip && frames.size() > 1) {
+      error = "segmentation/delta-Q does not compose with --video-tip for a "
+              "multi-picture stream (the primary reference is derived per "
+              "frame there)";
       return false;
     }
     if (options.tile_cols > 1 || options.tile_rows > 1) {

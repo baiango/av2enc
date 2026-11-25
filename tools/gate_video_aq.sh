@@ -231,10 +231,37 @@ fi
 grep -q "video-cdf-per-frame-qp" "$TMP/carry.err" ||
     fail "the carried-CDF rejection did not name --video-cdf-per-frame-qp"
 
+# --- composition with the chained-B / temporal-layer schedule ---------------
+# The writers in video_frame_sequence.cpp build header.qp at every
+# make_frame_obu site, so §5.18.7 delta_q_present now reaches the hierarchical
+# frame header.  Before that, every --nightly-b + delta-Q variant was rejected
+# by validation, and forcing it open made pinned dav2d fail at frame parse
+# ("Error decoding frame", 0 pictures): the tile carried per-superblock deltas
+# the header never announced.  Gate both shapes -- the lone key --nightly-b
+# arm and a multi-picture temporal-layer chain.
+if ! "$BIN" "$NASA" -o "$TMP/nb.ivf" --video --frames 1 --qp 110 \
+        --cpu-threads 8 --nightly-b --video-cdf-per-frame-qp --video-aq \
+        --video-recon "$TMP/nb-recon.y4m" \
+        >"$TMP/nb.log" 2>&1; then
+    fail "the --nightly-b --video-aq encode failed"
+    cat "$TMP/nb.log" >&2
+else
+    decode_and_compare "$TMP/nb.ivf" "$TMP/nb-recon.y4m" 1 "nightly-b-aq"
+fi
+if ! "$BIN" "$NASA" -o "$TMP/tl.ivf" --video --frames 4 --qp 110 \
+        --cpu-threads 8 --video-tlayers 4 --video-aq \
+        --video-recon "$TMP/tl-recon.y4m" \
+        >"$TMP/tl.log" 2>&1; then
+    fail "the --video-tlayers 4 --video-aq encode failed"
+    cat "$TMP/tl.log" >&2
+else
+    decode_and_compare "$TMP/tl.ivf" "$TMP/tl-recon.y4m" 4 "tlayers-aq"
+fi
+
 if [ "$FAILED" -ne 0 ]; then
     echo "gate_video_aq: FAILED" >&2
     exit 1
 fi
 echo "gate_video_aq: OK (rejections, neutral-ramp control, non-flat plan,"
 echo "               determinism, strict decode + recon on full/2/6-frame,"
-echo "               nightly CDF chain)"
+echo "               nightly CDF chain, --nightly-b and tlayers composition)"
