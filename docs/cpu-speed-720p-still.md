@@ -2,11 +2,12 @@
 
 Status: **landed, byte-identical, measured.** On `~/Downloads/src720.png`
 (1280x720, converted to `src720_1f.y4m`, md5 `8070833614…`) the `--nightly-b`
-key at QP 177 gets **1.07x** faster at both 1 and 8 threads with the **same**
-stream (38,089 B, md5 `01e931f8c868eca71fe18da12b6d8db8` across all 20 timed
-runs). Nothing here changes a decision: both changes remove work that provably
-cannot affect a value, and the proofs are in the code and covered by a new
-2.3M-check unit test.  The full 57-gate suite is green.
+key at QP 177 gets **1.069x** faster at 1 thread and **1.053x** at 8 with the
+**same** stream (38,089 B, md5 `01e931f8c868eca71fe18da12b6d8db8` in every
+timed run). Nothing here changes a decision: both changes remove work that
+provably cannot affect a value, and the proofs are in the code and covered by a
+new 2.3M-check unit test.  The full 57-gate suite is green and all five 240p
+README pins still reproduce byte-exactly.
 
 Provenance: `src720_1f.y4m` made with `ffmpeg -i src720.png -pix_fmt yuv420p
 -color_range tv -colorspace bt709 -color_primaries bt709 -color_trc bt709`
@@ -93,23 +94,31 @@ tools/bench_720p_still.sh --a build-base/av2enc --b build-release/av2enc \
 
 | Arm | Threads | median wall | speedup | IVF | md5 |
 |---|---:|---:|---:|---:|---|
-| baseline `6bc50337` | 1 | 19.49 s | — | 38,089 B | `01e931f8…` |
-| this change | 1 | **18.19 s** | **1.071x** | 38,089 B | `01e931f8…` |
-| baseline `6bc50337` | 8 | 20.65 s | — | 38,089 B | `01e931f8…` |
-| this change | 8 | **19.24 s** | **1.073x** | 38,089 B | `01e931f8…` |
+| baseline `6bc50337` | 1 | 18.06 s | — | 38,089 B | `01e931f8…` |
+| this change | 1 | **16.89 s** | **1.069x** | 38,089 B | `01e931f8…` |
+| baseline `6bc50337` | 8 | 18.63 s | — | 38,089 B | `01e931f8…` |
+| this change | 8 | **17.69 s** | **1.053x** | 38,089 B | `01e931f8…` |
 
-All 20 encodes produced one md5 — `01e931f8c868eca71fe18da12b6d8db8` — so the
-speedup is on the pinned stream, not a different one.  Threading is *negative*
-on this path (8T is slower than 1T for both arms: the lone-key walk is serial
-and the pool pays for itself only when the leaf/candidate loops have work to
-hand out), which is why the work here is single-thread code.
+Re-measured on the final tree (after the concurrently landed
+`AV2ENC_TX_LIVE_CTX` work merged); an earlier run of the same pair on the
+same host gave 19.49 -> 18.19 s (1.071x) at 1 thread and 20.65 -> 19.24 s
+(1.073x) at 8, i.e. the gain is stable across sessions while the absolute
+times drift with host load.  Baseline medians on this host move between
+sessions by ~8 %, which is why every number here is an interleaved A/B.
+
+All 20 encodes of each run produced one md5 —
+`01e931f8c868eca71fe18da12b6d8db8` — so the speedup is on the pinned stream,
+not a different one.  Threading is *negative* on this path (8T is slower than
+1T for both arms: the lone-key walk is serial and the pool pays for itself only
+when the leaf/candidate loops have work to hand out), which is why the work
+here is single-thread code.
 
 Byte-identity also holds at a second operating point:
 
 | point | args | bytes | md5 |
 |---|---|---:|---|
 | 720p still QP 177 | §0 recipe | 38,089 | `01e931f8c868eca71fe18da12b6d8db8` |
-| 720p still QP 229 | `--qp 229` | 6,112 | `618619337947136bc8c0b264b3d38cd8` |
+| 720p still QP 229 | `--qp 229` | 6,252 (6,079 B tile) | `618619337947136bc8c0b264b3d38cd8` |
 
 ### 4.1 Gates
 
