@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <string>
@@ -96,6 +97,27 @@ inline const bool g_dump_dead_zone = [] {
   const bool on = std::getenv("AV2ENC_DZ_DUMP") != nullptr;
   if (on) dead_zone_dump_register();
   return on;
+}();
+
+// AV2ENC_RDOQ_ZERO_TO_ONE: let a coefficient whose scalar level rounded to
+// zero try a non-zero level in the trellis.  The scalar quantiser in
+// tx_variants.cpp is lround(coeff * quant_factor), which hard-zeroes anything
+// under half a step; the trellis then only refines levels that already
+// survived, so a coefficient the rounding killed can never come back.  The
+// measured 720p-still defect is exactly that shape: we keep ~1.8x AVM's
+// high-frequency energy while correlating worse, i.e. detail present but
+// misplaced.  Default off (byte-identical); rdoq.h calls these levels
+// "normally dominated", which is the claim this gate lets us test.
+inline const bool g_rdoq_zero_to_one = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_ZERO_TO_ONE");
+  return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+}();
+// AV2ENC_RDOQ_PREV_CAP: previous-level state cap for the trellis (default 2).
+inline const int g_rdoq_prev_cap = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_PREV_CAP");
+  if (v == nullptr || *v == '\0') return 2;
+  const int parsed = std::atoi(v);
+  return (parsed >= 0 && parsed <= 63) ? parsed : 2;
 }();
 namespace ddt = av2enc::video::ddt;
 
@@ -737,6 +759,8 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
         config.quant_step, options.rdoq_sse_scale);
     config.max_coefficients = area;
+    config.allow_zero_to_one = g_rdoq_zero_to_one;
+    config.prev_level_cap = g_rdoq_prev_cap;
     av2enc::rdoq::RdoqResult& result = scratch.rdoq_result;
     if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), result,
                                      rdoq_error)) {
