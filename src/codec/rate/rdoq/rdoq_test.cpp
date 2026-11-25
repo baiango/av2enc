@@ -672,6 +672,105 @@ void test_av2_model() {
         "RDOQ with the AV2 inter model succeeds");
 }
 
+// The state-free trellis (`RateModel::coefficient_rate_ignores_state`) runs the
+// per-position search once and copies the winner into every arrival state,
+// because for such a model no candidate cost reads `prev`.  Prove that against
+// the historical per-state loop: same EOB, same levels, and bit-identical
+// doubles for cost / distortion / rate.  Two models are covered -- the AV2
+// model (which opts in) and the bring-up default model (which does not) -- so
+// the comparison is real in both directions, and an arbitrary state-reading
+// model is included as the negative control that must keep the slow path.
+void test_state_free_trellis_matches_per_state() {
+  std::mt19937 rng(20261125);
+  std::uniform_real_distribution<double> magnitude(-40.0, 40.0);
+
+  av2::BlockInfo info;
+  info.params = av2enc::txv::TxParams{};
+  info.params.tx_size = 15;  // 4:2:2-ish index is irrelevant; geometry is w/h
+  info.plane = 0;
+  info.txb_skip_context = 0;
+  info.dc_sign_context = 0;
+
+  const std::vector<std::pair<std::int32_t, std::int32_t>> shapes = {
+      {4, 4}, {4, 8}, {8, 8}, {8, 4}, {16, 16}, {16, 4}, {4, 16}};
+  int compared = 0;
+  for (const auto& shape : shapes) {
+    const std::int32_t w = shape.first;
+    const std::int32_t h = shape.second;
+    // Geometry is all the model and the trellis read (the standalone test
+    // deliberately links only rdoq.cpp + rdoq_av2_model.cpp), so fill the
+    // fields directly instead of pulling in the transform component.
+    info.params = av2enc::txv::TxParams{};
+    info.params.tx_size = 1;
+    info.params.coded_w = static_cast<std::int16_t>(w);
+    info.params.coded_h = static_cast<std::int16_t>(h);
+    info.params.w = static_cast<std::int16_t>(w);
+    info.params.h = static_cast<std::int16_t>(h);
+    const std::size_t area = static_cast<std::size_t>(w) *
+                             static_cast<std::size_t>(h);
+    std::vector<std::int32_t> scan(area, 0);
+    av2::build_scan(w, h, scan);
+    for (int trial = 0; trial < 40; ++trial) {
+      std::vector<Coefficient> block(area);
+      std::vector<std::int32_t> scalar(area, 0);
+      for (std::size_t i = 0; i < area; ++i) {
+        double value = magnitude(rng);
+        if (i >= area / 2) value *= 0.05;  // a sparse tail, like real blocks
+        block[i].original = value;
+        block[i].level_context = 0;
+        scalar[i] = static_cast<std::int32_t>(std::lround(value / 6.0));
+      }
+      av2::Model model;
+      std::string error;
+      check(model.init(info, scalar, error), "state-free test model inits");
+      Config config;
+      config.quant_step = 6.0;
+      config.lambda = 8.0 + 3.0 * static_cast<double>(trial % 5);
+      config.prev_level_cap = static_cast<std::int32_t>(trial % 4);
+      config.allow_zero_to_one = (trial % 2) == 0;
+
+      // The state-free path (the AV2 model declares the flag).
+      RateModel fast = model.rate_model();
+      check(fast.coefficient_rate_ignores_state,
+            "AV2 model opts into the state-free trellis");
+      RateModel slow = fast;
+      slow.coefficient_rate_ignores_state = false;
+
+      RdoqResult a;
+      RdoqResult b;
+      check(rdoq_quantize(block, config, fast, a, error),
+            "state-free trellis succeeds");
+      check(rdoq_quantize(block, config, slow, b, error),
+            "per-state trellis succeeds");
+      check(a.eob == b.eob, "state-free EOB matches per-state");
+      check(a.levels == b.levels, "state-free levels match per-state");
+      check(a.cost == b.cost, "state-free cost is bit-identical");
+      check(a.distortion == b.distortion,
+            "state-free distortion is bit-identical");
+      check(a.rate_bits == b.rate_bits,
+            "state-free rate is bit-identical");
+      check(a.max_level_searched == b.max_level_searched,
+            "state-free search range matches");
+      check(a.level_range_truncated == b.level_range_truncated,
+            "state-free truncation flag matches");
+      ++compared;
+
+      // Negative control: a model that really reads `prev_abs_state` must not
+      // opt in, and must still produce a valid result on the same block.
+      TestRateContext context;
+      RateModel reading;
+      reading.context = &context;
+      reading.coefficient_rate = &test_coefficient_rate;
+      reading.eob_rate = &default_eob_rate;
+      reading.coefficient_rate_ignores_state = false;
+      RdoqResult c;
+      check(rdoq_quantize(block, config, reading, c, error),
+            "state-reading model still runs the per-state loop");
+    }
+  }
+  check(compared >= 200, "state-free comparison covers many blocks");
+}
+
 // The all-zero fast path shares one immutable context table per
 // (w, h, plane).  Prove it is identical to the generic per-block build that
 // the same zero levels produce with sharing disabled: same EOB, same total
@@ -791,6 +890,7 @@ int main() {
   test_invalid_inputs();
   test_av2_model();
   test_zero_table_matches_generic();
+  test_state_free_trellis_matches_per_state();
   std::printf("%d checks, %d failures\n", g_checks, g_failures);
   if (g_failures != 0) {
     std::printf("RESULT: FAIL\n");

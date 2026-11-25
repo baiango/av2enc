@@ -1,5 +1,6 @@
 #include "pipeline/video/video_frame_internal.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -6559,15 +6560,8 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
     std::array<int, 3> width{};
     std::array<int, 3> height{};
     std::vector<std::uint8_t> joint;
-    std::vector<std::uint8_t> uv;
-    std::vector<inter::mc::MiInfo> mv;
     SbSink::State state;
     std::size_t blocks = 0;
-    std::size_t levels = 0;
-    std::size_t palettes = 0;
-    std::size_t sub_pus = 0;
-    std::size_t leaf_dump = 0;
-    std::size_t leaf_costs = 0;
   };
   SbSink sink;
   sink.reset();
@@ -6584,36 +6578,38 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
       snap.width[p] = recon_[p].width;
       snap.height[p] = recon_[p].height;
     }
+    // The MV/JOINT/UV planner grids are not part of this snapshot: this walk
+    // only runs with every inter tool off, and a trial leaf never writes them.
+    // Only the intra joint-mode map feeds the intra decision.
     snap.joint = intra_joint_;
-    snap.uv = uv_smooth_;
-    snap.mv = mv_grid_;
     snap.state = sink.state;
     snap.blocks = sink.blocks.size();
-    snap.levels = sink.levels.size();
-    snap.palettes = sink.palettes.size();
-    snap.sub_pus = sink.sub_pus.size();
-    snap.leaf_dump = sink.leaf_dump.size();
-    snap.leaf_costs = sink.leaf_costs.size();
     return snap;
   };
+  // A trial restores the reconstruction and the superblock state.  The syntax
+  // buffers (`levels`, `palettes`, `leaf_costs`, `leaf_dump`, `sub_pus`) need no
+  // rewind: `encode_leaf()` only appends to them, and every read inside a trial
+  // compares against `sink.blocks.size()` or the index the leaf itself pushed,
+  // so an append that is never popped cannot change a result.  Copying the full
+  // reconstruction a second time here was the largest `memmove` in the key
+  // profile; `samples` is assigned in place now and only reallocates if a
+  // trial changed the plane's size.
   const auto apply = [&](const Snap& snap) {
     for (int plane = 0; plane < 3; ++plane) {
       const std::size_t p = static_cast<std::size_t>(plane);
-      recon_[p].samples = snap.samples[p];
+      if (recon_[p].samples.size() != snap.samples[p].size()) {
+        recon_[p].samples = snap.samples[p];
+      } else {
+        std::copy(snap.samples[p].begin(), snap.samples[p].end(),
+                  recon_[p].samples.begin());
+      }
       recon_[p].stride = snap.stride[p];
       recon_[p].width = snap.width[p];
       recon_[p].height = snap.height[p];
     }
     intra_joint_ = snap.joint;
-    uv_smooth_ = snap.uv;
-    mv_grid_ = snap.mv;
     sink.state = snap.state;
     sink.blocks.resize(snap.blocks);
-    sink.levels.resize(snap.levels);
-    sink.palettes.resize(snap.palettes);
-    sink.sub_pus.resize(snap.sub_pus);
-    sink.leaf_dump.resize(snap.leaf_dump);
-    sink.leaf_costs.resize(snap.leaf_costs);
   };
 
   struct PruneResult {

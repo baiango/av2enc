@@ -29,6 +29,30 @@ bool valid_rate(double rate) noexcept {
   return std::isfinite(rate) && rate >= 0.0;
 }
 
+// Reusable trellis work buffers, one block per thread.  `rdoq_quantize()` runs
+// once per RD candidate (hundreds of thousands of times per 720p still), so the
+// ten small vectors below used to be allocated, grown and freed on every call;
+// they are most of the allocator traffic in the profile.  They hold only
+// transient DP state -- each is assigned at the top of the call before it is
+// read -- and are thread-local because the search also runs on pool workers.
+struct TrellisScratch {
+  std::vector<double> suffix_zero;
+  std::vector<std::int32_t> signs;
+  std::vector<std::int32_t> chosen_level;
+  std::vector<std::uint8_t> chosen_mode;
+  std::vector<double> dp_next;
+  std::vector<double> dd_next;
+  std::vector<double> dr_next;
+  std::vector<double> dp_cur;
+  std::vector<double> dd_cur;
+  std::vector<double> dr_cur;
+};
+
+TrellisScratch& trellis_scratch() noexcept {
+  static thread_local TrellisScratch scratch;
+  return scratch;
+}
+
 std::int32_t scalar_level_for(const Coefficient& coefficient,
                               double quant_step) noexcept {
   if (coefficient.scalar_level != kAutoScalarLevel) {
@@ -296,9 +320,15 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
     eob_bits[static_cast<std::size_t>(i)] = bits;
   }
 
-  // Distortion if every coefficient from i onward is forced to zero.
-  std::vector<double> suffix_zero(static_cast<std::size_t>(count) + 1, 0.0);
-  std::vector<std::int32_t> signs(count, 1);
+  // Distortion if every coefficient from i onward is forced to zero.  The
+  // work buffers come from the per-thread block: each is fully assigned below
+  // before it is read, and `result.levels` is the caller's own vector, so
+  // reusing them cannot change a single value.
+  TrellisScratch& buf = trellis_scratch();
+  buf.suffix_zero.assign(static_cast<std::size_t>(count) + 1, 0.0);
+  buf.signs.assign(count, 1);
+  std::vector<double>& suffix_zero = buf.suffix_zero;
+  std::vector<std::int32_t>& signs = buf.signs;
   for (std::size_t i = count; i-- > 0;) {
     const double original = coefficients[i].original;
     if (!std::isfinite(original)) {
@@ -318,19 +348,27 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
 
   const std::size_t path_cells =
       count * static_cast<std::size_t>(states);
-  std::vector<std::int32_t> chosen_level(path_cells, 0);
-  std::vector<std::uint8_t> chosen_mode(path_cells, 0);
+  buf.chosen_level.assign(path_cells, 0);
+  buf.chosen_mode.assign(path_cells, 0);
+  std::vector<std::int32_t>& chosen_level = buf.chosen_level;
+  std::vector<std::uint8_t>& chosen_mode = buf.chosen_mode;
 
   // State at position `count` is unreachable: the trellis must terminate with
   // an explicit EOB transition at a non-zero coefficient, so there is no valid
   // path that "runs off the end" with a trailing zero.
-  std::vector<double> dp_next(static_cast<std::size_t>(states), kInfinity);
-  std::vector<double> dd_next(static_cast<std::size_t>(states), 0.0);
-  std::vector<double> dr_next(static_cast<std::size_t>(states), 0.0);
+  buf.dp_next.assign(static_cast<std::size_t>(states), kInfinity);
+  buf.dd_next.assign(static_cast<std::size_t>(states), 0.0);
+  buf.dr_next.assign(static_cast<std::size_t>(states), 0.0);
 
-  std::vector<double> dp_cur(static_cast<std::size_t>(states), kInfinity);
-  std::vector<double> dd_cur(static_cast<std::size_t>(states), 0.0);
-  std::vector<double> dr_cur(static_cast<std::size_t>(states), 0.0);
+  buf.dp_cur.assign(static_cast<std::size_t>(states), kInfinity);
+  buf.dd_cur.assign(static_cast<std::size_t>(states), 0.0);
+  buf.dr_cur.assign(static_cast<std::size_t>(states), 0.0);
+  std::vector<double>& dp_next = buf.dp_next;
+  std::vector<double>& dd_next = buf.dd_next;
+  std::vector<double>& dr_next = buf.dr_next;
+  std::vector<double>& dp_cur = buf.dp_cur;
+  std::vector<double>& dd_cur = buf.dd_cur;
+  std::vector<double>& dr_cur = buf.dr_cur;
   std::int32_t max_level_searched = 0;
   bool truncated = false;
 
@@ -347,6 +385,17 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
   };
   const bool cache_by_magnitude = rate_model.coefficient_rate_ignores_state;
   std::vector<LevelRate> level_rates;
+
+  // State-independent trellis.  When the model declares that its per-symbol
+  // rate ignores the arrival state, nothing in the per-state search reads
+  // `prev`: every candidate cost is built from the distortion, the (cached,
+  // state-free) rate and the shared dp/dd/dr_next, and the `ii == 0` all-zero
+  // seed is the same for every state.  Each state therefore computes the
+  // byte-identical Choice, including its exact double cost, so the search runs
+  // once and the winner is copied into the remaining states.  This removes a
+  // factor of `states` from the DP without touching a single value; a
+  // state-reading model keeps the historical per-state loop untouched.
+  const bool state_free = cache_by_magnitude && states > 1;
 
   for (std::size_t ii = count; ii-- > 0;) {
     const std::int32_t scan_pos = static_cast<std::int32_t>(ii);
@@ -423,7 +472,10 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
       return bits;
     };
 
-    for (std::int32_t prev = 0; prev < states; ++prev) {
+    // One state-free search, then broadcast (see `state_free`), or the
+    // historical per-state loop.
+    const std::int32_t last_state = state_free ? 1 : states;
+    for (std::int32_t prev = 0; prev < last_state; ++prev) {
       Choice best;
       // The all-zero block is only meaningful at position 0; every other path
       // must code at least one non-zero coefficient as the EOB coefficient.
@@ -512,6 +564,18 @@ bool rdoq_quantize(std::span<const Coefficient> coefficients,
           static_cast<std::size_t>(prev);
       chosen_level[slot] = best.signed_level;
       chosen_mode[slot] = static_cast<std::uint8_t>(best.mode);
+      if (state_free) {
+        // Every state's search produces this same Choice; fill the rest.
+        for (std::int32_t s = 1; s < states; ++s) {
+          const std::size_t si = static_cast<std::size_t>(s);
+          dp_cur[si] = best.cost;
+          dd_cur[si] = best.distortion;
+          dr_cur[si] = best.rate_bits;
+          const std::size_t s_slot = ii * static_cast<std::size_t>(states) + si;
+          chosen_level[s_slot] = best.signed_level;
+          chosen_mode[s_slot] = static_cast<std::uint8_t>(best.mode);
+        }
+      }
     }
     // A coefficient is "capped" if any state ran to `bound` without the safe
     // distortion stop.  `max_here` is shared across states, so compare it with

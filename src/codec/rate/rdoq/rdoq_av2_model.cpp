@@ -142,6 +142,20 @@ double escape_bits(std::int32_t x, std::int32_t predictor) {
   }
 }
 
+// Per-thread scratch for Model::init(): the pre-level plane and the level
+// copy used only while building/validating a block's context table.  Both are
+// fully assigned before they are read, so reusing them across calls cannot
+// change a value; they just remove two heap allocations from the init that runs
+// on every RDOQ candidate.
+struct ModelInitScratch {
+  std::vector<std::int32_t> level_pre;
+};
+
+ModelInitScratch& model_init_scratch() noexcept {
+  static thread_local ModelInitScratch scratch;
+  return scratch;
+}
+
 std::int32_t pre_level_from_abs(std::int32_t abs_value,
                                 std::int32_t base_levels,
                                 std::int32_t base_max,
@@ -269,7 +283,8 @@ bool Model::init(const BlockInfo& info,
   // index).  Freezing them from the scalar path is the documented RDOQ
   // approximation.  Note that the neighbour values are magnitudes, not signed
   // levels.
-  std::vector<std::int32_t> level_pre(static_cast<std::size_t>(area), 0);
+  std::vector<std::int32_t>& level_pre = model_init_scratch().level_pre;
+  level_pre.assign(static_cast<std::size_t>(area), 0);
   // An all-zero block needs nothing from the loops below: every pre-level is
   // already 0, its contexts are a pure function of (w, h, plane) and its
   // escape predictors are all 0 (no level reaches max_level).  Take the shared
@@ -460,13 +475,31 @@ const std::vector<Model::Position>* Model::zero_positions(std::int32_t w,
   if (published != nullptr) return published;
   std::vector<Position> built;
   const std::span<const std::int32_t> scan = cached_scan(w, h);
-  const std::vector<std::int32_t> level_pre(
-      static_cast<std::size_t>(w) * static_cast<std::size_t>(h), 0);
   std::string ignored;
-  if (scan.size() !=
-          static_cast<std::size_t>(w) * static_cast<std::size_t>(h) ||
-      !build_positions(w, h, plane, scan, level_pre, built, ignored)) {
+  if (scan.size() != static_cast<std::size_t>(w) * static_cast<std::size_t>(h)) {
     return nullptr;
+  }
+  // Serial fast path first: the block is almost always already published.
+  if (const std::vector<Position>* ready = cache[slot].load(
+          std::memory_order_acquire)) {
+    return ready;
+  }
+  // Two threads can race to build the same entry.  `init_build_lock` makes the
+  // shared scratch safe; both then compute the identical table and the
+  // compare_exchange below still publishes exactly one of them.
+  {
+    static std::mutex init_build_lock;
+    std::lock_guard<std::mutex> lock(init_build_lock);
+    if (const std::vector<Position>* ready = cache[slot].load(
+            std::memory_order_acquire)) {
+      return ready;
+    }
+    std::vector<std::int32_t>& level_pre = model_init_scratch().level_pre;
+    level_pre.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
+                     0);
+    if (!build_positions(w, h, plane, scan, level_pre, built, ignored)) {
+      return nullptr;
+    }
   }
   auto* owned = new std::vector<Position>(std::move(built));
   const std::vector<Position>* expected = nullptr;
