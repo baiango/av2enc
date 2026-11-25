@@ -1,0 +1,8 @@
+[
+  {"label": "ref",   "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "live",  "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_TX_LIVE_CTX": "1"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "mrd2",  "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RD_MODE_RD": "2"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "mrd8",  "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RD_MODE_RD": "8"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "mrd32", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RD_MODE_RD": "32"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "mrd128","env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RD_MODE_RD": "128"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]}
+]

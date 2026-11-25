@@ -1241,9 +1241,16 @@ ParseStatus validate_options(Options& options, std::string& error) {
               "the §9.3 defaults per frame rather than carried";
       return ParseStatus::kError;
     }
-    if (video_qp_tools &&
+    // A lone picture has no B/temporal/TIP schedule to compose with, but
+    // --nightly-b sets video_tlayers = 8 even for --frames 1 (the same preset
+    // shape the edge path hit).  Treat a single-picture encode as having no
+    // schedule so delta-Q/segmentation is reachable there; multi-frame
+    // encodes keep the rejection verbatim.
+    const bool schedule_present =
+        options.max_frames != 1 &&
         (frame_modes != 0 || options.b_frames > 0 ||
-         options.video_tlayers > 0 || options.video_tip)) {
+         options.video_tlayers > 0 || options.video_tip);
+    if (video_qp_tools && schedule_present) {
       error = "segmentation/delta-Q does not compose with the B/temporal-"
               "layer/random-access/TIP frame schedules";
       return ParseStatus::kError;

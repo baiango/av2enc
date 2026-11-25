@@ -32,6 +32,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdlib>
 
 #include <cstddef>
 #include <cstdint>
@@ -186,7 +188,42 @@ struct LumaChoice {
   int mode = 0;         // av2enc::intra::Mode / AV2 YMode value
   int angle_delta = 0;  // -3..+3
   std::int64_t sse = 0;
+  // AV2ENC_RD_MODE_RD: the RD cost that produced this choice.  Equal to `sse`
+  // when the gate is off, so the historical result is reproduced exactly.
+  double cost = 0.0;
 };
+
+// AV2ENC_RD_MODE_RD (default off): price each candidate mode's §5.20.5.5
+// signalling before choosing it.  The historical search picks the minimum-SSE
+// candidate (`sses[i] < choice.sse`) and never charges the rate it will spend
+// on the mode symbol, so on a rate-starved picture it over-picks expensive
+// directional modes and leaves fewer bits for coefficients.  The intra mode
+// family measured 27,894 of 200,158 information bits (13.9% of the stream) on
+// the 720p still at QP186 for only 14,136 symbols, so the cost is material.
+//
+// The bias is `lambda * (bits(mode) - bits(DC))` in SSE units, i.e. exactly
+// the RD term the leaf cost already carries, applied at the point where the
+// choice is actually made.  `mode_rd_lambda <= 0` keeps the historical
+// pure-SSE behaviour and reproduces every pin.
+inline double mode_rd_lambda() {
+  static const double v = [] {
+    const char* s = std::getenv("AV2ENC_RD_MODE_RD");
+    if (s == nullptr || *s == '\0') return 0.0;
+    const double p = std::atof(s);
+    return (p > 0.0 && std::isfinite(p)) ? p : 0.0;
+  }();
+  return v;
+}
+
+// Relative mode cost in the same bit units `intra_luma_syntax_bits` uses:
+// DC-family = 0, directional = +2, angled directional = +2.5.  Only the
+// *difference* matters, so this is scale-free in the constants themselves.
+inline double mode_bits_rel(intra::Mode mode, int angle_delta) {
+  const bool dir = intra::is_directional(mode);
+  double bits = dir ? 2.0 : 0.0;
+  if (dir && angle_delta != 0) bits += 0.5;
+  return bits;
+}
 
 namespace detail {
 
@@ -316,16 +353,25 @@ inline bool search_luma(const std::uint8_t* recon, int recon_stride, int x0,
       sses[i] = detail::sse_against_source(source, source_stride, source_max_x,
                                            source_max_y, x0, y0, w, h, dst);
     });
+    // AV2ENC_RD_MODE_RD: charge the mode's own signalling against its SSE so
+    // the choice sees the bits it will spend (0 when the gate is off).
+    const double mode_lam = mode_rd_lambda();
     for (std::size_t i = 0; i < total; ++i) {
       if (ok[i] == 0) return false;
-      if (!have_best || sses[i] < choice.sse) {
+      const double cost =
+          static_cast<double>(sses[i]) +
+          mode_lam * mode_bits_rel(candidates[i].mode,
+                                   candidates[i].angle_delta);
+      if (!have_best || cost < choice.cost) {
         have_best = true;
+        choice.cost = cost;
         choice.sse = sses[i];
         choice.mode = static_cast<int>(candidates[i].mode);
         choice.angle_delta = candidates[i].angle_delta;
       }
     }
   } else {
+    const double mode_lam = mode_rd_lambda();
     for (int i = 0; i < count; ++i) {
       const intra::ModeCandidate& candidate =
           candidates[static_cast<std::size_t>(i)];
@@ -335,8 +381,12 @@ inline bool search_luma(const std::uint8_t* recon, int recon_stride, int x0,
       const std::int64_t sse = detail::sse_against_source(
           source, source_stride, source_max_x, source_max_y, x0, y0, w, h,
           pred);
-      if (!have_best || sse < choice.sse) {
+      const double cost =
+          static_cast<double>(sse) +
+          mode_lam * mode_bits_rel(candidate.mode, candidate.angle_delta);
+      if (!have_best || cost < choice.cost) {
         have_best = true;
+        choice.cost = cost;
         choice.sse = sse;
         choice.mode = static_cast<int>(candidate.mode);
         choice.angle_delta = candidate.angle_delta;

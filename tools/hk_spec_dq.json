@@ -1,0 +1,4 @@
+[
+  {"label": "bq", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256"}, "flags": ["--nightly-b", "--video-gdf", "--video-cdf-per-frame-qp", "--video-uv-qp-offset", "0"]},
+  {"label": "dq", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256"}, "flags": ["--nightly-b", "--video-gdf", "--video-cdf-per-frame-qp", "--video-uv-qp-offset", "0", "--video-delta-q"]}
+]

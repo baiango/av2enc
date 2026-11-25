@@ -1603,12 +1603,51 @@ inline bool y_mode_directional(std::uint8_t mode) { return mode >= 1 && mode <= 
 // escape.  A directional mode sits deep in the neighbour-derived list (or
 // escapes), so it costs more than DC/SMOOTH/PAETH.  §5.20.5.5 MRL adds a
 // 4-ary index and a 2-ary secondary flag; DIP adds its 2-ary flag.
+//
+// AV2ENC_RD_MODE_BITS_DIR / _NONDIR / _ANGLE (defaults 5.0 / 3.0 / 0.5): the
+// three constants above, made reachable so the estimate can be calibrated
+// against the tile's measured cost.  `AV2ENC_SYMBOL_COST` reports the intra
+// mode family at ~1.97 bits/symbol and effectively rate-independent
+// (27,894 bits at QP186 against 27,431 at QP196), so the default 5.0/3.0
+// over-charges a mode by ~2x and, more importantly, prices the directional
+// choice 2 bits dearer than the measured spread supports.  Defaults reproduce
+// the historical estimate exactly, so every pin is byte-identical.
+inline double mode_bits_dir() {
+  static const double v = [] {
+    const char* s = std::getenv("AV2ENC_RD_MODE_BITS_DIR");
+    if (s == nullptr || *s == '\0') return 5.0;
+    const double p = std::atof(s);
+    return p > 0.0 ? p : 5.0;
+  }();
+  return v;
+}
+
+inline double mode_bits_nondir() {
+  static const double v = [] {
+    const char* s = std::getenv("AV2ENC_RD_MODE_BITS_NONDIR");
+    if (s == nullptr || *s == '\0') return 3.0;
+    const double p = std::atof(s);
+    return p > 0.0 ? p : 3.0;
+  }();
+  return v;
+}
+
+inline double mode_bits_angle() {
+  static const double v = [] {
+    const char* s = std::getenv("AV2ENC_RD_MODE_BITS_ANGLE");
+    if (s == nullptr || *s == '\0') return 0.5;
+    const double p = std::atof(s);
+    return p >= 0.0 ? p : 0.5;
+  }();
+  return v;
+}
+
 inline double intra_luma_syntax_bits(int mode, int angle_delta, int mrl_index,
                               bool mrl_sec, bool dip) {
-  double bits = y_mode_directional(static_cast<std::uint8_t>(mode)) ? 5.0 : 3.0;
-  if (y_mode_directional(static_cast<std::uint8_t>(mode)) &&
-      angle_delta != 0) {
-    bits += 0.5;
+  const bool dir = y_mode_directional(static_cast<std::uint8_t>(mode));
+  double bits = dir ? mode_bits_dir() : mode_bits_nondir();
+  if (dir && angle_delta != 0) {
+    bits += mode_bits_angle();
   }
   if (mrl_index > 0) bits += 2.5 + (mrl_sec ? 1.0 : 0.0);
   if (dip) bits += 1.0;
