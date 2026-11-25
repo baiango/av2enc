@@ -9,7 +9,12 @@
 #   tools/hk_720p.sh base      # base + the whole filter stack off
 #   tools/hk_720p.sh winner    # gdf + uv -23, then uv -16 and uv -23 alone
 #   tools/hk_720p.sh inert     # every arm that measured inert or negative
+#   tools/hk_720p.sh k50       # the K 50 recipe (docs/k50-720p.md)
 #   tools/hk_720p.sh match     # equal-byte comparison of base vs winner
+#
+# Screening many arms at fixed QPs uses tools/hk_screen.py with
+# tools/hk_arms.json (the arms docs/k50-720p.md measured as negative), then
+# tools/hk_rank.py to rank them at equal bytes.
 #
 # Streams, decodes and scores go to $OUT (default ~/Downloads/av2enc-src720/hk).
 set -u
@@ -37,6 +42,12 @@ winner)
   ev base_hi 179 35000 --nightly-b
   ev uv23_hi 179 35000 --nightly-b "${WIN[@]}"
   ;;
+k50)
+  # docs/k50-720p.md: the same arm at the rate where K crosses 50.
+  # K 50.59 at 31,005 B, K=50 at 30,273 B.
+  ev k50 183 31000 --nightly-b "${WIN[@]}"
+  ev k50_next 182 31700 --nightly-b "${WIN[@]}"
+  ;;
 inert)
   # These must be byte-identical to `base` (same size, same K).
   ev inert_ctxrate 185 25010 --nightly-b --video-tx-context-rate
@@ -53,7 +64,7 @@ match)
       --targets 34000 35000 36000
   ;;
 *)
-  echo "usage: $0 base|winner|inert|match" >&2
+  echo "usage: $0 base|winner|k50|inert|match" >&2
   exit 2
   ;;
 esac

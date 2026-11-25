@@ -1,0 +1,10 @@
+[
+  {"label": "win",       "env": {"AV2ENC_RD_DRIVER_MIN": "16"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "tcq",       "env": {"AV2ENC_RD_DRIVER_MIN": "16"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23", "--video-tcq", "--video-rdoq-off"]},
+  {"label": "keytx4",    "env": {"AV2ENC_RD_DRIVER_MIN": "16"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23", "--video-key-tx-lambda", "4"]},
+  {"label": "keytx2",    "env": {"AV2ENC_RD_DRIVER_MIN": "16"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23", "--video-key-tx-lambda", "2"]},
+  {"label": "keytx16",   "env": {"AV2ENC_RD_DRIVER_MIN": "16"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23", "--video-key-tx-lambda", "16"]},
+  {"label": "rdoqs05",   "env": {"AV2ENC_RD_DRIVER_MIN": "16"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23", "--video-rdoq-scale", "0.05"]},
+  {"label": "rdoqs02",   "env": {"AV2ENC_RD_DRIVER_MIN": "16"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23", "--video-rdoq-scale", "0.02"]},
+  {"label": "txlam68",   "env": {"AV2ENC_RD_DRIVER_MIN": "16"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23", "--video-tx-lambda", "68"]}
+]

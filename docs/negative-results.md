@@ -644,6 +644,21 @@ curves and the chroma-fidelity check are in `docs/k-720p-levers.md`.
 | CONFIRMED | Use the plain `--still` writer for a still at this operating point | Even with every still feature (`--still-full-intra --still-rdo-intra --still-rdoq --still-tx-type`) it measures **46.29** against the one-frame `--video` key's 46.94 at 25,010 B; `--still-ibp` is the worst arm measured (45.76) | `--video --frames 1 --nightly-b`, which is what the 720p docs already use |
 | CONFIRMED | Trust a recorded QP from another session | `docs/rd-key-partition-floor.md` records 24,886 B at QP 187 for the floor arm; the 2026-11-25 binary gives **47,443 B** there. Walk the curve | `tools/hk_eval.py` (refuses brackets wider than 10 %, prints every point's K) and `tools/hk_match.py` (equal-byte interpolation) |
 
+## K 50 on the 720p still (`docs/k50-720p.md`)
+
+Target met on `src720.png`: **K 50.59 at 31,005 B** (QP 183), crossing K=50 at
+**30,273 B**, with the 16x16 floor plus `--video-gdf --video-uv-qp-offset -23`
+and nothing else. Decode-gated (`dav2d --strict 1`, exit 0, deterministic
+`cd085a64…`).
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| **DONE (one picture)** | Look for a new tool to reach K 50 at 25 kB | The `docs/k-720p-levers.md` winner reaches K 50 at 30.3 kB (+21 % rate) and K 51.17 at 31.7 kB. At equal bytes **nothing added in this session beat it**: `--video-rdoq-scale 0.02` -0.25, `--video-wiener`/`chroma-lr` -0.65, `--video-key-tx-lambda` 2/4/16 leave JOD at 7.486-7.492, `--video-tx-lambda 68` is byte-identical | Report the rate at which K is measured. A K claim without its byte budget is not comparable on a curve that moves 1.2 K per QP |
+| CONFIRMED | Spend more rate expecting to close the JOD/SS2 gap | Our BA at 31.0 kB (11.99) is **better than AVM's** at its K-50 point (13.78, 24,204 B); the whole deficit is JOD -0.12 and SS2 +7.9. We also keep **~1.8x** AVM's high-frequency energy (55.4 % vs 30.0 %) while correlating worse (0.508 vs 0.551) | The gap is misplaced detail, i.e. coefficient/quantiser accuracy at fixed rate. Rate buys ~1.2 K per QP, not the 20 % byte saving needed at AVM's 24 kB |
+| CONFIRMED | Re-try `--video-tcq` on this content, or read its smaller stream as a win | `--video-tcq --video-rdoq-off` is 22,853 B at QP 184 against the winner's 29,611 B — 23 % smaller — but **K 45.54 against 49.47**, and high-frequency energy kept falls from 53.7 % to 22.9 %. It is smoothing, matching the original `docs/negative-results.md` row | Keep RDOQ. Judge any trellis arm on HF correlation, not rms |
+| CONFIRMED | Use the `--fast-decode` carrier for a lone key, or reach the ext-partition / DIP tools through it | `--fast-decode` encodes 6.5x the bytes at the same QP (68,443 B vs 23,552 at QP 190) and lands K 45.00 at 25 kB, collapsing the curve. `--video-gops 1` **is** byte-identical for a lone key (`a5136473…` both ways) and unlocks `--video-ext-partitions` / `--video-min-block 4` / `--video-dip`, but all three measure 43.9-45.2 K | Keep `--nightly-b` for the still. The gops-1 trick is only useful if a fast-decode-only tool ever measures positive |
+| CONFIRMED | Expect `AV2ENC_RD_DRIVER_ACT` (the §7.4 share gate's nearest existing control) to be a lever | Byte-identical at every value 2..256 and at `MIN=8`/`12` on this picture — the sub-16 leaves are already all above any threshold. It is a no-op here, not evidence against the proposed share gate | Do not count these gates as "measured dead levers" for the rate-adaptive floor design |
+
 ## Open items — do not claim these
 
 - Multi-GPU scaling is only simulated; no 2-GPU host.
