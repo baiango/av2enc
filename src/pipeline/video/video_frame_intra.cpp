@@ -94,6 +94,14 @@ struct KeyTxRdStats {
   long long level_candidates = 0;
   double bits = 0.0;
   double distortion = 0.0;
+  // AV2ENC_KEY_EOB_HIST: EOB position occupancy, bucketed by the fraction of
+  // the transform the last non-zero coefficient covers (0 = eob 1..12.5% of
+  // area, 7 = 87.5..100%).  The bit census shows eob is 18.2% of the stream at
+  // 1.42 bits/symbol and rate-independent, so where the last coefficient sits
+  // is a first-order cost; this says whether our blocks terminate early
+  // (concentrated energy) or late (scattered energy).
+  long long eob_bucket[8] = {};
+  long long eob_blocks = 0;
 
   ~KeyTxRdStats() {
     const KeyTxRdConfig& cfg = key_tx_rd_config();
@@ -116,6 +124,19 @@ struct KeyTxRdStats {
         leaves, plans[0], plans[1], plans[2], plans[3], s4, s8, s16, s32,
         s64, t_dct, t_adst, t_idtx, parts, screen_flips, screen_kept,
         level_candidates, bits, distortion);
+    const bool eob_hist_enabled = [] {
+      const char* v = std::getenv("AV2ENC_KEY_EOB_HIST");
+      return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+    }();
+    if (eob_hist_enabled && eob_blocks > 0) {
+      std::fprintf(stderr, "key-eob: blocks=%lld pos[", eob_blocks);
+      for (int b = 0; b < 8; ++b) {
+        std::fprintf(stderr, "%s%.1f", b == 0 ? "" : " ",
+                     100.0 * static_cast<double>(eob_bucket[b]) /
+                         static_cast<double>(eob_blocks));
+      }
+      std::fprintf(stderr, "]\n");
+    }
   }
 };
 
@@ -852,6 +873,10 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
   }
   if ((kcfg.on || kcfg.stats) && !rd_driver::measuring()) {
     KeyTxRdStats& stats = key_tx_rd_stats();
+    const bool eob_hist_on = [] {
+      const char* v = std::getenv("AV2ENC_KEY_EOB_HIST");
+      return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+    }();
     ++stats.leaves;
     if (kcfg.on) {
       if (best.part == screen[screen_winner].part) {
@@ -869,6 +894,17 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
       }
       if (part.tx_type >= 0 && part.tx_type < 16) {
         ++stats.types[part.tx_type];
+      }
+      if (eob_hist_on && tw > 0 && th > 0) {
+        const int area = tw * th;
+        if (area > 0 && part.eob >= 0 && part.eob <= area) {
+          int bucket = static_cast<int>(
+              (static_cast<long long>(part.eob) * 8) / area);
+          if (bucket > 7) bucket = 7;
+          if (bucket < 0) bucket = 0;
+          ++stats.eob_bucket[bucket];
+          ++stats.eob_blocks;
+        }
       }
       ++stats.parts;
     }
