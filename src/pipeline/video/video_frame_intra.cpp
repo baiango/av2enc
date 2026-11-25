@@ -27,6 +27,12 @@ struct KeyTxRdConfig {
   double plan_csf = 1.0;
   // Report the plan histogram even on the historical (gate-off) path.
   bool stats = false;
+  // AV2ENC_RD_KEY_LIVE_CDF (default off): price the key luma candidate syntax
+  // with the coefficient CDF rows the tile writer will actually start from
+  // (§8.2 frame-start image: the carried live state on a CDF-chain frame, the
+  // §9.3 defaults otherwise) instead of the static §9.3 slice.  The inter path
+  // already has this option behind AV2ENC_PIPE_BA; the key path passed nullptr.
+  bool live_cdf = false;
   // AV2ENC_RD_KEY_MODEL_RATE: scale on the static §8.3 rate model the key
   // trellis and its candidate pricing use.  The tile coder adapts its CDFs
   // while the model prices the §9.3 defaults, so 1.0 over-charges bits once
@@ -66,6 +72,9 @@ inline const KeyTxRdConfig& key_tx_rd_config() {
     if (const char* v = std::getenv("AV2ENC_RD_KEY_MODEL_RATE")) {
       const double s = std::atof(v);
       if (s > 0.0) out.model_rate_scale = s;
+    }
+    if (const char* v = std::getenv("AV2ENC_RD_KEY_LIVE_CDF")) {
+      out.live_cdf = v[0] != '\0' && std::strcmp(v, "0") != 0;
     }
     return out;
   }();
@@ -671,7 +680,8 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
         exact ? true : options_.tx_context_rate, /*trace=*/false,
         /*allow_rdoq=*/exact && kcfg.level, /*rdoq_qctx=*/qctx,
         level_scale, *out, error, part_mask,
-        /*distortion_weight=*/nullptr, /*cdf_slice=*/nullptr, key_csf,
+        /*distortion_weight=*/nullptr,
+        /*cdf_slice=*/kcfg.live_cdf ? eff_cdf_slice() : nullptr, key_csf,
         key_csf2,
         /*intra_rdoq=*/exact && kcfg.level,
         /*model_rate_scale=*/kcfg.model_rate_scale,
