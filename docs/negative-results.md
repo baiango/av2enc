@@ -630,6 +630,20 @@ not move it further:
 
 
 
+## 720p still: what moves K on `--nightly-b` (`docs/k-720p-levers.md`)
+
+Fifteen waves of single-change arms on `~/Downloads/src720.png` at matched
+bytes, lone key, `AV2ENC_RD_DRIVER_MIN=16`. Full tables, the equal-byte
+curves and the chroma-fidelity check are in `docs/k-720p-levers.md`.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| **LEAD (+0.49 K)** | Look for the 720p still's remaining headroom in the residual coder (`docs/detail-gap-720p.md`) before trying the reconstruction side | `--video-gdf --video-uv-qp-offset -23` moves K **46.94 -> 47.43** at 25,010 B, and the lead is **+0.45..+0.57 at every matched-byte point from 25.0 to 26.5 kB** and **+0.09..+0.49 from 33 to 36 kB**. The two levers are independent and additive (gdf +0.08, chroma -8 -> -23 +0.37). Chroma rmse at a fixed QP improves monotonically (-8/-16/-23 -> U 7.75/7.32/6.88, saturated pixels 2.46/1.92/1.46 %), so it is spend, not a metric exploit | Measure the same pair on the 240p ladder before promoting: GDF alone is on record at -0.01 JOD for +17-27 % rate there, and `-23` is the bottom of the §5.4.8 range |
+| CONFIRMED | Expect the loop filters to be a rounding error at 0.21 bpp | `--video-loop-filters-off` costs **-0.90 K** (46.94 -> 46.03) — the largest single effect measured on this still. Deblock alone is byte-identical (`--video-deblock-off`), so CDEF/CCSO carry it | Keep the chain on and spend the next effort on the restoration-side *decisions*, not the coding side |
+| CONFIRMED | Re-try the TX-context, CCSO-table or intra-mode arms as 720p-still levers | `--video-tx-context-rate`, `--video-ccso-bands 4`, `--video-ccso-refit 3`, `--video-cfl` and `--video-ddt` are all **byte-identical** to the base at every QP checked; `--video-idtx` +0.06 and `--video-mrl` -0.23 are inside the ripple; `--video-cdef-strength 4` adds 47 B for no K | Nothing here; the `docs/detail-gap-720p.md` conclusion stands |
+| CONFIRMED | Use the plain `--still` writer for a still at this operating point | Even with every still feature (`--still-full-intra --still-rdo-intra --still-rdoq --still-tx-type`) it measures **46.29** against the one-frame `--video` key's 46.94 at 25,010 B; `--still-ibp` is the worst arm measured (45.76) | `--video --frames 1 --nightly-b`, which is what the 720p docs already use |
+| CONFIRMED | Trust a recorded QP from another session | `docs/rd-key-partition-floor.md` records 24,886 B at QP 187 for the floor arm; the 2026-11-25 binary gives **47,443 B** there. Walk the curve | `tools/hk_eval.py` (refuses brackets wider than 10 %, prints every point's K) and `tools/hk_match.py` (equal-byte interpolation) |
+
 ## Open items — do not claim these
 
 - Multi-GPU scaling is only simulated; no 2-GPU host.
