@@ -133,6 +133,15 @@ inline const double g_rdoq_dist_weight = [] {
   if (end == v || !std::isfinite(parsed) || parsed <= 0.0) return 1.0;
   return parsed;
 }();
+// AV2ENC_TX_HF_MASK_DIV: zero the transform's outermost high-frequency band
+// before quantisation (see the call site for the geometry).  0 = off, which
+// reproduces every pin exactly.
+inline const int g_tx_hf_mask_div = [] {
+  const char* v = std::getenv("AV2ENC_TX_HF_MASK_DIV");
+  if (v == nullptr || *v == '\0') return 0;
+  const int parsed = std::atoi(v);
+  return (parsed >= 2 && parsed <= 16) ? parsed : 0;
+}();
 namespace ddt = av2enc::video::ddt;
 
 // Partition bit indices, identical to VideoTxPartitionBit.
@@ -635,6 +644,34 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
 
   const int dcq = get_q(qindex, delta_dc);
   const int acq = get_q(qindex, delta_ac);
+  const int hf_mask_div = g_tx_hf_mask_div;
+  // AV2ENC_TX_HF_MASK_DIV (default 0 = off): zero the transform's outermost
+  // high-frequency band before quantisation, i.e. throttle 1-px detail at the
+  // source of it rather than trying to round it away.  The 1-px alternating
+  // pattern that dominates the finest band is measured as ~0.007% of this
+  // picture's luma MSE yet is visually conspicuous, and removing it scores
+  // 47.37 at 0/50/100% suppression -- so suppressing it is free in K while
+  // the levels it would have coded are refunded to the rate budget.
+  //
+  // A coefficient at (row, col) is masked when row >= w/div AND col >= h/div,
+  // which for div=2 is the highest-frequency quarter in each axis (the 8x8
+  // (4..7,4..7) corner, where the checkerboard basis lives).  div=0 is the
+  // historical behaviour and reproduces every pin exactly.
+  if (hf_mask_div >= 2) {
+    const int r_lo = params.w / hf_mask_div;
+    const int c_lo = params.h / hf_mask_div;
+    for (int y = 0; y < params.h; ++y) {
+      for (int x = 0; x < params.w; ++x) {
+        if (y < r_lo || x < c_lo) continue;
+        const std::size_t pos =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(params.w) +
+            static_cast<std::size_t>(x);
+        if (pos >= static_cast<std::size_t>(area)) continue;
+        coeff[pos] = 0.0;
+        coeff_i[pos] = 0;
+      }
+    }
+  }
   std::int32_t* levels = scratch.levels;
   for (int i = 0; i < area; ++i) {
     const int q = i == 0 ? dcq : acq;
