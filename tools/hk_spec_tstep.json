@@ -1,0 +1,9 @@
+[
+  {"label": "ref", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "hf2", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_TX_HF_MASK_DIV": "2"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "s09", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RDOQ_TRELLIS_STEP_SCALE": "0.9"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "s095", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RDOQ_TRELLIS_STEP_SCALE": "0.95"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "s105", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RDOQ_TRELLIS_STEP_SCALE": "1.05"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "s11", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RDOQ_TRELLIS_STEP_SCALE": "1.1"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "hf2_s095", "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_TX_HF_MASK_DIV": "2", "AV2ENC_RDOQ_TRELLIS_STEP_SCALE": "0.95"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]}
+]

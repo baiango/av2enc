@@ -138,6 +138,14 @@ inline const double g_rdoq_dist_weight = [] {
 // AV2ENC_TX_HF_MASK_DIV: zero the transform's outermost high-frequency band
 // before quantisation (see the call site for the geometry).  0 = off, which
 // reproduces every pin exactly.
+inline const double g_rdoq_step_scale = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_TRELLIS_STEP_SCALE");
+  if (v == nullptr || *v == '\0') return 1.0;
+  char* end = nullptr;
+  const double p = std::strtod(v, &end);
+  return (end != v && std::isfinite(p) && p > 0.0) ? p : 1.0;
+}();
+// AV2ENC_RDOQ_EXACT: price the trellis with a real 8.2 range encoder.
 inline const bool g_rdoq_exact = [] {
   const char* v = std::getenv("AV2ENC_RDOQ_EXACT");
   return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
@@ -834,6 +842,21 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     }
     av2enc::rdoq::Config config;
     config.quant_step = static_cast<double>(acq) / scaled;
+    // AV2ENC_RDOQ_TRELLIS_STEP_SCALE (default 1.0 = off): scale the quantiser
+    // step the TRELLIS PRICES WITH, without changing the step the bitstream
+    // codes.  A per-transform-block DC/AC step is not signallable -- §5.20.9.2
+    // carries CurrentQIndex only at superblock granularity via delta-Q, which
+    // is why --video-delta-q produced streams dav2d rejects -- so the
+    // quantiser itself must stay at the coded step.  What CAN differ is the
+    // step the RD search assumes: the 59.1% of bits in coefficient values is
+    // set by which levels the trellis keeps, so pricing with a finer or
+    // coarser step moves that choice while the reconstruction stays exact.
+    //
+    // s > 1 makes the trellis believe each level is cheaper/finer than it is
+    // (keeps more); s < 1 makes levels look coarser (keeps fewer).  1.0
+    // reproduces every pin exactly.
+    const double trellis_step = config.quant_step * g_rdoq_step_scale;
+    config.quant_step = trellis_step;
     config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
         config.quant_step, options.rdoq_sse_scale);
     config.max_coefficients = area;
