@@ -190,3 +190,20 @@ AV2ENC_RD_DRIVER_MIN=16 baseline-bin ... -o base.ivf ... && cmp base.ivf out.ivf
 The baseline and changed encoders' IVF files compare equal with `cmp`, not just
 with `md5`, at the QP 177 still; the 240p pins in §4.2 are likewise the README's
 exact byte counts and hashes.
+
+### 4.5 Session-to-session variance (what the honest number is)
+
+The interleaved A/B of the same binary pair has been run several times on this
+host.  The baseline's own median moved between **18.06 s and 19.49 s at 1
+thread** (and 18.63 s to 20.65 s at 8) with no code difference, i.e. host load
+drifts the absolute number by ~8 %.  The measured ratio did not:
+
+| session | speedup 1T | speedup 8T |
+|---|---:|---:|
+| first (before the tx/uv experiments) | 1.071x | 1.073x |
+| merged tree, quiet host | 1.069x | 1.053x |
+| final HEAD (both re-runs above) | **1.044x** | **1.048x** |
+
+So the honest claim is **~1.05x, byte-identical**, not a single best run.  The
+final column is the one to quote: same binary pair, 5 interleaved reps, one
+md5, `cmp`-identical output.
