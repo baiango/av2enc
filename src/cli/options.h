@@ -257,6 +257,10 @@ struct Options {
   // offsets where a coarse step reads as a visible hue shift).
   bool video_uv_qp_offset_given = false;
   int video_uv_qp_offset = 0;
+  // §5.4.8 base_y_dc_delta_q: a sequence-level LUMA DC offset (negative codes
+  // DC finer than AC).  Unset codes nothing and changes no pin.
+  bool video_y_dc_delta_q_given = false;
+  int video_y_dc_delta_q = 0;
   // Opt-in segmentation extensions (--video-seg-skip/--video-seg-globalmv/
   // --video-seg-temporal/--video-segments N).  All default off.
   bool video_seg_skip = false;

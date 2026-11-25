@@ -1766,7 +1766,29 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   // the symmetric offset does not need: it is a constant sequence field.
   video_options.enable_uv_delta_q = options.video_uv_delta_q;
   video_options.uv_delta_q = options.video_uv_delta_q_value;
-  if (!options.video_uv_qp_offset_given && !options.video_uv_delta_q) {
+  // §5.4.8 base_y_dc_delta_q.  equal_ac_dc_q MUST be 0 for the Y-DC fields to
+  // be coded (§5.4.8 forbids them when it is 1), so this arm owns the group.
+  const bool y_dc_given = options.video_y_dc_delta_q_given;
+  if (y_dc_given) {
+    // equal_ac_dc_q = 0 is required for the Y-DC fields, and the same group
+    // carries the chroma AC offset.  Dropping the chroma offset here coded
+    // chroma at the base luma step and cost 8 dB of U rmse, so both fields are
+    // set: Y-DC from the new flag, UV-AC from whatever the preset/user chose.
+    video_options.seq_delta_q = av2enc::dcdeltaq::SequenceDeltaQ{};
+    video_options.seq_delta_q.equal_ac_dc_q = false;
+    video_options.seq_delta_q.separate_uv_delta_q = false;
+    video_options.seq_delta_q.y_dc_delta_q_enabled = true;
+    video_options.seq_delta_q.base_y_dc_delta_q = options.video_y_dc_delta_q;
+    if (options.video_uv_qp_offset != 0) {
+      video_options.seq_delta_q.uv_ac_delta_q_enabled = true;
+      video_options.seq_delta_q.base_uv_ac_delta_q =
+          options.video_uv_qp_offset;
+    }
+    video_options.frame_delta_q = av2enc::dcdeltaq::FrameDeltaQ{};
+    video_options.enable_uv_qp_offset = true;
+  }
+  if (!y_dc_given && !options.video_uv_qp_offset_given &&
+      !options.video_uv_delta_q) {
     // --nightly-b sets video_uv_qp_offset without video_uv_qp_offset_given:
     // the preset default (see apply_video_nightly_b).  An explicit
     // --video-uv-qp-offset 0 sets _given and leaves the value 0, which is the
@@ -1784,7 +1806,7 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
     }
   } else if (options.video_uv_qp_offset_given && options.video_uv_qp_offset == 0) {
     // Explicit --video-uv-qp-offset 0: the default quantizer, no §5.4.8 group.
-  } else if (options.video_uv_qp_offset_given) {
+  } else if (!y_dc_given && options.video_uv_qp_offset_given) {
     // §5.4.8 symmetric chroma offset: BOTH planes take the SAME delta, so a
     // negative value codes U and V finer than luma at the same luma QP.
     // equal_ac_dc_q = 1 keeps the group to one base field plus one enable bit,

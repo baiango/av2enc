@@ -872,7 +872,14 @@ void InterFrameEncoder::frame_plane_quant(int qindex, PlaneQuantStep out[3],
                        int& quant_step) const {
   const int q = std::clamp(qindex, 0, 255);
   PlaneQuantStep luma;
-  luma.dc = luma.ac = rc::kQlookupQ0To255[q];
+  // §5.4.8 base_y_dc_delta_q: a sequence-level LUMA DC offset.  Only reachable
+  // with equal_ac_dc_q = 0, in which case resolve_delta_q() carries it in y_dc.
+  if (options_.seq_delta_q.y_dc_delta_q_enabled) {
+    luma.dc = dcdeltaq::get_q(q, resolved_delta_q_.y_dc);
+    luma.ac = rc::kQlookupQ0To255[q];
+  } else {
+    luma.dc = luma.ac = rc::kQlookupQ0To255[q];
+  }
   out[0] = luma;
   quant_step = luma.ac;
   if (!uv_delta_enabled_) {

@@ -1894,7 +1894,12 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     double model_rate_scale = 0.4,
                     int txb_skip_ctx_live = 0,
                     int dc_sign_ctx_live = 0,
-                    bool use_live_ctx = false) {
+                    bool use_live_ctx = false,
+                    // §7.14.2 DC quantiser delta in qindex units.  Non-zero
+                    // only when the frame resolved a DC step that differs from
+                    // AC (§5.4.8 base_y_dc_delta_q); 0 keeps the historical
+                    // behaviour and every pinned stream.
+                    int delta_dc = 0) {
   joint_plan::ScopedTimer tx_timer(&joint_plan::profile().tx_search);
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
@@ -1961,7 +1966,7 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   // search must also restrict itself to TX_PARTITION_NONE.
   options.search_partition = search_partition;
   txtsearch::Result result;
-  if (!txtsearch::search(residual.data(), cw, ch, mode, qindex, 0, 0,
+  if (!txtsearch::search(residual.data(), cw, ch, mode, qindex, delta_dc, 0,
                          pred.data(), options, &result, error)) {
     return false;
   }

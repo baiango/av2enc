@@ -672,6 +672,21 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
   // historical call: heuristic rate, plain SSE, the configured TX lambda.  The
   // exact stage turns on the §8.3 coefficient model, the key TX lambda and the
   // coefficient trellis.
+  // §7.14.2: the DC qindex delta implied by this frame's resolved steps.  The
+  // search takes deltas, but the frame resolves STEPS, so invert qlookup over
+  // the legal delta range.  0 (the common case: no §5.4.8 Y-DC refinement)
+  // reproduces every pinned stream.
+  const auto luma_delta_dc = [](const SbSink::State& state) -> int {
+    const int dc = state.plane_quant[0].dc;
+    const int ac = state.plane_quant[0].ac;
+    if (dc == ac) return 0;
+    for (int d = -23; d <= 8; ++d) {
+      const int q = std::clamp(state.current_qindex + d, 0, 255);
+      if (rc::kQlookupQ0To255[q] == dc) return d;
+    }
+    return 0;
+  };
+
   // `part_mi_row`/`part_mi_col` are this transform part's MI origin, and
   // `part_w4`/`part_h4` its own size in 4x4 units.  AV2ENC_TX_LIVE_CTX prices
   // the candidate with the §8.3.2 context of that part against the leaf it sits
@@ -707,7 +722,8 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
         /*intra_rdoq=*/exact && kcfg.level,
         /*model_rate_scale=*/kcfg.model_rate_scale,
         /*txb_skip_ctx_live=*/part_txb, /*dc_sign_ctx_live=*/part_dc,
-        /*use_live_ctx=*/live_ctx_on);
+        /*use_live_ctx=*/live_ctx_on,
+        /*delta_dc=*/luma_delta_dc(st));
   };
 
   // Runs one candidate against the real planes and leaves its plan, its
