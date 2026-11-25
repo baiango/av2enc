@@ -1852,7 +1852,10 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
                     double lowpass_gain = 0.0,
                     double lowpass2_gain = 0.0,
                     bool intra_rdoq = false,
-                    double model_rate_scale = 0.4) {
+                    double model_rate_scale = 0.4,
+                    int txb_skip_ctx_live = 0,
+                    int dc_sign_ctx_live = 0,
+                    bool use_live_ctx = false) {
   joint_plan::ScopedTimer tx_timer(&joint_plan::profile().tx_search);
   std::vector<std::int16_t> residual(
       static_cast<std::size_t>(cw) * static_cast<std::size_t>(ch));
@@ -1894,6 +1897,10 @@ inline bool search_luma_tx(const VideoInputFrame& frame, int x0, int y0, int cw,
   options.lowpass2_gain = lowpass2_gain;
   options.intra_rdoq = intra_rdoq;
   options.model_rate_scale = model_rate_scale;
+  // AV2ENC_TX_LIVE_CTX: price with this block's real §8.3.2 contexts.
+  options.txb_skip_ctx_live = txb_skip_ctx_live;
+  options.dc_sign_ctx_live = dc_sign_ctx_live;
+  options.use_live_ctx = use_live_ctx;
   // AV2ENC_TX_DETAIL_SEARCH_TAIL: inter luma only, and only where an 8x8 TX
   // leaf is legal (a coding block at most 16x16 on both axes).  The 2-4 px
   // price then lets the legal 16x16 -> four 8x8 SPLIT win on RD where the
@@ -3467,7 +3474,8 @@ class InterFrameEncoder {
       const std::vector<std::uint8_t>& block_pred, int y_mode,
       int angle_delta, int mrl_index, bool mrl_sec_index,
       bool above_smooth, bool left_smooth, int mask_row, SbSink::State& st,
-      TxPlan* plan, std::string& error);
+      TxPlan* plan, std::string& error, int live_txb = 0, int live_dc = 0,
+      bool live_ctx_on = false);
 
     bool encode_leaf(SbSink& sink, const PartitionNode& node, std::size_t index,
                    std::string& error, int tree_type = 0,
@@ -3795,6 +3803,21 @@ class InterFrameEncoder {
   // AV2ENC_RD_DRIVER_SBALLOC: running frame-wide source activity used to
   // normalise the per-superblock key rate allocation.  Reset each decision
   // pass in plan_pass(); inert when the gate is off.
+  // AV2ENC_TX_LIVE_CTX: per-4x4 luma "any non-zero coefficient" grid for the
+  // coded above/left neighbours, so the TX search can price each candidate in
+  // the §8.3.2 txb_skip / DC-sign context the writer will actually use.
+  // Derived only when the gate is on; the default path never allocates it.
+  bool live_ctx_enabled_ = false;
+  std::vector<std::uint8_t> live_ctx_above_;
+  std::vector<std::uint8_t> live_ctx_left_;
+  std::vector<std::uint8_t> live_ctx_dc_above_;
+  std::vector<std::uint8_t> live_ctx_dc_left_;
+  // §8.3.2 txb_skip / DC-sign context for the luma block at (mi_row, mi_col)
+  // of size w4 x h4, from the coded neighbours.
+  void live_ctx_for(int mi_row, int mi_col, int w4, int h4, int block_w4,
+                    int block_h4, int* txb_skip, int* dc_sign) const;
+  void live_ctx_commit(int mi_row, int mi_col, int w4, int h4, bool any_nz,
+                       bool dc_nz);
   double sb_alloc_frame_activity_ = 0.0;
   long long sb_alloc_sbs_ = 0;
   // Per-superblock lambda scale, set by seq_driver_decide_sb and read by the

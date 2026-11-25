@@ -480,7 +480,8 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
     const std::vector<std::uint8_t>& block_pred, int y_mode,
     int angle_delta, int mrl_index, bool mrl_sec_index,
     bool above_smooth, bool left_smooth, int mask_row, SbSink::State& st,
-    TxPlan* plan, std::string& error) {
+    TxPlan* plan, std::string& error, int live_txb, int live_dc,
+    bool live_ctx_on) {
   const int x0 = c * 4;
   const int y0 = r * 4;
   const int ax0 = x0 + tile_x_;
@@ -620,13 +621,27 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
   // historical call: heuristic rate, plain SSE, the configured TX lambda.  The
   // exact stage turns on the §8.3 coefficient model, the key TX lambda and the
   // coefficient trellis.
+  // `part_mi_row`/`part_mi_col` are this transform part's MI origin, and
+  // `part_w4`/`part_h4` its own size in 4x4 units.  AV2ENC_TX_LIVE_CTX prices
+  // the candidate with the §8.3.2 context of that part against the leaf it sits
+  // in, which is why the leaf size is passed separately.
   const auto search_part = [&](int px, int py, int tw, int th, int part_mask,
                                const std::vector<std::uint8_t>& pred,
-                               bool exact, double search_lambda,
-                               TxPlan* out) {
+                               bool exact, double search_lambda, TxPlan* out,
+                               int part_mi_row = -1, int part_mi_col = -1) {
     const int mapped_mode = std::max(
         0, mrl_stream::mapped_intra_mode_for_mrl(
                y_mode, angle_delta, mrl_index, tw, th));
+    // AV2ENC_TX_LIVE_CTX: the real §8.3.2 context for this part.  The equality
+    // case is "part covers the whole leaf", so the leaf is the block and the
+    // part is the transform; for a split part the part is smaller and the
+    // neighbour-derived context applies.
+    int part_txb = live_txb;
+    int part_dc = live_dc;
+    if (live_ctx_on && part_mi_row >= 0) {
+      live_ctx_for(part_mi_row, part_mi_col, tw / 4, th / 4, w / 4, h / 4,
+                   &part_txb, &part_dc);
+    }
     return search_luma_tx(
         source_, px, py, tw, th, pred, st.current_qindex,
         txtsearch::Mode::kIntra, search_lambda, options_.enable_idtx_intra,
@@ -638,7 +653,9 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
         /*distortion_weight=*/nullptr, /*cdf_slice=*/nullptr, key_csf,
         key_csf2,
         /*intra_rdoq=*/exact && kcfg.level,
-        /*model_rate_scale=*/1.0);
+        /*model_rate_scale=*/1.0,
+        /*txb_skip_ctx_live=*/part_txb, /*dc_sign_ctx_live=*/part_dc,
+        /*use_live_ctx=*/live_ctx_on);
   };
 
   // Runs one candidate against the real planes and leaves its plan, its
@@ -659,7 +676,7 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
     if (part == txpart::TxPartition::kNone) {
       TxPlan whole;
       if (!search_part(ax0, ay0, w, h, mask_row, block_pred, exact,
-                       search_lambda, &whole)) {
+                       search_lambda, &whole, r, c)) {
         return false;
       }
       trial->recon = whole.recon;
@@ -710,7 +727,7 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
         TxPlan part_plan;
         if (!search_part(ax0 + split.mi_col * 4, ay0 + split.mi_row * 4, tw,
                          th, part_mask, pred, exact, search_lambda,
-                         &part_plan)) {
+                         &part_plan, r + split.mi_row, c + split.mi_col)) {
           return false;
         }
         if (part_plan.parts.empty()) {
@@ -848,6 +865,78 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
               << "\n";
   }
   return true;
+}
+
+}  // namespace av2enc::video
+
+namespace av2enc::video {
+
+// AV2ENC_TX_LIVE_CTX: the §8.3.2 luma txb_skip context is
+// `(min(above_or,4) + min(left_or,4) + 3) >> 1` over the coded neighbour 4x4
+// levels, and the DC-sign context is 0..2 from the above/left DC categories
+// (rdoq_av2_model.h BlockInfo documents both).  Tracking the grid lets the TX
+// search price a candidate in the context the writer will really use instead
+// of the fixed 0 "same size as the coding block" estimate.
+void InterFrameEncoder::live_ctx_for(int mi_row, int mi_col, int w4, int h4,
+                                     int block_w4, int block_h4, int* txb_skip,
+                                     int* dc_sign) const {
+  int top = 0;
+  int left = 0;
+  for (int i = 0; i < w4; ++i) {
+    const int x = mi_col + i;
+    if (x < mi_cols_) top |= live_ctx_above_[static_cast<std::size_t>(x)];
+  }
+  for (int i = 0; i < h4; ++i) {
+    const int y = mi_row + i;
+    if (y < mi_rows_) left |= live_ctx_left_[static_cast<std::size_t>(y)];
+  }
+  top = std::min(top, 4);
+  left = std::min(left, 4);
+  // §8.3.2.2: a leaf whose size equals the transform size uses context 0.
+  *txb_skip = (block_w4 == w4 && block_h4 == h4) ? 0 : (top + left + 3) >> 1;
+  int dc_top = 0;
+  int dc_left = 0;
+  for (int i = 0; i < w4; ++i) {
+    const int x = mi_col + i;
+    if (x < mi_cols_) {
+      dc_top |= live_ctx_dc_above_[static_cast<std::size_t>(x)];
+    }
+  }
+  for (int i = 0; i < h4; ++i) {
+    const int y = mi_row + i;
+    if (y < mi_rows_) dc_left |= live_ctx_dc_left_[static_cast<std::size_t>(y)];
+  }
+  *dc_sign = std::min(dc_top + dc_left, 2);
+  if (std::getenv("AV2ENC_TX_LIVE_CTX_DBG") != nullptr) {
+    static long long n = 0;
+    static long long nonzero = 0;
+    ++n;
+    if (*txb_skip != 0) ++nonzero;
+    if (n % 500 == 0) {
+      std::fprintf(stderr, "live-ctx: %lld blocks, %lld nonzero txb_skip\n", n,
+                   nonzero);
+    }
+  }
+}
+
+void InterFrameEncoder::live_ctx_commit(int mi_row, int mi_col, int w4, int h4,
+                                        bool any_nz, bool dc_nz) {
+  const std::uint8_t nz = any_nz ? 1 : 0;
+  const std::uint8_t dc = dc_nz ? 1 : 0;
+  for (int i = 0; i < w4; ++i) {
+    const int x = mi_col + i;
+    if (x < mi_cols_) {
+      live_ctx_above_[static_cast<std::size_t>(x)] = nz;
+      live_ctx_dc_above_[static_cast<std::size_t>(x)] = dc;
+    }
+  }
+  for (int i = 0; i < h4; ++i) {
+    const int y = mi_row + i;
+    if (y < mi_rows_) {
+      live_ctx_left_[static_cast<std::size_t>(y)] = nz;
+      live_ctx_dc_left_[static_cast<std::size_t>(y)] = dc;
+    }
+  }
 }
 
 }  // namespace av2enc::video

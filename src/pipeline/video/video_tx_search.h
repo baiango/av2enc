@@ -102,6 +102,15 @@ struct Options {
   // same; only the `is_inter` table select changes.  Default off keeps every
   // historical intra search (and the CUDA reference contract) unchanged.
   bool intra_rdoq = false;
+  // AV2ENC_TX_LIVE_CTX (default off): price the coefficient syntax with this
+  // block's real §8.3.2 txb_skip / DC-sign contexts instead of the fixed 0
+  // estimate.  The caller fills these from the coded above/left neighbour
+  // levels (rdoq_av2_model.h BlockInfo documents the derivation), so a
+  // candidate is priced in the context the writer will actually use.  0 keeps
+  // the historical estimate and every pin byte-identical.
+  int txb_skip_ctx_live = 0;
+  int dc_sign_ctx_live = 0;
+  bool use_live_ctx = false;
   // Scale applied to the static §8.3 model in the RDOQ branch.  The inter
   // integration compensates the adaptive tile CDFs with 0.4 (measured); an
   // exact-rate search uses 1.0.  The historical default is unchanged.

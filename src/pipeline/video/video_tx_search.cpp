@@ -744,8 +744,10 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     av2enc::rdoq::av2::BlockInfo info;
     info.plane = 0;
     info.params = params;
-    info.txb_skip_context = 0;
-    info.dc_sign_context = 0;
+    // AV2ENC_TX_LIVE_CTX: the trellis prices the emitted levels too, so it
+    // needs the same real §8.3.2 contexts as the syntax writer.
+    info.txb_skip_context = options.use_live_ctx ? options.txb_skip_ctx_live : 0;
+    info.dc_sign_context = options.use_live_ctx ? options.dc_sign_ctx_live : 0;
     info.qctx = options.rdoq_qctx;
     info.is_inter = is_inter;
     av2enc::rdoq::av2::Model& model = scratch.rdoq_model;
@@ -951,7 +953,9 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     if (!use_rdoq) syntax_bits = 0.0;
     if (use_rdoq || block_syntax_bits(
                         params, levels_span, scan, options.rdoq_qctx, is_inter,
-                        use_tcq, /*txb_skip_ctx=*/0, /*dc_sign_ctx=*/0,
+                        use_tcq,
+                        options.use_live_ctx ? options.txb_skip_ctx_live : 0,
+                        options.use_live_ctx ? options.dc_sign_ctx_live : 0,
                         /*plane=*/0, scratch, options.cdf_slice,
                         &syntax_bits)) {
       rate = syntax_bits * options.model_rate_scale + type_bits;
@@ -962,7 +966,9 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     // model directly (its own calibration lived in the TX lambda).
     double syntax_bits = 0.0;
     if (block_syntax_bits(params, levels_span, scan, options.tcq_qctx, is_inter,
-                          use_tcq, /*txb_skip_ctx=*/0, /*dc_sign_ctx=*/0,
+                          use_tcq,
+                        options.use_live_ctx ? options.txb_skip_ctx_live : 0,
+                        options.use_live_ctx ? options.dc_sign_ctx_live : 0,
                           /*plane=*/0, scratch, options.cdf_slice,
                           &syntax_bits)) {
       rate = syntax_bits + type_bits;
