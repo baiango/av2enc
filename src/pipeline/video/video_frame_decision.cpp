@@ -1474,6 +1474,8 @@ int InterFrameEncoder::wavefront_override() {
 }
 
 void InterFrameEncoder::plan_pass() {
+  sb_alloc_frame_activity_ = 0.0;
+  sb_alloc_sbs_ = 0;
   blocks_.clear();
   levels_.clear();
   palettes_.clear();
@@ -6432,7 +6434,8 @@ bool InterFrameEncoder::seq_driver_measure_leaf(const PartitionNode& node,
   const double lambda =
       key_tx_rd_lambda(options_, current_qindex_) *
       rd_driver::env_positive("AV2ENC_RD_KEY_TX_SCALE", 0.25) *
-      rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0);
+      rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0) *
+      sb_alloc_scale_;
   *cost = distortion + lambda * rate;
   ++rd_driver::counters().measured_leaves;
   return true;
@@ -6445,7 +6448,52 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
   if (out == nullptr) return false;
   rd_driver::Counters& stats = rd_driver::counters();
   ++stats.superblocks;
-  (void)sb_index;
+
+  // AV2ENC_RD_DRIVER_SBALLOC (default 0 = off): content-adaptive per-superblock
+  // rate allocation on the key tree.  The driver's tree lambda is scaled by
+  // this superblock's own 1-px high-pass energy relative to the frame mean, so
+  // a superblock whose source carries detail in the band SSIMULACRA2 charges
+  // for (docs/band-d.md: local SS2 tracks the 1-px error at r = -0.82) is
+  // priced cheaper per bit and spends more rate, while a smooth superblock is
+  // priced dearer and coarsens.  strength 0 (the default) is exactly 1.0 for
+  // every superblock, so unset is byte-identical.
+  sb_alloc_scale_ = 1.0;
+  if (std::getenv("AV2ENC_RD_DRIVER_SBALLOC") != nullptr) {
+    const int cols = qp_sb_cols();
+    const int mi = qp_sb_mi();
+    const int sb = static_cast<int>(sb_index);
+    const int sx = (cols > 0 ? sb % cols : 0) * mi * 4 + tile_x_;
+    const int sy = (cols > 0 ? sb / cols : 0) * mi * 4 + tile_y_;
+    const int n = mi * 4;
+    const double act = seq_source_activity(
+        source_.y.data(), static_cast<int>(source_.width),
+        static_cast<int>(source_.height), static_cast<int>(source_.width), sx,
+        sy, n, n);
+    sb_alloc_frame_activity_ += act;
+    ++sb_alloc_sbs_;
+    const double mean = sb_alloc_frame_activity_ /
+                        static_cast<double>(std::max<long long>(sb_alloc_sbs_, 1));
+    if (mean > 0.0) {
+      // Signed read: a negative strength is the control arm (spend where the
+      // source is *smooth*), which distinguishes "mis-allocated" from
+      // "allocation does nothing".
+      const double strength = [] {
+        const char* v = std::getenv("AV2ENC_RD_DRIVER_SBALLOC");
+        if (v == nullptr || *v == '\0') return 0.0;
+        char* end = nullptr;
+        const double parsed = std::strtod(v, &end);
+        if (end == v || !std::isfinite(parsed)) return 0.0;
+        return parsed;
+      }();
+      const double cap =
+          rd_driver::env_positive("AV2ENC_RD_DRIVER_SBALLOC_MAX", 4.0);
+      if (strength != 0.0) {
+        sb_alloc_scale_ =
+            std::clamp(std::pow(std::max(act, 1e-6) / mean, -strength),
+                       1.0 / cap, cap);
+      }
+    }
+  }
 
   // Expand the historical layout to the driver's deepest candidate leaf so
   // every collapse point is available to the prune.  Every split in the
@@ -6576,7 +6624,8 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
   const double lambda =
       key_tx_rd_lambda(options_, current_qindex_) *
       rd_driver::env_positive("AV2ENC_RD_KEY_TX_SCALE", 0.25) *
-      rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0);
+      rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0) *
+      sb_alloc_scale_;
   // Sequential prune: at every node the split children are measured in the
   // reconstruction of the already-chosen preceding children, so a candidate
   // is always priced in the recon it builds.  The NONE trial is restored

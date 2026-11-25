@@ -3792,6 +3792,14 @@ class InterFrameEncoder {
   std::uint32_t inter_blocks_ = 0;
   std::uint32_t intra_blocks_ = 0;
   int sb_size_ = 64;
+  // AV2ENC_RD_DRIVER_SBALLOC: running frame-wide source activity used to
+  // normalise the per-superblock key rate allocation.  Reset each decision
+  // pass in plan_pass(); inert when the gate is off.
+  double sb_alloc_frame_activity_ = 0.0;
+  long long sb_alloc_sbs_ = 0;
+  // Per-superblock lambda scale, set by seq_driver_decide_sb and read by the
+  // leaf cost and the tree prune it drives.  1.0 when the gate is off.
+  double sb_alloc_scale_ = 1.0;
   mutable int temporal_added_ = 0;
   int temporal_selected_ = 0;
   // §5.4.6 same-reference compound leaves selected (gate evidence).
