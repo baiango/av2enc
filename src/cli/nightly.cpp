@@ -439,8 +439,15 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
     options.cdf_continuity = user_carry || !user_reset;
     options.video_cdf_per_frame_qp = user_reset && !user_carry;
   }
-  options.video_tile_flush_min = true;
-  options.video_ccso_header_rd = true;
+  // The header/overhead wave, honouring the two off-switches that legally
+  // apply on this schedule.  Both were silently ignored under --nightly-b
+  // before this, so each measured byte-identical to the baseline
+  // (2026-11-25).  They matter most at a tight byte budget, where every header
+  // byte saved converts into a finer QP.  ref-signal-compact and
+  // tile-group-compact are NOT enabled here: both are gated to the plain
+  // key+P chain and rejected by the B/temporal/TIP schedule.
+  options.video_tile_flush_min = !options.video_tile_flush_off;
+  if (!options.video_ccso_header_off) options.video_ccso_header_rd = true;
 
   // The measured env-only research gates.  They are read lazily on the first
   // decision, after this expansion.  An explicit env value wins, including "0"
