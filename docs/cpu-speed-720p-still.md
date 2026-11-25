@@ -162,3 +162,14 @@ The profile after this change still spends, on the 1-thread still:
 state dimension is inert on this picture — another reason the trellis change is
 exact but not the biggest lever.  `AV2ENC_SIMD=scalar` vs `auto` (NEON) was also
 byte-identical, so the NEON kernels are doing what the pins say.
+
+### 4.3 Race and memory checks on the shared-scratch paths
+
+The two `thread_local` scratch blocks are per thread by construction, but the
+changed `Model::zero_positions()` publishes a shared table under a new mutex, so
+it was checked directly:
+
+- **ThreadSanitizer** build (`-fsanitize=thread`), 8-thread multi-frame and
+  `--video-rd-preset quality` 240p runs: **zero** race reports.
+- **ASan + UBSan** component test (`RDOQ_SANITIZE=1`): 2,296,120 checks, 0
+  failures, no reports.
