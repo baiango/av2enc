@@ -188,6 +188,12 @@ struct LumaChoice {
   int mode = 0;         // av2enc::intra::Mode / AV2 YMode value
   int angle_delta = 0;  // -3..+3
   std::int64_t sse = 0;
+  // AV2ENC_MODE_TOPN: the best candidates by SSE, best first, so a caller can
+  // ask whether a *better* predictor exists than the SSE argmin before paying
+  // for an RD re-score.  Only filled when the caller passes a buffer.
+  std::array<intra::ModeCandidate, 8> top{};
+  std::array<std::int64_t, 8> top_sse{};
+  int top_count = 0;
   // AV2ENC_RD_MODE_RD: the RD cost that produced this choice.  Equal to `sse`
   // when the gate is off, so the historical result is reproduced exactly.
   double cost = 0.0;
@@ -257,6 +263,44 @@ inline std::int64_t sse_against_source(const std::uint8_t* source, int stride,
 }
 
 }  // namespace detail
+
+// AV2ENC_MODE_TOPN: keep the N best candidates by SSE in `choice`, best first.
+// Diagnostic only -- the winner is still chosen by the loop above, so the
+// default path is byte-identical.
+inline void note_topn(LumaChoice& choice, intra::ModeCandidate cand,
+                      std::int64_t sse) {
+  const int cap = static_cast<int>(choice.top.size());
+  int pos = choice.top_count;
+  if (pos < cap) {
+    ++choice.top_count;
+  } else if (sse >= choice.top_sse[static_cast<std::size_t>(cap - 1)]) {
+    return;
+  } else {
+    pos = cap - 1;
+  }
+  while (pos > 0 && choice.top_sse[static_cast<std::size_t>(pos - 1)] > sse) {
+    choice.top[static_cast<std::size_t>(pos)] =
+        choice.top[static_cast<std::size_t>(pos - 1)];
+    choice.top_sse[static_cast<std::size_t>(pos)] =
+        choice.top_sse[static_cast<std::size_t>(pos - 1)];
+    --pos;
+  }
+  choice.top[static_cast<std::size_t>(pos)] = cand;
+  choice.top_sse[static_cast<std::size_t>(pos)] = sse;
+}
+
+// The top-N list is filled when either the diagnostic or the RD re-score needs
+// it.  Filling it never changes the SSE winner, so this stays byte-identical
+// with both gates off.
+inline bool mode_topn_enabled() {
+  static const bool on = [] {
+    const char* v = std::getenv("AV2ENC_MODE_TOPN");
+    if (v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0) return true;
+    const char* r = std::getenv("AV2ENC_RD_PREDICTOR");
+    return r != nullptr && std::atoi(r) >= 2;
+  }();
+  return on;
+}
 
 // Runs the 61-candidate luma search.  `pred` receives the winning w*h
 // predictor (stride w).  Returns false only when the component rejects the
@@ -358,6 +402,9 @@ inline bool search_luma(const std::uint8_t* recon, int recon_stride, int x0,
     const double mode_lam = mode_rd_lambda();
     for (std::size_t i = 0; i < total; ++i) {
       if (ok[i] == 0) return false;
+      if (mode_topn_enabled()) {
+        note_topn(choice, candidates[i], sses[i]);
+      }
       const double cost =
           static_cast<double>(sses[i]) +
           mode_lam * mode_bits_rel(candidates[i].mode,
@@ -381,6 +428,9 @@ inline bool search_luma(const std::uint8_t* recon, int recon_stride, int x0,
       const std::int64_t sse = detail::sse_against_source(
           source, source_stride, source_max_x, source_max_y, x0, y0, w, h,
           pred);
+      if (mode_topn_enabled()) {
+        note_topn(choice, candidate, sse);
+      }
       const double cost =
           static_cast<double>(sse) +
           mode_lam * mode_bits_rel(candidate.mode, candidate.angle_delta);
