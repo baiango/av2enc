@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -27,6 +28,7 @@
 #include "codec/transform/tx_type/tx_type.h"
 #include "codec/transform/variants/tx_variants.h"
 #include "core/parallel/parallel_for.h"
+#include "pipeline/video/video_rate_interval.h"
 #include "pipeline/video/video_tx_scratch.h"
 
 namespace av2enc::video::txtsearch {
@@ -136,6 +138,11 @@ inline const double g_rdoq_dist_weight = [] {
 // AV2ENC_TX_HF_MASK_DIV: zero the transform's outermost high-frequency band
 // before quantisation (see the call site for the geometry).  0 = off, which
 // reproduces every pin exactly.
+inline const bool g_rdoq_exact = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_EXACT");
+  return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+}();
+// AV2ENC_TX_HF_MASK_DIV: zero the transform's outermost high-frequency band
 inline const int g_tx_hf_mask_div = [] {
   const char* v = std::getenv("AV2ENC_TX_HF_MASK_DIV");
   if (v == nullptr || *v == '\0') return 0;
@@ -807,6 +814,24 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
       error = "rdoq model init failed: " + rdoq_error;
       return false;
     }
+    // AV2ENC_RDOQ_EXACT (default off): price the trellis with a real §8.2
+    // range encoder instead of the -log2(p) static model.  Model::cost_symbol
+    // routes to an installed SymbolSink, and ExactSink already exists
+    // (video_rate_interval.h) but has never been plugged into the coefficient
+    // trellis -- AV2ENC_RATE_INTERVAL only reaches plan_rate_bits.  The static
+    // model ignores the coder's carry/renormalisation, so it misprices a
+    // symbol by up to a bit; on a 25 kB picture where coeff_base (42.9%) and
+    // eob (18.2%) dominate, that accumulates.
+    //
+    // The sink mutates its own CDF bank per symbol, so it is reset per block to
+    // keep the estimate a function of this block alone.  Unset keeps the
+    // static model and reproduces every pin exactly.
+    std::unique_ptr<::av2enc::video::rate_interval::ExactSink> exact_sink;
+    if (g_rdoq_exact) {
+      exact_sink = std::make_unique<::av2enc::video::rate_interval::ExactSink>(
+          /*adapt=*/true);
+      model.set_symbol_sink(exact_sink.get());
+    }
     av2enc::rdoq::Config config;
     config.quant_step = static_cast<double>(acq) / scaled;
     config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
@@ -816,8 +841,10 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     config.prev_level_cap = g_rdoq_prev_cap;
     config.distortion_weight = g_rdoq_dist_weight;
     av2enc::rdoq::RdoqResult& result = scratch.rdoq_result;
-    if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), result,
-                                     rdoq_error)) {
+    const bool rdoq_ok = av2enc::rdoq::rdoq_quantize(
+        input, config, model.rate_model(), result, rdoq_error);
+    if (g_rdoq_exact) model.set_symbol_sink(nullptr);
+    if (!rdoq_ok) {
       error = "rdoq quantize failed: " + rdoq_error;
       return false;
     }
