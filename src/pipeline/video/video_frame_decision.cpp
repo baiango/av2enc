@@ -843,10 +843,22 @@ bool InterFrameEncoder::decide(std::string& error) {
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     joint_p = joint_p && !options_.ext_partitions;
 #endif
+    // The exclusion used to be `!qp_tools_active()`, which switched the whole
+    // key driver off for delta-Q/AQ as well as segmentation and silently
+    // replaced the measured walk with the default one.  Measured on the 720p
+    // still (nightly-b, QP186): leaves 2275 -> 260, tx8/tx16 -> tx32/tx64,
+    // distortion x12, -13 % bytes, and the flat 1-px band 0.262 -> 0.437 --
+    // so every "--video-aq is worse" number taken before this was really
+    // "the key RD driver is off" (docs/negative-results.md).  What the trial
+    // snapshot genuinely cannot restore is the SEGMENTATION grid (PrevSegmentIds
+    // plus its left context), which is why segmentation stays excluded; the
+    // delta-Q plan is a fixed sb_qindex_ table re-read at every superblock
+    // entry, and `sink.state` -- which carries current_qindex/quant_step/
+    // plane_quant -- is already snapshotted and restored above.
     bool sequential_key =
         keyframe_ && rd_driver::enabled() && !options_.enable_sdp &&
         !options_.force_single_block && !palette_enabled_ && !ibc_enabled_ &&
-        !qp_tools_active();
+        !seg_enabled_;
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     // The driver walks the rect tree; the extended solver has no
     // base_superblocks to drive.
@@ -6692,6 +6704,30 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
   sink.state.decoded[0].reset(mi_cols_, mi_rows_);
   sink.state.decoded[1].reset(mi_cols_ / 2, mi_rows_ / 2);
   sink.state.decoded[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+#if defined(AV2ENC_VIDEO_DELTAQ)
+  // §7.14.2 get_qindex(): the scratch sink must quantise THIS superblock at
+  // its plan qindex, exactly as collect_node() does for the committed walk.
+  // seed_unit_state() leaves the frame base_q_idx and encode_leaf() reads
+  // sink.state, so without this the prune would measure a picture quantised at
+  // the frame base while the writer emits the per-superblock delta from
+  // sb_qindex_ -- decisions priced against the wrong picture, and for a
+  // non-zero plan a recon that no longer matches the decoder.
+  if (qp_tools_active()) {
+    const int sb = static_cast<int>(sb_index);
+    if (sb < 0 || static_cast<std::size_t>(sb) >= sb_qindex_.size()) {
+      error = "delta-Q: superblock index outside the plan";
+      return false;
+    }
+    sink.state.current_qindex = sb_qindex_[static_cast<std::size_t>(sb)];
+    sink.state.current_segment_id =
+        seg_enabled_
+            ? static_cast<int>(sb_segment_[static_cast<std::size_t>(sb)])
+            : 0;
+    sink.state.quant_step =
+        rc::kQlookupQ0To255[std::clamp(sink.state.current_qindex, 0, 255)];
+    update_plane_quant(sink.state);
+  }
+#endif
   const auto capture = [&]() {
     Snap snap;
     for (int plane = 0; plane < 3; ++plane) {

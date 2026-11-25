@@ -1409,10 +1409,18 @@ ParseStatus parse_arguments(int argc, char** argv, Options& options, std::string
     }
 
     if (argument == "--video-aq-strength") {
+      // Negative inverts the plan: `relative = (mean - variance)/mean` is
+      // positive for a flat superblock, so a positive strength coarsens flat
+      // blocks while a negative one FINES them at the textured blocks' expense.
+      // The activity-weighted centring (aq_bias_auto) is symmetric, so a
+      // negative value stays rate-neutral the same way.  This is the sign the
+      // flat-area 1-px band wants: coarser flat blocks add quantisation noise
+      // that the loop filters then reshape into the band
+      // (docs/negative-results.md, "Flat-area 1-px checkerboard").
       if (i + 1 >= argc || !parse_double(argv[++i], options.video_aq_strength) ||
-          !(options.video_aq_strength >= 0.0) ||
+          !(options.video_aq_strength >= -16.0) ||
           options.video_aq_strength > 16.0) {
-        error = "--video-aq-strength must be a number in [0, 16]";
+        error = "--video-aq-strength must be a number in [-16, 16]";
         return ParseStatus::kError;
       }
       continue;
