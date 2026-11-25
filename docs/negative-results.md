@@ -667,3 +667,11 @@ deterministic `4a364cb2…`).
 - CUDA M0 pipeline is not yet bit-exact; CPU path is the reference.
 - Fast-decode profile is deferred until quality/encode speed are settled.
 - Actual 8 GB 3060 hardware validation is pending.
+
+## CPU encode speed on the 720p still (`--nightly-b` key)
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| **CONFIRMED 2026-11-25** | Expect `--cpu-threads` to speed the lone-key `--nightly-b` walk | It is serial by construction (one key picture, no inter tools), and the pool only costs: 1T 19.5 s vs 8T 20.7 s on the 720p still | Time this path single-threaded; look for exact work elimination, not parallelism (`docs/cpu-speed-720p-still.md`) |
+| **DONE 2026-11-25** | Expect the RDOQ trellis DP to be the whole RDOQ cost | The DP *is* ~5.9 s of a 20.5 s encode (DP skipped: 14.6 s; `rdoq_quantize` a no-op: 12.0 s), but half of the trellis win was already taken by `coefficient_rate_ignores_state`, so running the state-free search once plus per-thread scratch and a leaner `Model::init` nets **+7.1 %** end to end, not the 25 % the DP share suggests | Keep the exact cuts; measure the model and the DP separately before budgeting from a profile share |
+| **CONFIRMED 2026-11-25** | Copy the full reconstruction (and MV/JOINT/UV grids) per tree node in the key prune "because a trial must be undone" | The grids are never written by a trial leaf and the syntax buffers are append-only, so the copies were pure work; removing them is byte-identical | Snapshot only what a trial reads or writes (`intra_joint_`, superblock state, block count); restore recon in place |
