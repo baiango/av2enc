@@ -43,10 +43,10 @@ winner)
   ev uv23_hi 179 35000 --nightly-b "${WIN[@]}"
   ;;
 k50)
-  # docs/k50-720p.md: the same arm at the rate where K crosses 50.
-  # K 50.59 at 31,005 B, K=50 at 30,273 B.
-  ev k50 183 31000 --nightly-b "${WIN[@]}"
-  ev k50_next 182 31700 --nightly-b "${WIN[@]}"
+  # docs/k50-720p.md: the rate where K crosses 50.
+  # K 50.20 at 29,602 B (QP 184, measured); K=50 at 29,391 B.
+  ev k50 184 29600 --nightly-b "${WIN[@]}" --video-rdoq-scale 0.01
+  ev k50_lean 183 31000 --nightly-b "${WIN[@]}"
   ;;
 inert)
   # These must be byte-identical to `base` (same size, same K).
