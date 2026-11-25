@@ -145,6 +145,12 @@ inline const double g_rdoq_step_scale = [] {
   const double p = std::strtod(v, &end);
   return (end != v && std::isfinite(p) && p > 0.0) ? p : 1.0;
 }();
+// AV2ENC_RDOQ_CTX_REFINE: re-derive coefficient contexts from the trellis's
+// own levels and re-run (default off).
+inline const bool g_rdoq_ctx_refine = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_CTX_REFINE");
+  return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+}();
 // AV2ENC_RDOQ_ADAPT: price the trellis with frame-adaptive CDF rows.
 inline const bool g_rdoq_adapt = [] {
   const char* v = std::getenv("AV2ENC_RDOQ_ADAPT");
@@ -881,12 +887,53 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     config.prev_level_cap = g_rdoq_prev_cap;
     config.distortion_weight = g_rdoq_dist_weight;
     av2enc::rdoq::RdoqResult& result = scratch.rdoq_result;
+    // AV2ENC_RDOQ_CTX_REFINE (default off): the coefficient contexts are frozen
+    // from the SCALAR quantisation (rdoq/README.md's documented approximation),
+    // but the trellis then chooses different levels, so every candidate after
+    // the first is priced against contexts that belong to a block nobody codes.
+    // Re-derive the contexts from the trellis's OWN levels and re-run: the
+    // second pass prices each candidate in the neighbourhood it actually has.
+    // Unset keeps the single pass and reproduces every pin exactly.
+    if (g_rdoq_ctx_refine) {
+      av2enc::rdoq::RdoqResult first;
+      std::string first_error;
+      if (av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(), first,
+                                      first_error)) {
+        // Rewrite the scalar seeds in scan order with the chosen levels, then
+        // rebuild the model's contexts from them.
+        for (int c = 0; c < first.eob; ++c) {
+          scalar_scan[static_cast<std::size_t>(c)] =
+              first.levels[static_cast<std::size_t>(c)];
+        }
+        for (std::size_t c = static_cast<std::size_t>(first.eob);
+             c < scalar_scan.size(); ++c) {
+          scalar_scan[c] = 0;
+        }
+        for (int c = 0; c < area; ++c) {
+          input[static_cast<std::size_t>(c)].scalar_level =
+              scalar_scan[static_cast<std::size_t>(c)];
+        }
+        if (model.init(info, scalar_scan, first_error)) {
+          if (!av2enc::rdoq::rdoq_quantize(input, config, model.rate_model(),
+                                           result, rdoq_error)) {
+            error = "rdoq quantize failed: " + rdoq_error;
+            return false;
+          }
+        } else {
+          result = std::move(first);
+        }
+      } else {
+        error = "rdoq quantize failed: " + first_error;
+        return false;
+      }
+    } else {
     const bool rdoq_ok = av2enc::rdoq::rdoq_quantize(
         input, config, model.rate_model(), result, rdoq_error);
     if (g_rdoq_exact || g_rdoq_adapt) model.set_symbol_sink(nullptr);
     if (!rdoq_ok) {
       error = "rdoq quantize failed: " + rdoq_error;
       return false;
+    }
     }
     std::fill(levels, levels + area, 0);
     for (int c = 0; c < result.eob; ++c) {
