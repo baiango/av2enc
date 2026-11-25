@@ -426,9 +426,19 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   options.video_subpel_eighth = true;
   options.video_key_intra_txpart = true;
   options.video_qp_lambda = true;
-  options.avg_cdf = true;
-  options.adaptive_cdf = true;
-  options.cdf_continuity = true;
+  // The carried-CDF chain, honouring --video-cdf-chain-off and
+  // --video-cdf-per-frame-qp like apply_video_nightly does.  Without this both
+  // switches were silently ignored under --nightly-b, so a caller asking for
+  // the reset image still got the carried one and the segmentation/delta-Q
+  // tools stayed unreachable (2026-11-25).
+  if (!options.video_cdf_chain_off) {
+    const bool user_reset = flag_given(options, "--video-cdf-per-frame-qp");
+    const bool user_carry = flag_given(options, "--cdf-continuity");
+    options.avg_cdf = true;
+    options.adaptive_cdf = true;
+    options.cdf_continuity = user_carry || !user_reset;
+    options.video_cdf_per_frame_qp = user_reset && !user_carry;
+  }
   options.video_tile_flush_min = true;
   options.video_ccso_header_rd = true;
 
@@ -498,6 +508,11 @@ bool apply_video_nightly_b(Options& options, std::string& error) {
   if (!options.video_uv_qp_offset_given && !options.video_uv_delta_q) {
     options.video_uv_qp_offset = -8;
   }
+  // --video-deblock-off: the single-stage ablation.  The RD preset sets
+  // video_deblock=true, so without this the flag was silently ignored under
+  // --nightly-b and measured byte-identical to the baseline (2026-11-25).
+  // Mirrors apply_video_nightly.
+  if (options.video_deblock_off) options.video_deblock = false;
   // Ablation switch, applied last so it wins over the assignments above (the
   // RD preset sets video_deblock/video_ccso and this function sets cdef/ccso_rd
   // earlier).  Mirrors apply_video_nightly's --video-loop-filters-off list
