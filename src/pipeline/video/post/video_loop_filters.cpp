@@ -332,6 +332,28 @@ bool prepare_cdef(const VideoLoopFilterFrame& frame,
     cdef_options.candidates = av2enc::cdef::kCdefFastCandidates;
     cdef_options.candidate_count = av2enc::cdef::kCdefFastCandidateCount;
   }
+  // AV2ENC_CDEF_MAX_STRENGTH: bound the ladder's luma primary strength.  The
+  // filtered pool is a private copy so the shared constexpr tables stay intact.
+  thread_local std::vector<av2enc::cdef::CdefStrength> capped_pool;
+  if (options.cdef_max_strength > 0) {
+    const av2enc::cdef::CdefStrength* src_pool =
+        cdef_options.candidates != nullptr ? cdef_options.candidates
+                                           : av2enc::cdef::kCdefDefaultCandidates;
+    const int src_count = cdef_options.candidates != nullptr
+                              ? cdef_options.candidate_count
+                              : av2enc::cdef::kCdefDefaultCandidateCount;
+    capped_pool.clear();
+    for (int i = 0; i < src_count; ++i) {
+      if (src_pool[i].y_pri <= options.cdef_max_strength) {
+        capped_pool.push_back(src_pool[i]);
+      }
+    }
+    if (capped_pool.empty()) {
+      return fail(error, "video CDEF: strength cap removed every candidate");
+    }
+    cdef_options.candidates = capped_pool.data();
+    cdef_options.candidate_count = static_cast<int>(capped_pool.size());
+  }
   cdef_options.search_step = decimate ? 2 : 1;
 
   cdef_adapter::Plan adapter_plan;

@@ -60,6 +60,15 @@ struct VideoLoopFilterOptions {
     kFast = 3,
   };
   CdefSearchMode cdef_search_mode = CdefSearchMode::kFull;
+  // AV2ENC_CDEF_MAX_STRENGTH (default 0 = no cap): drop every candidate whose
+  // luma primary strength exceeds this before the search runs.  The strength
+  // search ranks candidates by squared error, which has no term that charges
+  // the contrast stretch a strong filter applies: on the 720p still the chain
+  // adds +2.26 in shadows and -2.97 in highlights on top of the unfiltered
+  // recon, the only band where it exceeds AVM (-2.04 against -0.05..+1.24
+  // elsewhere).  Capping the ladder is the only exposed way to bound that.
+  // 0 keeps the historical pool and reproduces every pin exactly.
+  int cdef_max_strength = 0;
   // Price the §5.18.7.10 params row in the per-frame decision
   // (--video-cdef-rd).  The header is re-signalled on every frame that enables
   // CDEF and the syntax has no "same as the previous frame" form, so the only

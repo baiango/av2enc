@@ -1189,6 +1189,14 @@ int run_video_format_encode(const Options& options) {
   video_options.loop_filters.cdef_search_mode =
       static_cast<av2enc::video::post::VideoLoopFilterOptions::CdefSearchMode>(
           options.video_cdef_search);
+  // AV2ENC_CDEF_MAX_STRENGTH (diagnostic, default off): bound the CDEF ladder's
+  // luma primary strength.  The SSE-ranked search has no term charging the
+  // contrast stretch a strong filter applies, which is the measured source of
+  // the crushed-highlight look.  Unset is 0 and changes nothing.
+  if (const char* cap = std::getenv("AV2ENC_CDEF_MAX_STRENGTH")) {
+    const int v = std::atoi(cap);
+    if (v > 0) video_options.loop_filters.cdef_max_strength = v;
+  }
   video_options.loop_filters.ccso = options.video_ccso;
   video_options.loop_filters.ccso_bands_log2 = options.video_ccso_bands;
   video_options.loop_filters.ccso_rd = options.video_ccso_rd;
