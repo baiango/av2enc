@@ -1677,17 +1677,9 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
       error = "the per-segment Q delta must be in [-351, 351]";
       return false;
     }
-    // A lone picture has no B/temporal-layer/random-access schedule to compose
-    // with, but --nightly-b sets temporal_layers = 8 even for --frames 1 (the
-    // same preset shape the edge path hit).  Treat a single-picture encode as
-    // having no schedule so delta-Q/segmentation is reachable there;
-    // multi-frame encodes keep the rejection verbatim.
-    const bool schedule_present =
-        frames.size() > 1 &&
-        (options.b_frames > 0 || options.temporal_layers > 0 ||
-         options.long_term || options.olk || options.leading_frames > 0 ||
-         options.sef || options.ra_switch || options.ras);
-    if (schedule_present) {
+    if (options.b_frames > 0 || options.temporal_layers > 0 ||
+        options.long_term || options.olk || options.leading_frames > 0 ||
+        options.sef || options.ra_switch || options.ras) {
       error = "segmentation/delta-Q does not compose with the B/temporal-layer/"
               "random-access frame schedules (their header writers do not own "
               "the §5.18.7.1/.8 rows)";
