@@ -518,9 +518,19 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
   // HORZ/VERT, and this port keeps exactly that set.
   std::vector<txpart::TxPartition> options;
   options.push_back(txpart::TxPartition::kNone);
+  // AV2ENC_RD_KEY_TX_FORCE_NONE (default off): restrict the key luma TX
+  // partition search to the largest-transform candidate.  This is a
+  // diagnostic, not a shipping lever: the key-tx-rd histogram shows `none`
+  // already wins only 383 of 2,323 leaves, so if forcing it is much worse the
+  // search is pricing the larger transform correctly and the split preference
+  // is real content/rate trade rather than a model defect.
+  static const bool force_none = [] {
+    const char* v = std::getenv("AV2ENC_RD_KEY_TX_FORCE_NONE");
+    return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+  }();
   const txpart::LegalSplits legal =
       txpart::legal_splits(mi_size, /*reduced_tx_part_set=*/false);
-  for (int i = 0; i < legal.option_count; ++i) {
+  for (int i = 0; i < legal.option_count && !force_none; ++i) {
     const txpart::TxPartition option = legal.options[i];
     if (option != txpart::TxPartition::kSplit &&
         option != txpart::TxPartition::kHorz &&
