@@ -1477,6 +1477,19 @@ int InterFrameEncoder::wavefront_override() {
 void InterFrameEncoder::plan_pass() {
   sb_alloc_frame_activity_ = 0.0;
   sb_alloc_sbs_ = 0;
+  // AV2ENC_TX_LIVE_CTX: initialise the neighbour-context grids for this pass.
+  live_ctx_enabled_ = [] {
+    const char* v = std::getenv("AV2ENC_TX_LIVE_CTX");
+    return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+  }();
+  if (live_ctx_enabled_) {
+    const std::size_t cols = static_cast<std::size_t>(std::max(mi_cols_, 0));
+    const std::size_t rows = static_cast<std::size_t>(std::max(mi_rows_, 0));
+    live_ctx_above_.assign(cols, 0);
+    live_ctx_dc_above_.assign(cols, 0);
+    live_ctx_left_.assign(rows, 0);
+    live_ctx_dc_left_.assign(rows, 0);
+  }
   blocks_.clear();
   levels_.clear();
   palettes_.clear();
@@ -3395,6 +3408,13 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     if (intra_tx_partition_search) {
       luma_neighbor_smooth(r, c, part_above_smooth, part_left_smooth);
     }
+    // AV2ENC_TX_LIVE_CTX: this leaf's real §8.3.2 contexts from the coded
+    // above/left neighbours (default off: pass 0/false, byte-identical).
+    int live_txb = 0;
+    int live_dc = 0;
+    if (live_ctx_enabled_) {
+      live_ctx_for(r, c, w / 4, h / 4, w / 4, h / 4, &live_txb, &live_dc);
+    }
     if (!luma_ok ||
         (options_.enable_tx_search
              ? (intra_tx_partition_search
@@ -3403,7 +3423,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                           intra_y_angle_delta, intra_mrl_index,
                           intra_mrl_sec_index, part_above_smooth,
                           part_left_smooth, luma_mask_row, sink.state,
-                          &intra_y, error)
+                          &intra_y, error, live_txb, live_dc,
+                          live_ctx_enabled_)
                     : !search_luma_tx(
                           source_, ax0, ay0, w, h, intra_y_pred,
                           st.current_qindex, txtsearch::Mode::kIntra,
@@ -3423,7 +3444,13 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                           options_.trace, /*allow_rdoq=*/false,
                           /*rdoq_qctx=*/0,
                           rdoq_sse_scale_at(options_, st.current_qindex),
-                          intra_y, error, luma_mask_row))
+                          intra_y, error, luma_mask_row,
+                          /*distortion_weight=*/nullptr,
+                          /*cdf_slice=*/nullptr, /*lowpass_gain=*/0.0,
+                          /*lowpass2_gain=*/0.0,
+                          /*intra_rdoq=*/false,
+                          /*model_rate_scale=*/0.4, live_txb, live_dc,
+                          live_ctx_enabled_))
              : !compute_tx(source_, 0, ax0, ay0, w, h, intra_y_pred,
                            st.plane_quant[0], intra_y, error,
                            qm_enabled_ ? &qm_state_ : nullptr,
@@ -3436,6 +3463,25 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                            luma_mask_row))) {
       error = "intra prediction failed";
       return false;
+    }
+    // AV2ENC_TX_LIVE_CTX: commit this leaf's luma non-zero / DC-non-zero
+    // states so the following blocks price against real neighbours.
+    if (live_ctx_enabled_) {
+      bool any_nz = false;
+      bool dc_nz = false;
+      if (intra_y.searched) {
+        for (const auto& part : intra_y.parts) {
+          for (const auto level : part.levels) {
+            if (level != 0) any_nz = true;
+          }
+        }
+      } else {
+        for (const auto level : intra_y.levels) {
+          if (level != 0) any_nz = true;
+        }
+        if (!intra_y.levels.empty()) dc_nz = intra_y.levels[0] != 0;
+      }
+      live_ctx_commit(r, c, w / 4, h / 4, any_nz, dc_nz);
     }
     // §7.15.3 luma IST refinement (--video-ist).  Applies the still
     // encoder's analysis projection to the quantised luma levels and keeps
@@ -6560,8 +6606,15 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
     std::array<int, 3> width{};
     std::array<int, 3> height{};
     std::vector<std::uint8_t> joint;
+    std::vector<std::uint8_t> uv;
+    std::vector<inter::mc::MiInfo> mv;
     SbSink::State state;
     std::size_t blocks = 0;
+    std::size_t levels = 0;
+    std::size_t palettes = 0;
+    std::size_t sub_pus = 0;
+    std::size_t leaf_dump = 0;
+    std::size_t leaf_costs = 0;
   };
   SbSink sink;
   sink.reset();
@@ -6578,31 +6631,27 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
       snap.width[p] = recon_[p].width;
       snap.height[p] = recon_[p].height;
     }
-    // The MV/JOINT/UV planner grids are not part of this snapshot: this walk
-    // only runs with every inter tool off, and a trial leaf never writes them.
-    // Only the intra joint-mode map feeds the intra decision.
+    // The MV/JOINT/UV planner grids are not part of this snapshot: the key
+    // walk only runs with every inter tool off (`seq_driver_decide_sb` has no
+    // inter decisions), and a trial leaf never writes them.  Only the intra
+    // joint-mode map feeds the intra decision, so it is the one grid kept.
     snap.joint = intra_joint_;
     snap.state = sink.state;
     snap.blocks = sink.blocks.size();
     return snap;
   };
   // A trial restores the reconstruction and the superblock state.  The syntax
-  // buffers (`levels`, `palettes`, `leaf_costs`, `leaf_dump`, `sub_pus`) need no
-  // rewind: `encode_leaf()` only appends to them, and every read inside a trial
-  // compares against `sink.blocks.size()` or the index the leaf itself pushed,
-  // so an append that is never popped cannot change a result.  Copying the full
-  // reconstruction a second time here was the largest `memmove` in the key
-  // profile; `samples` is assigned in place now and only reallocates if a
-  // trial changed the plane's size.
+  // buffers (`levels`, `palettes`, `leaf_costs`, `leaf_dump`, `sub_pus`) need
+  // no rewind: a leaf only ever appends, compares its own `sink.blocks[index]`
+  // against `blocks.size()` (which is unchanged across a trial because the
+  // slot is reserved before the measure), and reads `palettes[index]` by the
+  // index it just pushed -- an append that is never popped cannot change any
+  // of those reads.  The old deep copy of the full recon plus MV/JOINT/UV grids
+  // at every tree node was the largest `memmove` in the key profile.
   const auto apply = [&](const Snap& snap) {
     for (int plane = 0; plane < 3; ++plane) {
       const std::size_t p = static_cast<std::size_t>(plane);
-      if (recon_[p].samples.size() != snap.samples[p].size()) {
-        recon_[p].samples = snap.samples[p];
-      } else {
-        std::copy(snap.samples[p].begin(), snap.samples[p].end(),
-                  recon_[p].samples.begin());
-      }
+      if (recon_[p].samples != snap.samples[p]) recon_[p].samples = snap.samples[p];
       recon_[p].stride = snap.stride[p];
       recon_[p].width = snap.width[p];
       recon_[p].height = snap.height[p];
