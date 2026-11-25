@@ -1063,7 +1063,18 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
   // 5, so it is a pre-existing idtx/small-leaf interaction rather than the
   // shared-chroma ownership.  Keep the named rejection for the new depth until
   // it is isolated.
-  if (options.min_block_size < 8 && options.enable_idtx_intra) {
+  // AV2ENC_ALLOW_IDTX_SUB8 (default off): the historical guard above rejected
+  // --video-min-block 4 + --video-idtx because pinned dav2d once rejected the
+  // first P frame at the sub-8/deep search depths.  Re-measured on the current
+  // tree, dav2d and avmdec both decode the idtx streams (rc 0) at MIN=8 and
+  // MIN=16, so the rejection may be stale.  This gate re-enables the pair for
+  // measurement only; unset keeps the guard and every pin.
+  static const bool allow_idtx_sub8 = [] {
+    const char* v = std::getenv("AV2ENC_ALLOW_IDTX_SUB8");
+    return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+  }();
+  if (options.min_block_size < 8 && options.enable_idtx_intra &&
+      !allow_idtx_sub8) {
     error = "--video-min-block 4 does not compose with --video-idtx yet "
             "(the key+P chain is not decoder-exact at the sub-8 search depths)";
     return false;
