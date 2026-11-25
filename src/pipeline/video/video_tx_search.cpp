@@ -145,6 +145,11 @@ inline const double g_rdoq_step_scale = [] {
   const double p = std::strtod(v, &end);
   return (end != v && std::isfinite(p) && p > 0.0) ? p : 1.0;
 }();
+// AV2ENC_RDOQ_ADAPT: price the trellis with frame-adaptive CDF rows.
+inline const bool g_rdoq_adapt = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_ADAPT");
+  return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+}();
 // AV2ENC_RDOQ_EXACT: price the trellis with a real 8.2 range encoder.
 inline const bool g_rdoq_exact = [] {
   const char* v = std::getenv("AV2ENC_RDOQ_EXACT");
@@ -834,6 +839,18 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     // The sink mutates its own CDF bank per symbol, so it is reset per block to
     // keep the estimate a function of this block alone.  Unset keeps the
     // static model and reproduces every pin exactly.
+    // AV2ENC_RDOQ_ADAPT (default off): price with CDF rows that adapt from the
+    // symbols already priced this frame.  Frame-persistent on purpose -- the
+    // ExactSink arm reset per block and lost the adapted state, which is why it
+    // measured worse.  Reset only when the frame's coding pass restarts.
+    static thread_local ::av2enc::video::rate_interval::AdaptiveLogSink*
+        adapt_sink = nullptr;
+    if (g_rdoq_adapt) {
+      if (adapt_sink == nullptr) {
+        adapt_sink = new ::av2enc::video::rate_interval::AdaptiveLogSink();
+      }
+      model.set_symbol_sink(adapt_sink);
+    }
     std::unique_ptr<::av2enc::video::rate_interval::ExactSink> exact_sink;
     if (g_rdoq_exact) {
       exact_sink = std::make_unique<::av2enc::video::rate_interval::ExactSink>(
@@ -866,7 +883,7 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     av2enc::rdoq::RdoqResult& result = scratch.rdoq_result;
     const bool rdoq_ok = av2enc::rdoq::rdoq_quantize(
         input, config, model.rate_model(), result, rdoq_error);
-    if (g_rdoq_exact) model.set_symbol_sink(nullptr);
+    if (g_rdoq_exact || g_rdoq_adapt) model.set_symbol_sink(nullptr);
     if (!rdoq_ok) {
       error = "rdoq quantize failed: " + rdoq_error;
       return false;

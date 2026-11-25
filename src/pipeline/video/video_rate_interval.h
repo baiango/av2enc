@@ -122,6 +122,9 @@ inline bool stats_enabled() {
 // The compile-time constants are disjoint from the model, so this never
 // depends on an include order quirk.
 inline constexpr double kImpossibleBits = 1.0e6;
+// §9.3 CDF scale and the log2 of it, for the ideal -log2(p) symbol cost.
+inline constexpr double kCdfScale = 32768.0;
+inline constexpr double kCdfBits = 15.0;
 
 }  // namespace detail
 
@@ -357,6 +360,11 @@ class RowBank {
 
   bool failed() const { return failed_; }
 
+  void reset() {
+    count_ = 0;
+    failed_ = false;
+  }
+
  private:
   static constexpr int kCapacity = 96;
   static constexpr int kMaxEntries = 9;
@@ -447,6 +455,62 @@ class IntervalSink final : public rdoq::av2::SymbolSink {
 // R05 ablation: the same symbols through a real §8.2 encoder.  Reports the
 // emitted prefix bits (what a trial encode costs before termination) and the
 // finalized payload bits (marker + padding included).
+// AV2ENC_RDOQ_ADAPT (default off): price the coefficient trellis against CDF
+// rows that ADAPT from the symbols already priced in this frame, instead of the
+// frozen §9.3 frame-start image.  Measured: the static model over-prices the
+// decided plans by 6.48% (170,946 estimated against 160,539 actually coded), so
+// the estimate is systematically pessimistic in exactly the direction the tile
+// coder's own adaptation moves it.
+//
+// Distinct from ExactSink (which resets its bank per block and therefore loses
+// the adapted state): this keeps ONE bank for the whole frame, adapts it exactly
+// as the tile coder does (`av2::adapt_cdf`), and reports the ideal -log2(p) cost
+// so the trellis DP stays additive.  It does not reset per block, so its cost
+// depends on coding order -- which is the point, since the writer's does too.
+class AdaptiveLogSink final : public rdoq::av2::SymbolSink {
+ public:
+  AdaptiveLogSink() : bank_(true) {}
+
+  double symbol(const std::uint16_t* cdf, int n, int symbol) override {
+    if (n <= 1) return 0.0;
+    std::uint16_t* row = bank_.get(cdf, n);
+    if (row == nullptr || symbol < 0 || symbol >= n) {
+      failed_ = true;
+      return detail::kImpossibleBits;
+    }
+    // Ideal -log2(p) of `symbol` under the (possibly adapted) row, so the
+    // trellis DP stays additive.  Same probability arithmetic the static model
+    // uses, just applied to the adapted row.
+    std::int32_t probability = 0;
+    if (symbol == 0) {
+      probability = row[0];
+    } else if (symbol == n - 1) {
+      probability = static_cast<std::int32_t>(detail::kCdfScale) - row[n - 2];
+    } else {
+      probability = static_cast<std::int32_t>(row[symbol]) - row[symbol - 1];
+    }
+    double bits = 0.0;
+    if (probability <= 0) {
+      failed_ = true;
+      bits = detail::kImpossibleBits;
+    } else {
+      bits = detail::kCdfBits -
+             fast_log2(static_cast<std::uint32_t>(probability));
+    }
+    bank_.adapt(row, n, symbol);
+    return bits;
+  }
+
+  double literal(double bits) override { return bits; }
+
+  bool failed() const { return failed_ || bank_.failed(); }
+  void reset_rows() { bank_.reset(); }
+
+ private:
+  RowBank bank_;
+  bool failed_ = false;
+};
+
 class ExactSink final : public rdoq::av2::SymbolSink {
  public:
   explicit ExactSink(bool adapt) : bank_(adapt) { reset(); }
