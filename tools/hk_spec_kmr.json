@@ -1,0 +1,9 @@
+[
+  {"label": "ref",   "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "live",  "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_TX_LIVE_CTX": "1"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "r04",   "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RD_KEY_MODEL_RATE": "0.4"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "r06",   "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RD_KEY_MODEL_RATE": "0.6"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "r08",   "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RD_KEY_MODEL_RATE": "0.8"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "r12",   "env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_RD_KEY_MODEL_RATE": "1.2"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]},
+  {"label": "live06","env": {"AV2ENC_RD_DRIVER_MIN": "16", "AV2ENC_RD_DRIVER_LAMBDA": "256", "AV2ENC_TX_LIVE_CTX": "1", "AV2ENC_RD_KEY_MODEL_RATE": "0.6"}, "flags": ["--nightly-b", "--video-gdf", "--video-uv-qp-offset", "-23"]}
+]

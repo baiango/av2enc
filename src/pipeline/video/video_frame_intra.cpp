@@ -27,6 +27,13 @@ struct KeyTxRdConfig {
   double plan_csf = 1.0;
   // Report the plan histogram even on the historical (gate-off) path.
   bool stats = false;
+  // AV2ENC_RD_KEY_MODEL_RATE: scale on the static §8.3 rate model the key
+  // trellis and its candidate pricing use.  The tile coder adapts its CDFs
+  // while the model prices the §9.3 defaults, so 1.0 over-charges bits once
+  // the tile's runtime has adapted; the inter path compensates with 0.4
+  // (measured).  1.0 (the default) is the historical key behaviour and
+  // reproduces every pin exactly.
+  double model_rate_scale = 1.0;
 };
 
 inline const KeyTxRdConfig& key_tx_rd_config() {
@@ -55,6 +62,10 @@ inline const KeyTxRdConfig& key_tx_rd_config() {
     }
     if (const char* v = std::getenv("AV2ENC_RD_KEY_STATS")) {
       out.stats = v[0] != '\0' && std::strcmp(v, "0") != 0;
+    }
+    if (const char* v = std::getenv("AV2ENC_RD_KEY_MODEL_RATE")) {
+      const double s = std::atof(v);
+      if (s > 0.0) out.model_rate_scale = s;
     }
     return out;
   }();
@@ -653,7 +664,7 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
         /*distortion_weight=*/nullptr, /*cdf_slice=*/nullptr, key_csf,
         key_csf2,
         /*intra_rdoq=*/exact && kcfg.level,
-        /*model_rate_scale=*/1.0,
+        /*model_rate_scale=*/kcfg.model_rate_scale,
         /*txb_skip_ctx_live=*/part_txb, /*dc_sign_ctx_live=*/part_dc,
         /*use_live_ctx=*/live_ctx_on);
   };
