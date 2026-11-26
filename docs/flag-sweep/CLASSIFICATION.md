@@ -480,3 +480,37 @@ scope boundary rather than an open question:
 The sweep is closed at this boundary. 558 rows, 3 documented exclusions, and the
 `INERT` column stated for what it is: "did not change the streams it was given"
 (8 of 40 sampled re-tests moved on a different carrier).
+
+## Every remaining INERT env gate re-run on the two flip carriers (`inert-all-c41.txt`)
+
+After the 40-row sample showed 8 flips, **all 228 remaining INERT `AV2ENC_*`
+gates** were re-run (staged, stopping at the first flip):
+
+1. 60 frames, `--nightly`, `AV2ENC_EFF_PERC=1`, value 4.0 (13,750 B);
+2. `--frames 4 --b-frames 2`, `AV2ENC_EFF_PERC=1`, value 4.0 (8,117 B);
+3. 60 frames, value 0.5.
+
+**14 more were live:**
+
+```
+EFF_PERC_CSF2   EFF_PERC_DSHAPE   PORT_HORIZON   RDOQ_ADAPT
+RDOQ_CTX_REFINE RDOQ_DIST_WEIGHT  RDOQ_EXACT     RDOQ_TRELLIS_STEP_SCALE
+RD_HEAD_TX      RD_JOINT_P        RD_TAIL_TX     RD_UVLEVEL
+TX_DETAIL_SEARCH_TAIL             TX_HF_MASK_DIV
+```
+
+All fourteen flipped on the **60-frame** carrier at 4.0 -- they were inert on the
+12-frame nightly carrier only because the tail pictures and the rate/level
+planning they act on never appear in a 12-frame clip.
+
+`AV2ENC_RD_JOINT_P` appears in that list, which is consistent with the earlier
+retraction: with `EFF_PERC` armed it moves the stream, and its "inert" row was
+an artefact of the carrier, never of the gate.
+
+The remaining 214 gates are inert on **all three** of those runs. So the INERT
+column of this table now rests on at least two independent carrier families
+(12-frame and 60-frame, plus a b-frame carrier), not on a single sweep.
+
+### Totals
+
+**558 rows -- 265 EFFECTIVE, 287 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE.**
