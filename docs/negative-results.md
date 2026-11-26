@@ -974,3 +974,68 @@ lives, not what a fix would buy.
 **The triangulation is the result.** Three independent methods put the deficit in
 the same place: the source ceiling (+18.28 on f0-32), the per-frame bit split
 (P already holds 61.8 % of the stream), and cross-encoder replacement (+6.48 K).
+
+## Cross-encoder per-frame analysis: the deficit is uniform, and it is a per-frame floor
+
+Measured 2026-11-26 on `space8k_1440x720_60f`, av2enc QP198 (37,798 B) against
+`SvtAv1EncApp --preset 0 --crf 63` (36,165 B). Per-frame luma PSNR, ours -> SVT:
+
+| frame class | ours | SVT | delta |
+|---|---:|---:|---:|
+| key f0 | 33.60 | 35.85 | +2.25 |
+| near-duplicate P (12 frames, <1000 bits) | — | — | **+3.18** |
+| real-content P (28 frames) | — | — | **+3.17** |
+| total | 31.49 | 34.64 | +3.15 |
+
+### It is not inter-specific (retires the earlier reading)
+
+The segment-pooling row (f0-32 = +6.48 K with SVT frames) measures where the
+*inherited* error lands, not which coder is better: a skip frame inherits its
+reference's error exactly, so a better key lifts every frame downstream of it.
+Per frame the deficit is the same on the key, on skips and on real inter frames.
+
+### SVT's bit profile is structurally different
+
+From the IVF record sizes (display order; total 35,413 B):
+
+| | key | 2nd frame | frames >1000 B | frames <=100 B |
+|---|---:|---:|---|---|
+| SVT | 19,135 B (54%) | 7,456 B | 4 frames = 31,796 B (90%) | **48 frames = 853 B** |
+| av2enc | 13,465 B (39%) | — | 1 (the key) | 31 frames = 4,072 B |
+
+SVT's even display indices are **5-byte `show_existing_frame`** uncoded repeats;
+its real inter frames cost 20-100 B. Ours cost 42-234 B for the same content.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED - negative | Shift bits from inter to the key at fixed total | `--qp 204 --video-key-qp-offset -51` (key QP153) doubles the key payload (13,465 -> 21,827 B) and lands at 42,863 B / **7.5587** against a base interpolation of ~7.55: **a tie**, 17% off the operating range | The inter cost is a per-frame *floor*, not residual refinement (at QP204 the cheapest inter frame is still 56 B, median 160 B) |
+| CONFIRMED | Assume `show_existing_frame` is reachable today | `src/codec/inter/bframes/bframes.h` lists it as a non-goal; `src/codec/inter/sef/` implements the syntax and `--video-sef` re-shows only the *last* picture once. No path replaces a duplicate inter frame | Wire `sef::make_sef_obu` into the low-delay P loop behind a gate |
+
+### An exact duplicate costs ~150 B to code
+
+Three byte-identical input frames at QP200 encode to **12,850 / 217 / 156 B**,
+and the decoded f1 is *not* equal to decoded f0. So the encoder spends those
+bytes coding a residual against the reconstructed reference (which differs from
+the source), i.e. it pays to say "the same" and still does not converge.
+
+### The prize: 11.3 % of the stream codes nothing worth having
+
+At QP198, 31 of 60 frames cost <=250 B each and together hold **4,072 B
+(11.7 %)**. Replacing each of them with the previous *decoded* picture (what a
+`show_existing_frame` would output, without the 40-80 B inter-frame floor) then
+scoring the result at the reduced byte count:
+
+| stream | bytes | cvvdp | PSNR-Y |
+|---|---:|---:|---:|
+| base QP198 | 37,798 | 7.2165 | 31.486 |
+| same, 31 near-duplicates collapsed | **33,881** | **7.2043** | 31.448 |
+| base ladder interpolated to 33,881 B | 33,881 | **6.9613** | — |
+
+**+0.243 JOD at matched bytes for -0.038 dB**, i.e. 22 % of the 1.10 JOD SVT gap,
+and it needs no new coding tool: it needs the encoder to stop paying ~150 B to
+say "same picture".
+
+Caveats, recorded so the number is not over-read: this is an oracle-style bound
+(the freed bytes are not re-spent; at the measured ~0.071 JOD per 1,000 B that
+would add ~0.04 more), and it assumes a real SEF costs ~5 B, which the pinned
+decoder must accept.
