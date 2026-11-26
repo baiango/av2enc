@@ -740,6 +740,16 @@ two clips and would predict at least one of them wrongly.
 |---|---|---|---|
 | CONFIRMED | Derive the key QP offset from the key/P pass-1 bit split (or mean P-frame bits) | Both signals rank space8k t=20s and loral t=180s in the wrong order (see the table). The sign flip is not explained by where the bits already are | The sign must come from how much *distortion* the P chain inherits from the key (skip propagation), not from the current bit split; that needs a distortion measurement per pass-1 frame, which this gate does not compute |
 
+## Partition-tree controls on 720p video (`--nightly`, IPPP)
+
+Measured 2026-11-26 on `space8k_1440x720_60f` (12 f) and a loral 720p x24 @180s
+extract, QP202, scored with `tools/quality.py` against the source.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED — **byte-identical** | Expect `--video-partition-rd` (the measured partition probe) to change a `--nightly` multi-picture stream | It is **inert**: MD5 is identical to the base stream on both clips (`013fb546…` space, `36de939f…` loral), not merely equal in size. The docs call it "the only positive partition tool", which holds for the paths it was measured on, not for this one — the `--nightly` driver owns the tree here | Do not cite the probe as a partition lever on `--nightly` video; it does nothing |
+| CONFIRMED — matched-rate negative | Expect `--video-ext-partitions` to help at this operating point | Real but negative at matched bytes: space8k flat **16,069 B / 6.8406** vs ext 15,879 B / 6.7341 and 16,860 B / 6.8563 -> interpolated **6.7578 (-0.08)**; loral flat **16,608 B / 7.3182** vs ext 16,544 / 7.2803 and 17,109 / 7.3502 -> **7.2882 (-0.03)**. The space8k README's +0.05 JOD for this tool was at ~300 kbps (QP217-219); at QP202 the sign is negative | Re-test per operating point; it is not a free win |
+
 ## Flat-area 1-px checkerboard on the 720p still at 25 kB
 
 Measured 2026-11-25 on `src720_1f.y4m`, lone key, `AV2ENC_RD_DRIVER_MIN=16
