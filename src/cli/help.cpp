@@ -442,6 +442,14 @@ void print_usage(std::ostream& out) {
                                     "finer than luma at the same luma QP.",
                                     "--nightly-b defaults to -8; pass 0 to",
                                     "restore the single-step stream"});
+  item("--video-y-dc-delta-q <N>", {"Luma DC step offset in [-23, 8], coded in",
+                                    "the §5.4.8 sequence delta-Q group. The",
+                                    "Y-DC fields may only be coded when",
+                                    "equal_ac_dc_q = 0, so this arm owns the",
+                                    "group: the symmetric --video-uv-qp-offset",
+                                    "is carried in the same group (dropping",
+                                    "it codes chroma at the base luma step)."});
+
   item("--video-seg-skip", {"Opt-in SEG_LVL_SKIP on the lowest-variance",
                             "segment (implies --video-segmentation)"});
   item("--video-seg-globalmv", {"Opt-in SEG_LVL_GLOBALMV on a segment",
