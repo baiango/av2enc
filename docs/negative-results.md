@@ -779,6 +779,33 @@ Bracket and second-QP confirmation (same clip): weight 16 -> 6.9472 (+0.107), we
 Note the loral point is a small extrapolation (72 B beyond the upper bracket
 point); the space8k weight-8 point is inside its bracket.
 
+### Leaf-mode re-score lambda: inconsistent, but unreachable (audit of the A/A2/B phases)
+
+Audited the pipeline's pricing sites for the classic lambda mismatch (tree price
+vs leaf coder vs mode re-score). One exists and is worth knowing about, but it
+does **not** affect the shipping stream:
+
+| site | lambda |
+|---|---|
+| `video_frame_intra.cpp:531` (exact TX/partition search) | `lambda * kcfg.tx_scale` (0.25) |
+| `decision.cpp:3569` (plain `search_luma_tx`) | `lambda * perceptual::tx_lambda_scale * g_tx_lambda_leaf_scale_mut` |
+| `decision.cpp:3357` (intra **mode** re-score cost) | raw `lambda`, **no** multipliers |
+
+So the top-N mode re-score ranks candidates under a different objective than the
+search that built their TX plans (4x off the exact path, and missing the
+perceptual and leaf-texture scales). **But it is dead on this path:** the block
+is inside `if (rd_pred_n > 0 && ...)`, and `rd_pred_n` comes only from
+`AV2ENC_RD_PREDICTOR` (>=2, default off). Measured: `AV2ENC_RD_PREDICTOR=4`
+produces a stream **byte-identical** to no predictor (`013fb546…`), and a patch
+that made 3357 consistent also produced that same stream, so the site never
+executes on the `--nightly` key/P path. The patch was reverted rather than left
+as gated dead code.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED (latent) | Assume the intra mode re-score is priced consistently with the TX search | It is not (table above) | Fix it in the same commit that makes `AV2ENC_RD_PREDICTOR` reachable; until then it cannot influence any stream |
+| CONFIRMED | Assume a lambda inconsistency found by reading code is live | This one is behind a default-off gate *and* unreachable on `--nightly`; both `AV2ENC_RD_PREDICTOR=0` and `=4` give the same stream | Prove reachability by byte-diff before spending encode time on a "fix" |
+
 ### Probe price (`--video-partition-rd-lambda`): a tie, not a lever
 
 The probe's syntax-bit price was calibrated at 240p / 100 kbps (`2.75e-6`), so
