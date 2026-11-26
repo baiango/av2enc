@@ -1823,3 +1823,32 @@ src/pipeline/video/video_frame_intra.cpp:519
 
 All code edits were reverted to `9e4e4f92` + this record, so the tree stays at a
 verified state; engaging RDOQ on intra would change every intra stream.
+
+### Correction: RDOQ *is* wired for intra -- it goes through `search_luma_tx`, not `compute_tx`
+
+The previous entry concluded "RDOQ is unreachable on intra". That conclusion was
+drawn from a trace that counted calls to `compute_tx`, which the key frame does
+not use. The key frame's exact stage calls a *different* function, and it already
+passes the RDOQ switches:
+
+```cpp
+// src/pipeline/video/video_frame_intra.cpp:710-722
+return search_luma_tx(
+    ..., /*allow_rdoq=*/exact && kcfg.level, /*rdoq_qctx=*/qctx, ...,
+    /*intra_rdoq=*/exact && kcfg.level, ...);
+```
+
+and `KeyTxRdConfig::level` defaults to **true** (video_frame_intra.cpp:17; it is
+only cleared by an env override at line 56).
+
+So: RDOQ is requested on the intra exact stage (an `intra_rdoq` parameter exists
+for it), `--video-rdoq-off` still yields an identical stream, and the zero-call
+trace measured the wrong function. The remaining defect is **inside** the
+`search_luma_tx` intra/`intra_rdoq` branch -- either it is not taken or it
+returns the scalar levels.
+
+| Status | Meaning |
+|---|---|
+| RETRACTED | "RDOQ cannot reach intra; the fix belongs in `encode_intra_luma_tx_partition`" | It is already wired there via `search_luma_tx`, with `level` defaulting true |
+| CONFIRMED | `--video-rdoq-off` changes nothing on the still | Measured, md5-identical |
+| OPEN (next) | Instrument the `intra_rdoq` branch inside `search_luma_tx` | That branch must be shown to run and to change levels before any quality claim |
