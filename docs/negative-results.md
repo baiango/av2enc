@@ -1362,3 +1362,27 @@ Tested three independent switches on `src720.png` at QP212 unless noted:
 Context: AVM on this still is 24,875 B / 7.6873 against our best 25,081 B / 7.2935.
 That 0.394 JOD is now attributable to the tool set, not to a pricing bug we can
 point at -- which is the honest answer, and a negative worth as much as a fix.
+
+## Six implemented AV2 intra tools were off by default: only DIP pays
+
+`--nightly` enables none of `enable_mrls`, `enable_dip`, `enable_ibp`,
+`enable_intra_ist`, `enable_idtx_intra`, `enable_sdp`. Measured on `src720.png`
+at QP212 (baseline 25,168 B / 7.2415), same protocol as every other row:
+
+| arm | bytes | cvvdp | verdict at matched bytes |
+|---|---:|---:|---|
+| `--video-dip` | 23,017 | 7.1477 | **+0.012 better** (Q210: 25,362 B / 7.2631 -> ~7.254 @25,168) |
+| `--video-mrl` | 25,941 | 7.2470 | worse (+773 B for +0.006) |
+| `--video-ibp` | 24,773 | 7.2410 | tie/slightly worse |
+| `--video-ist` | 25,348 | 7.2359 | worse |
+| `--video-idtx` | 25,187 | 7.2321 | worse |
+| `--video-sdp` | -- | -- | rejected by validation (needs an additional flag); **untested** |
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED (small win) | Leave `enable_dip` off | It is worth **+0.012 JOD** at matched bytes on the still and costs 2,151 B fewer at the same QP -- it removes residual rather than paying for it | Enable `--video-dip` for intra; the other five are measurement-negative here |
+| CONFIRMED - negative | Assume "turn on the spec's tools" closes the AVM gap | Five of six tools are neutral-to-negative; DIP delivers 0.012 of the 0.394 JOD gap (~3%). AVM's advantage is not "the switches we forgot", it is deeper tool/modelling work | Treat the remaining ~0.38 as a modelling problem (transform/prediction quality), not a configuration one |
+| OPEN | Assume `--video-sdp` is inert because it failed to run | It was rejected by argument validation, not measured | Find its required companion flags and measure it |
+
+This is the honest reading of "make a better tool like AVM": the cheap configuration
+layer is now exhausted and worth 0.012 JOD; the rest has to be built.
