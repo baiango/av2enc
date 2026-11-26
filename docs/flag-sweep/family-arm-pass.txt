@@ -1,0 +1,18 @@
+P_DRIFT armed (alpha 4): 9987 B
+60f base 12885 B -> TAIL_FLOOR armed 12885 B (inert arm)
+   AV2ENC_P_DRIFT_FIRST           7:INERT  64:EFFECTIVE
+   AV2ENC_P_DRIFT_LAST            7:INERT  64:INERT
+   AV2ENC_P_DRIFT_K               7:INERT  64:INERT
+   AV2ENC_RD_TAIL_FLOOR_DEPTH     7:INERT  64:INERT
+   AV2ENC_RD_TAIL_FLOOR_FIRST     7:INERT  64:INERT
+   AV2ENC_RD_TAIL_FLOOR_LAST      7:INERT  64:INERT
+   AV2ENC_RD_TAIL_FLOOR_MIN       7:INERT  64:INERT
+
+== arm probes (does the family's own on-switch move the stream?)
+P_DRIFT: AV2ENC_P_DRIFT=1 alone inert at alpha 0.5/1; ARMED at alpha 4 (9,987 B vs 9,973 B)
+P_DRIFT_FIRST 64 EFFECTIVE (7 INERT: ordinal window), P_DRIFT_{LAST,K} inert even armed
+TAIL_FLOOR: arm inert on 12f and on 60f, and still inert with AV2ENC_EFF_PERC=1
+   (60f + EFF_PERC 13,750 B -> +TAIL_FLOOR 13,750 B); its 4 gates therefore unjudged
+PART_DIAG: header states "This gate does not change the stream" (measurement only)
+RD_SEQTREE: header states the knobs "are inert here" (rd-seq lane surface); the
+   driver reads AV2ENC_RD_DRIVER_HF / _EDGE instead

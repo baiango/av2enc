@@ -85,3 +85,20 @@ gives **34 gates, none of which appeared in the name-derived list** (see
 to families whose own on-switch is itself inert on this clip
 (`PART_DIAG`, `RD_TAIL_FLOOR`, `P_DRIFT`, `RD_SEQTREE`), so their gates are
 **unjudged on this content**, not shown dead.
+
+## Family arming, pass 3 (`family-arm-pass.txt`)
+
+The 23 gates behind four families were carried as "arm itself inert". This pass
+establishes, per family, whether that is a missing carrier or a property of the
+code:
+
+| family | finding | gates |
+|---|---|---|
+| `P_DRIFT` | **arms at `AV2ENC_P_DRIFT_ALPHA=4`** (9,987 B vs 9,973 B); `P_DRIFT_FIRST` is EFFECTIVE at 64 (inert at 7, i.e. an ordinal-window effect) | 1 live, `LAST`/`K` inert while armed |
+| `PART_DIAG` | header: "**This gate does not change the stream**" -- measurement only. Inert by design, not unjudged | 3 |
+| `RD_SEQTREE` | header: the knobs "**are inert here**" (rd-seq lane surface; the driver reads `AV2ENC_RD_DRIVER_HF`/`_EDGE`) | 4 |
+| `RD_TAIL_FLOOR` | arm inert on 12f **and** 60f, and with `AV2ENC_EFF_PERC=1` (13,750 B both ways). Needs the upstream tx_detail path, so the ordinal window never opens. **Unjudged, not dead** | 4 |
+
+So of the 23, one is now measured live; 7 are inert **by documented design**;
+4 remain unjudged with the reason identified; `P_DRIFT_{LAST,K}` are inert
+while armed on this clip.
