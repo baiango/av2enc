@@ -1464,3 +1464,61 @@ decoder-exact on every plane (recon vs decoded output: 0 differing bytes out of
 further gain has to come from *choosing* filter levels, and both signalled
 choices (`df_delta_q` per plane, `apply` per pass) are now measured at their
 optimum: luma −2, chroma −2, all passes on.
+
+## 28. Per-region deblock strength via AQ / delta-Q: reachable, measured, negative
+
+Directed work: the deblock itself picks one frame-level `df_delta_q`, so the only
+way to vary its strength *by region* is a per-leaf `qindex` — which §7.17.6
+already uses (`adaptive_filter_strength(opts, plane, pass, adj.qindex, …)` and
+the grid reads `adj.qindex`). I verified that chain end to end before spending
+an encode: `entry.qindex` is set per leaf from `st.current_qindex`
+(`video_frame_decision.cpp:5679`), which under AQ is the per-superblock
+`sb_qindex_[sb]` (:1697, :7307). So AQ genuinely changes deblock strength per
+region, normatively, with no syntax change to the filter.
+
+**A stale ledger line was blocking this.** `docs/k52-at-25k.md` listed
+`--video-aq` / `--video-delta-q` as "rejected by validation, unreachable". They
+are not: the rejection message names the missing switch
+("composes with the CDF chain only under `--video-cdf-per-frame-qp`"), and
+`--video-aq --video-cdf-per-frame-qp` passes validation and encodes. A
+CORRECTION note is now in `docs/k52-at-25k.md`.
+
+Arms on the winning stack (damping 5, Δ `−2,−2,−2,−2`), all `validate_dav2d OK`:
+
+| arm | bytes | cvvdp | BA | SS2 | K |
+|---|---:|---:|---:|---:|---:|
+| **anchor (no AQ)** | **25,090** | **7.3566** | **12.475** | **−9.528** | **48.37** |
+| AQ, strength 1.0, λ256 | 25,910 | — | — | — | (not scored: +820 B) |
+| AQ, strength 2.0 | 25,024 | 7.2684 | 14.898 | **−15.088** | 46.35 |
+| AQ, strength 3.0 | 25,514 | 7.2692 | 14.085 | **−15.596** | 46.47 |
+| AQ, λ352 | 25,468 | 7.3275 | 13.691 | −12.071 | 47.45 |
+| AQ, λ384 | 25,462 | 7.3251 | 13.132 | −12.220 | 47.57 |
+
+**Negative, by a wide margin (≥ 0.80 K).** Two independent reasons, both visible
+in the numbers:
+
+1. **Rate.** The per-SB delta-Q signalling costs **+820 B** at λ256, and buying
+   it back with a stiffer tree λ (384) still leaves 372 B over the anchor while
+   collapsing SS2 to −12.2.
+2. **Quality.** Every AQ arm wrecks SS2 (−9.53 → −12.1…−15.6). Per-region
+   qindex divides the `--video-uv-qp-offset -23` chroma/QP relationship the whole
+   stack was tuned around, and at 25 KB the rate the AQ plan spends on smooth
+   superblocks is taken from textured ones, which is exactly what SS2 punishes.
+
+**So per-region deblock strength is expressible, reachable, and measured to be
+worse.** The frame-level `df_delta_q` optimum (luma −2, chroma −2) stands.
+
+### 28.1 Where the deblock stands after all of it
+
+| deblock fact | measured |
+|---|---|
+| encoder deblock vs decoder output | **decoder-exact** (0 / 1,382,406 bytes differ) |
+| `--video-deblock-off` | changes 603,332 bytes → the filter is load-bearing |
+| selectivity | 34.1 % of 171,800 edges filter; mean width 1.16 |
+| level knob (`df_delta_q`) | dose peaks at −2 (visual 48.10), luma+chroma −2 best (48.37 w/ damping 5) |
+| apply knob | all passes on (47.67–48.01 for the alternatives) |
+| per-region level (AQ) | reachable, **−0.80 K or worse** |
+| per-plane chroma raise above −2 | −0.01…−0.04 |
+
+The deblock is decoder-exact, load-bearing, and every level/apply/per-region
+choice it offers has been measured; K 48.37 @ 25,090 B remains the best point.
