@@ -2,7 +2,7 @@
 # C420jpeg, a smooth gradient for 0-29 and a high-contrast pattern for 30-59
 # (a synthetic scene cut, so the reference PSNR falls below the drift anchor).
 # Usage: python3 make_drift_carrier.py > /tmp/drift60.y4m
-import struct, math
+import sys
 W,H,F=480,240,60
 def frame(phase):
     # phase 0: smooth gradient; phase 1: horizontally inverted high-contrast pattern
@@ -13,9 +13,10 @@ def frame(phase):
             y[j*W+i]=v
     c=bytes([128])*((W//2)*(H//2))*2
     return bytes(y)+c
-with open("/tmp/drift60.y4m","wb") as f:
+out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/drift60.y4m"
+with open(out,"wb") as f:
     f.write(b"YUV4MPEG2 W%d H%d F30:1 Ip A1:1 C420jpeg\n"%(W,H))
     for n in range(F):
         f.write(b"FRAME\n")
         f.write(frame(0 if n<30 else 1))
-print("wrote /tmp/drift60.y4m")
+print("wrote " + out)
