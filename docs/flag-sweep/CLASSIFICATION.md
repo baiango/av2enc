@@ -534,3 +534,36 @@ so its EFFECTIVE verdict says only that the option acts.
 ### Totals so far
 
 **558 rows -- 267 EFFECTIVE, 285 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE.**
+
+## The 214 INERT env gates on two more carrier families (`inert-env-c34.txt`)
+
+Staged per gate: delta-Q 60-frame (77,009 B) -> **720p single-frame `--nightly-b`**
+pin carrier (26,504 B), each at 4.0 and 0.5.
+
+**12 more were live; 11 of them on the 720p nightly-b carrier:**
+
+```
+RD_DRIVER_MIN        nb      RD_UVFULL_TOPN      nb
+RD_DRIVER_RATE_FIT   nb      RD_UVLEVEL_TOPN     nb
+RD_DRIVER_SBALLOC    nb      RD_UVLEVEL_TRIES    nb
+RD_KEY_LEVEL_SCALE   nb      TX_LIVE_CTX         nb
+RD_KEY_MODEL_RATE    nb      RD_MODE_BITS_NONDIR dq
+RD_KEY_TX_SCALE      nb
+RD_MODE_BITS_ANGLE   nb
+```
+
+The 720p nightly-b family (chained B, `--video-gdf`, negative UV offset, 720p
+content) is a shape the table had never been run against, and it woke eleven
+gates at once -- all of them key-intra and UV level/TOP-N knobs whose subject
+matter does not appear on a 240p all-P clip.
+
+**202 remain inert across delta-Q, 720p nightly-b, 60-frame, b-frame and
+12-frame**, i.e. five carrier families.
+
+### Totals
+
+**558 rows -- 279 EFFECTIVE, 273 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE.**
+
+Re-test summary across all passes: of 290 rows re-tested on a second or later
+carrier family, **38 were live** (24 in the 60-frame/b-frame pass, 12 here,
+2 CLI). The INERT column now rests on five families rather than one.
