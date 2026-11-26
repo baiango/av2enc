@@ -1046,3 +1046,27 @@ outputs, so the 5 B assumption behind the table above is measured, not guessed.
 The SEF machinery (`src/codec/inter/sef/`) and the pinned-decoder compatibility
 check already exist; what does not exist is a path that decides *per frame* to
 emit one instead of coding a duplicate.
+
+### Trying it: SEF cannot represent a repeated display position (measured, reverted)
+
+The obvious way to stop paying for duplicates is `show_existing_frame`, whose
+syntax module (`src/codec/inter/sef/`) already exists. It was wired into the
+low-delay P loop behind `AV2ENC_SEF_DUPLICATES=<dB>`: when the source picture is
+within `<dB>` of the primary reference's reconstruction, emit a SEF instead of
+an inter frame and skip the slot refresh.
+
+The stream is syntactically fine -- 60 IVF records, SEF units exactly 5 B,
+`dav2d-macos -q --strict 1` exits 0 -- but it decodes to **5 output frames, not
+60**:
+
+```
+threshold 32 dB: 37,292 B, 4 SEFs,  => 5 outputs (out0..out3 = f0, out4 = f4)
+threshold 30 dB: 31,984 B, 36 SEFs, => 5 outputs
+```
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED - negative | Use `show_existing_frame` to replace a near-duplicate inter frame | A SEF re-shows a frame at **that frame's own order hint** (`sef.h`: the pinned dav2d rejects `cpoc != poc`), and `derive_sef_order_hint = 1` is only legal for a frame that has *not* been output yet. A duplicate needs the *same picture at a new display position*, which the syntax cannot express. `--video-sef` works only because it re-shows a **hidden** last picture. Our 4-bit order hints (wrap at 16) make the collision worse | Leave the frames coded; the only in-syntax lever is to make a duplicate frame *cheap* (force skip, ~56-80 B floor instead of 42-234 B), worth ~6.7 % of the stream rather than 11.3 % |
+
+So the +0.243 JOD in the previous section is **not reachable** by this route. It
+bounds what a codec that can carry repeats would get, not what this one can.
