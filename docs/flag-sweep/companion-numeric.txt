@@ -1,0 +1,84 @@
+base 18845 de0fe01b07ee302cd29bbf3b2f8d7236
+NO-NUMERIC-COMPANION --alllayers :: av2enc: --svc-* requires --svc-layers x0=WxH[,x1=WxH,...]
+NO-NUMERIC-COMPANION --metadata-frame-hash :: av2enc: error: --metadata-frame-hash is wired into the still
+NO-NUMERIC-COMPANION --adaptive-cdf; :: av2enc: unknown option '--adaptive-cdf;'
+NO-NUMERIC-COMPANION --effort-plan :: av2enc: --effort/--cpu-used is calibrated for --still only; 
+NO-NUMERIC-COMPANION --lossless :: av2enc: --video cannot be combined with --still, --still-gpu
+NO-NUMERIC-COMPANION --lossless-fsc :: av2enc: --lossless-fsc requires --lossless or --video-lossle
+NO-NUMERIC-COMPANION --no-deblock :: av2enc: --no-deblock requires --still or --still-gpu
+NO-NUMERIC-COMPANION --nightly-b :: av2enc: --video-edge-inter is measured on the low-delay P ch
+NO-NUMERIC-COMPANION --still-ccso :: av2enc: --still-ccso requires --still or --still-gpu
+NO-NUMERIC-COMPANION --no-cfl :: av2enc: --no-cfl requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-ccso-edge :: av2enc: --still-ccso-edge requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-cctx :: av2enc: --still-cctx requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-cfl-explicit :: av2enc: --still-cfl-explicit requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-cdef :: av2enc: --still-cdef requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-cdef-on-skip-txfm :: av2enc: --still-cdef-on-skip-txfm requires --still or --stil
+NO-NUMERIC-COMPANION --still-chroma-lr :: av2enc: --still-chroma-lr requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-dc :: av2enc: --still-dc requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-content-interpretation :: av2enc: --still-content-interpretation requires --still or -
+NO-NUMERIC-COMPANION --still-dc-ac-delta-q :: av2enc: --still-dc-ac-delta-q requires --still or --still-gp
+NO-NUMERIC-COMPANION --still-deblock :: av2enc: --still-deblock requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-ddt :: av2enc: --still-ddt requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-full-intra :: av2enc: --still-full-intra requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-delta-q :: av2enc: --still-delta-q requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-gdf :: av2enc: --still-gdf requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-dip :: av2enc: --still-dip requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-ext-partitions :: av2enc: --still-ext-partitions requires --still or --still-g
+NO-NUMERIC-COMPANION --still-ibp :: av2enc: --still-ibp requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-grain :: av2enc: --still-grain requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-gpu) :: av2enc: unknown option '--still-gpu)'
+NO-NUMERIC-COMPANION --still-grain-adaptive :: av2enc: --still-grain-adaptive requires --still or --still-g
+NO-NUMERIC-COMPANION --still-ibc :: av2enc: --still-ibc requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-idtx :: av2enc: --still-idtx requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-ist :: av2enc: --still-ist requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-mrl :: av2enc: --still-mrl requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-mhccp :: av2enc: --still-mhccp requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-pc-wiener :: av2enc: --still-pc-wiener requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-palette :: av2enc: --still-palette requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-rdoq :: av2enc: --still-rdoq requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-rdo-intra :: av2enc: --still-rdo-intra requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-per-segment-q :: av2enc: --still-per-segment-q requires --still or --still-gp
+NO-NUMERIC-COMPANION --still-qm :: av2enc: --still-qm requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-sb128 :: av2enc: --still-sb128 requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-sdp :: av2enc: --still-sdp requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-sb256 :: av2enc: --still-sb256 requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-segmentation :: av2enc: --still-segmentation requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-sub8 :: av2enc: --still-sub8 requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-tcq :: av2enc: --still-tcq requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-single :: av2enc: --still-single requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-tx-type :: av2enc: --still-tx-type requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-tx-partition :: av2enc: --still-tx-partition requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-uv-full :: av2enc: --still-uv-full requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still-wiener :: av2enc: --still-wiener requires --still or --still-gpu
+NO-NUMERIC-COMPANION --still; :: av2enc: unknown option '--still;'
+NO-NUMERIC-COMPANION --still-user-qm :: av2enc: --still-user-qm requires --still or --still-gpu
+STILL-REJECTED --svc-inter-layer (+--frames 3 --svc-layers 0) :: av2enc: --svc-inter-layer is not a conforming AV2 v1.0.0 fea
+NO-NUMERIC-COMPANION --video): :: av2enc: unknown option '--video):'
+NO-NUMERIC-COMPANION --video-bawp): :: av2enc: unknown option '--video-bawp):'
+EFFECTIVE --video-compound (+--video-refs 2)
+NO-NUMERIC-COMPANION --video-compound-near-near :: av2enc: --video-compound-near-near needs --video-compound
+NO-NUMERIC-COMPANION --video-compound-diffwtd :: av2enc: --video-compound-wedge/--video-compound-diffwtd need
+NO-NUMERIC-COMPANION --video-compound-wedge :: av2enc: --video-compound-wedge/--video-compound-diffwtd need
+NO-NUMERIC-COMPANION --video-cwp-weighted :: av2enc: --video-cwp-weighted/--video-imp-mask need --video-c
+NO-NUMERIC-COMPANION --video-drl-reorder-always) :: av2enc: unknown option '--video-drl-reorder-always)'
+NO-NUMERIC-COMPANION --video-force-integer-mv :: av2enc: --video-force-integer-mv needs --video-scc-force
+NO-NUMERIC-COMPANION --video-force-single) :: av2enc: unknown option '--video-force-single)'
+NO-NUMERIC-COMPANION --video-gpu :: av2enc: --cpu-threads is a CPU reference knob; the GPU backe
+STILL-REJECTED --video-idtx-1d (+--strict 1) :: av2enc: unknown option '--strict'
+NO-NUMERIC-COMPANION --video-imp-mask :: av2enc: --video-cwp-weighted/--video-imp-mask need --video-c
+EFFECTIVE --video-lossless (+--qp 0)
+STILL-REJECTED --video-lossless-b (+--qp 0) :: av2enc: --video-lossless-b codes one closed B GOP: pass --vi
+NO-NUMERIC-COMPANION --video-palette/--video-ibc/--video-morph :: av2enc: unknown option '--video-palette/--video-ibc/--video-
+NO-NUMERIC-COMPANION --video-mvd-sign-derive :: av2enc: --video-mvd-sign-derive needs --video-mv-precision q
+NO-NUMERIC-COMPANION --video-opfl :: av2enc: --video-opfl/--video-refine-mv need --video-compound
+EFFECTIVE --video-qm (+--qp 90)
+NO-NUMERIC-COMPANION --video-qm). :: av2enc: unknown option '--video-qm).'
+NO-NUMERIC-COMPANION --video-rdoq. :: av2enc: unknown option '--video-rdoq.'
+NO-NUMERIC-COMPANION --video-refine-mv :: av2enc: --video-opfl/--video-refine-mv need --video-compound
+NO-NUMERIC-COMPANION --video-tip-block-ref :: av2enc: --video-tip-block-ref is the §5.20.7.10 RefFrame[0] 
+NO-NUMERIC-COMPANION --video-tip-no-hole-fill :: av2enc: --video-tip-no-hole-fill is the A/B control for --vi
+NO-NUMERIC-COMPANION --video-tlayer-anchor-residual :: av2enc: --video-tlayer-anchor-residual needs the chained --v
+NO-NUMERIC-COMPANION --video-tlayers) :: av2enc: unknown option '--video-tlayers)'
+NO-NUMERIC-COMPANION --video-tx-search) :: av2enc: unknown option '--video-tx-search)'
+EFFECTIVE --video-user-qm (+--qp 90)

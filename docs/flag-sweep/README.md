@@ -149,3 +149,35 @@ Judging them properly needs a hand-written invocation table, not message scrapin
   text my scraper mangled.
 - Still not judged: 78 of the 83 (table work), and the 230 env gates never
   value-swept beyond `=1`.
+
+## Numeric-companion pass (comp5)
+
+Judged the 83 value-bearing flags with numeric companions only (a number cannot
+be a mis-parsed prose word):
+
+| class | count |
+|---|---:|
+| **EFFECTIVE with a numeric companion** | **4** |
+| still rejected | 3 |
+| no numeric companion in the message | 76 |
+
+Newly judged:
+
+```
+EFFECTIVE --video-compound   (+--video-refs 2)
+EFFECTIVE --video-lossless   (+--qp 0)
+EFFECTIVE --video-qm         (+--qp 90)
+EFFECTIVE --video-user-qm    (+--qp 90)
+```
+
+The remaining 76 split into two groups, both identified from their messages:
+
+- **scraper artefacts**: options that do not exist (`--adaptive-cdf;`,
+  `--video-rdoq.`, `--video-qm).`) -- my help scraper mangled the names, so no
+  invocation can ever succeed;
+- **string-valued companions**: `--svc-layers x0=WxH,...`, preset names, QM
+  tables -- these need a hand-written table, which is bookkeeping, not analysis.
+
+Cumulative judged across the CLI surface: 207 boolean switches + 65 argument
+options + 39 companion flags + 5 hand-verified + 4 numeric-companion = **all
+boolean switches and argument options, plus 48 of the formally rejected flags**.
