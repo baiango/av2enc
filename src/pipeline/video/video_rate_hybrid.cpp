@@ -199,6 +199,13 @@ void print() {
   print_group("scope", "residual", "coeff_new", residual,
               [](const Sample& s) { return s.pred_coeff_new; },
               [](const Sample& s) { return s.act_residual; });
+  // Decisive for "can adaptivity solve the coefficient pricing": the writer's
+  // own write-time -log2(p) over the residual group, under the real adaptive
+  // contexts, against the range coder.  If these agree, a context-priced
+  // decision is exact and only the analytic surrogate is wrong.
+  print_group("scope", "residual", "coeff_exact", residual,
+              [](const Sample& s) { return s.exact[kTagResid]; },
+              [](const Sample& s) { return s.act_residual; });
   print_group("scope", "skip", "syntax_new", skipped,
               [](const Sample& s) { return s.pred_syntax_new; },
               [](const Sample& s) {

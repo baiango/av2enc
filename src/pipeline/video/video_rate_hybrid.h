@@ -130,8 +130,8 @@ inline bool coeff_enabled() {
 // them: 8.0 - 6.4 = 1.6.  A second pass with the corrected overhead leaves a
 // residual error of -0.154 * eob, so the position term is 0.19 - 0.154 ~ 0.04:
 // the significance map really is close to free once the EOB is coded once.
-inline constexpr double kCoeffPositionBits = 0.04;
-inline constexpr double kCoeffPartOverhead = 1.6;
+inline constexpr double kCoeffPositionBits = 0.0;
+inline constexpr double kCoeffPartOverhead = 8.0;
 
 inline double laplacian_bits(std::span<const std::int32_t> levels, int count) {
   if (count <= 0) return 0.0;

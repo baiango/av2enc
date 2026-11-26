@@ -217,6 +217,15 @@ expensive on the leaves that actually code a residual**, with a one-sided
 residual-versus-skip decision made with this model is biased toward *not*
 coding the residual.
 
+**Adaptivity was tested and does not solve it.** `coeff_exact`, the writer's
+own write-time -log2(p) under the real adaptive contexts, carries the same bias
+as the analytic surrogate (-7.86 vs -9.00 bits at QP198), so the error is not
+"static model vs adaptive model". The cause is a **double-counted position
+term**: `0.5 * eob` charged per coded coefficient on top of the 8.0-bit per-part
+overhead that already covers the significance coding. Setting the position term
+to 0 leaves mean absolute bias 3.0 bits (from 16.0) and saves 1.25 % of the
+bytes at +0.05 dB on 24 frames.
+
 **Correction (measured same day): the bias does *not* reach intra.** The
 guess above was that `estimate_tx_bits` / the Laplacian model prices intra
 coefficients too, so the bias would transfer.  Tested: `src720.png` at QP212
