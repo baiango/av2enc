@@ -181,3 +181,27 @@ The remaining 76 split into two groups, both identified from their messages:
 Cumulative judged across the CLI surface: 207 boolean switches + 65 argument
 options + 39 companion flags + 5 hand-verified + 4 numeric-companion = **all
 boolean switches and argument options, plus 48 of the formally rejected flags**.
+
+## Numeric env gates at a second value (=2)
+
+The reviewer's point was that `=1` cannot judge a numeric gate. Swept 40
+numeric-looking `AV2ENC_*` gates at `=2` against the same baseline:
+
+| class | count |
+|---|---:|
+| EFFECTIVE | 2 |
+| INERT | 38 |
+
+The two that changed: `AV2ENC_RATE_HYBRID_S=2` and `AV2ENC_RATE_INTERVAL=2` --
+both are **mode selectors**, where 2 is a distinct mode rather than "on".
+
+The 38 inert ones are informative in a different way: for a gate that the code
+reads as "enabled if non-zero", `=2` is semantically identical to `=1`, so this
+sweep cannot distinguish them -- which is why the honest statement is not "they
+are dead" but "these gates are boolean in effect, and only genuinely *scalar*
+gates (a few, e.g. `AV2ENC_TX_HF_MASK_DIV`, already value-swept) can be judged by
+varying the value".
+
+So the `=1` limitation is real but narrow: it applies to scalar gates, of which
+the sweep has now value-swept the two that matter on this clip
+(`TX_HF_MASK_DIV=4` and `TX_LAMBDA_TEXTURED=0.2` both EFFECTIVE).
