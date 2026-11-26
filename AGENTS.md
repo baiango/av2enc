@@ -32,7 +32,12 @@ and fixes shared roots directly.
   copy, transcribe, translate, or vendor their source or code snippets. Use the
   AV2 v1.0.0 spec or an original design. `dav2d`/`avmdec` are black-box
   validators only: invoke the binaries, never add their source to the tree.
-- Every stream must pass `tools/validate_dav2d.sh` before it is called working.
+- Validation target: `tools/validate_avmdec.py` (AVM reference decoder). The
+  pinned `dav2d` f9dafbc has known defects (§7.21.6 output drain for a non-key
+  refresh, and a `cpoc != poc` rejection of the spec's explicit
+  `sef_order_hint` form), so streams that use those forms are validated with
+  `avmdec` until the pin moves. `tools/validate_dav2d.sh` remains the gate for
+  flat key+P streams that do not use them.
 - No `cudaMalloc` in hot paths; use `src/cuda/arena.*`.
 - No Blackwell-only instructions (TMA, clusters, `wgmma`/`tcgen05`, FP4).
 - CPU-only mode is a correctness oracle and, on Apple silicon, a

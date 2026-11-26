@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 
+#include "codec/inter/sef/sef.h"
 #include "pipeline/video/video_lpl36.h"
 #include "pipeline/video/video_lpl_refresh.h"
 #include "pipeline/video/video_skip_drift.h"
@@ -2821,6 +2822,65 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
     const int ref_count = static_cast<int>(frame_ref_slots.size());
     if (options.trace && options.implicit_ref_map) {
       trace_implicit_map("P", i, ref_count, frame_ref_slots);
+    }
+    // `AV2ENC_SEF_DUPLICATES=<dB>`: when the source picture is already within
+    // <dB> of the primary reference's reconstruction -- a pulldown duplicate or
+    // a frozen picture -- emit a show-existing-frame OBU instead of an inter
+    // frame.  A SEF carries no tile data (5 B) and refreshes no slot, so the
+    // reference chain, the CDF carry and the slot rotation stay exactly as the
+    // decoder sees them.  Off by default: it changes the stream.
+    //
+    // The header signals `derive_sef_order_hint = 0` with THIS frame's order
+    // hint, so §5.18.2's mixedOutput branch outputs the reference's frame store
+    // as if it carried this display position.  The pinned dav2d refuses that
+    // form (`cpoc != poc`); the spec and AVM's reference decoder accept it.
+    //
+    // Rationale (measured): on a 60-frame pulldown clip the 31 near-duplicate
+    // frames cost 4,072 B (11.7 % of the stream) and are worth 0.038 dB.
+    if (const char* sef_db_env = std::getenv("AV2ENC_SEF_DUPLICATES");
+        sef_db_env != nullptr && !options.film_grain &&
+        !options.lpl_refresh && !options.lpl_refresh_measure &&
+        !frame_ref_slots.empty()) {
+      const double sef_threshold = std::atof(sef_db_env);
+      const int ref_slot = frame_ref_slots.front();
+      const RefSlot& ref = slots[static_cast<std::size_t>(ref_slot)];
+      const double ref_psnr =
+          reference_luma_psnr(ref.plane[0], frames[i],
+                              static_cast<int>(width), static_cast<int>(height));
+      if (ref.valid && ref_psnr >= sef_threshold) {
+        inter::sef::SefParams sef_params;
+        sef_params.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
+        sef_params.order_hint_bits = static_cast<std::uint8_t>(order_hint_bits);
+        sef_params.film_grain_params_present = false;
+        inter::sef::SefHeader sef_header;
+        sef_header.kind = inter::sef::SefKind::kRegular;
+        sef_header.cur_mfh_id = 0;
+        sef_header.seq_header_id = 0;
+        sef_header.frame_to_show_map_idx =
+            static_cast<std::uint8_t>(ref_slot);
+        sef_header.derive_sef_order_hint = false;
+        sef_header.sef_order_hint = order_hint;
+        if (inter::sef::sef_frame_header_bits(sef_params, sef_header) == 0) {
+          error = "P-frame " + std::to_string(i) +
+                  " SEF: header does not fit order_hint_bits";
+          return false;
+        }
+        result.units.push_back(
+            inter::sef::make_sef_temporal_unit(sef_params, sef_header));
+        // The SEF's output picture is the reference's reconstruction, so the
+        // recon stream (and every metric computed from it) matches what a
+        // decoder will emit here.
+        result.recon.push_back(
+            to_recon_frame(ref.plane[0], ref.plane[1], ref.plane[2], width,
+                           height));
+        result.frame_bytes.push_back(
+            static_cast<std::uint32_t>(result.units.back().size()));
+        result.tile_bytes.push_back(0);
+        result.inter_blocks.push_back(0);
+        result.intra_blocks.push_back(0);
+        ++result.sef_duplicate_frames;
+        continue;
+      }
     }
     // §5.18.2 choose_primary_secondary_ref_frame(): only a reference whose
     // FrameType is INTER_FRAME competes for primary_ref_frame.  When none

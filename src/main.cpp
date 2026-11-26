@@ -2296,6 +2296,11 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
               << result.drift_refresh_bytes
               << " B above running mean)";
   }
+  // AV2ENC_SEF_DUPLICATES evidence: near-duplicate inter frames replaced by a
+  // 5-byte show-existing-frame OBU.
+  if (result.sef_duplicate_frames != 0) {
+    std::cout << ", sef duplicate frames " << result.sef_duplicate_frames;
+  }
   if (options.video_tlayer_anchor_residual) {
     std::cout << ", anchor refresh " << result.tlayer_anchor_refresh << "/"
               << result.tlayer_anchor_total << " (" << result.drift_refresh_bytes

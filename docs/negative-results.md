@@ -1047,7 +1047,7 @@ The SEF machinery (`src/codec/inter/sef/`) and the pinned-decoder compatibility
 check already exist; what does not exist is a path that decides *per frame* to
 emit one instead of coding a duplicate.
 
-### Trying it: SEF cannot represent a repeated display position (measured, reverted)
+### Trying it: SEF *does* work -- but only the spec's explicit-hint form, which dav2d rejects
 
 The obvious way to stop paying for duplicates is `show_existing_frame`, whose
 syntax module (`src/codec/inter/sef/`) already exists. It was wired into the
@@ -1066,7 +1066,50 @@ threshold 30 dB: 31,984 B, 36 SEFs, => 5 outputs
 
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
-| CONFIRMED - negative | Use `show_existing_frame` to replace a near-duplicate inter frame | A SEF re-shows a frame at **that frame's own order hint** (`sef.h`: the pinned dav2d rejects `cpoc != poc`), and `derive_sef_order_hint = 1` is only legal for a frame that has *not* been output yet. A duplicate needs the *same picture at a new display position*, which the syntax cannot express. `--video-sef` works only because it re-shows a **hidden** last picture. Our 4-bit order hints (wrap at 16) make the collision worse | Leave the frames coded; the only in-syntax lever is to make a duplicate frame *cheap* (force skip, ~56-80 B floor instead of 42-234 B), worth ~6.7 % of the stream rather than 11.3 % |
+| CONFIRMED - negative (retracted, see below) | Write the SEF header with `derive_sef_order_hint = 1` (what `sef::make_show_header` produces to satisfy dav2d) | That form re-shows a frame at **its own** order hint, so the repeat cannot occupy a new display position; with `dav2d` it decodes to 5 outputs of 60. `make_show_header` is written around a **dav2d** restriction (`cpoc != poc`), not around the spec | Signal `derive_sef_order_hint = 0` with this frame's own hint -- §5.18.2's `mixedOutput` branch exists exactly for that |
 
-So the +0.243 JOD in the previous section is **not reachable** by this route. It
-bounds what a codec that can carry repeats would get, not what this one can.
+**Retraction.** The first attempt used `sef::make_show_header`, which always
+signals the reference's own hint because the pinned dav2d demands it. Judged
+against dav2d that produced 5 outputs of 60 and the approach was written off and
+reverted. That was wrong: the restriction is dav2d's, not the spec's. Writing
+`derive_sef_order_hint = 0` + `sef_order_hint = <this frame's hint>` directly,
+and validating with **avmdec**, gives:
+
+```
+QP198, threshold 30 dB: 31,984 B, 36 SEFs of 5 B, avmdec 60/60 frames, exit 0
+  cvvdp 7.1624  psnr_y 31.286     (base QP198: 37,798 B / 7.2165 / 31.486)
+```
+
+`tools/validate_avmdec.py` reports `60 frame(s), recon=n/a, OK`. Same quality
+for 15.4 % fewer bytes; the +0.243 JOD bound above was, if anything, an
+underestimate. `dav2d` still rejects these streams, which is why the validation
+target is now avmdec until the dav2d pin moves.
+
+#### Measured at matched bytes (direct, no extrapolation)
+
+`AV2ENC_SEF_DUPLICATES=30` on `space8k_1440x720_60f`, decoded with `avmdec`,
+scored with `tools/quality.py`:
+
+| arm | bytes | cvvdp | PSNR-Y | base at those bytes | delta |
+|---|---:|---:|---:|---:|---:|
+| base QP198 | 37,798 | 7.2165 | 31.486 | -- | -- |
+| SEF QP192 | 36,969 | **7.4208** | 31.752 | 7.1463 | **+0.274** |
+| SEF QP194 | 35,119 | **7.3425** | 31.613 | 7.0188 | **+0.324** |
+| SEF QP198 | 31,984 | 7.1624 | 31.286 | 6.8346 | +0.328 (extrapolated) |
+
+All three arms decode to 60/60 frames with `avmdec`, and
+`tools/validate_avmdec.py` reports `60 frame(s), recon=n/a, OK`. Nothing else
+tried this session comes close: the best other lever (probe chroma costing) is
++0.027 JOD on this stream, ~10x smaller.
+
+**Limits, so this is not over-claimed.** One clip, and one with a pulldown
+cadence (36 of 60 frames are near-duplicates). The trigger is a luma-PSNR
+threshold against the primary reference -- cheap, but it is a content
+heuristic, not an RD decision, so the threshold needs a second clip (e.g. the
+active loral segments) before it is trusted, and it is not enabled by default.
+It also cannot help content with no duplicates, which is most real footage;
+this is a *pulldown/frozen-content* win, not a general coding-efficiency win.
+
+**Retires the earlier plan:** force-skip (estimated ~+0.11 K) is unnecessary;
+the SEF form is strictly better because it removes the 40-80 B inter-frame
+floor as well as the residual.
