@@ -102,3 +102,16 @@ code:
 So of the 23, one is now measured live; 7 are inert **by documented design**;
 4 remain unjudged with the reason identified; `P_DRIFT_{LAST,K}` are inert
 while armed on this clip.
+
+## Family arming, pass 4 (`family-arm-pass2.txt`)
+
+| gate | carrier | result |
+|---|---|---|
+| `PIPE_BUDGET_Q_LO` | armed + `SCALE=500` (binding) | **EFFECTIVE**: 18,109 B -> 18,436 B at 7, 18,417 B at 64 |
+| `PIPE_BUDGET_BYTES` | same binding carrier | INERT at 12,000 -- only `BYTES < 0` is consumed (it sets `uniform_control`); a positive count is not the gauge |
+| `RD_TAIL_FLOOR_{MIN,DEPTH,FIRST,LAST}` | 60 frames + `EFF_PERC` (probe ready), MIN 8/16, DEPTH 2, FIRST 7, LAST 7 | still INERT (13,750 B every time) -- the floor prices the tail but does not change these decisions |
+| `P_DRIFT_{LAST,K}` | `alpha=4`, LAST 64, K 7/64 | still INERT (9,987 B) |
+
+So `Q_LO` joins the live list; `BYTES` is inert by construction for positive
+values; the four TAIL_FLOOR gates and `P_DRIFT_{LAST,K}` are inert **while
+armed**, which is a different and stronger statement than "unjudged".
