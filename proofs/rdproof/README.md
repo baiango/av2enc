@@ -152,3 +152,28 @@ residual coding at 608 B per 1440x720 frame — transform and entropy efficiency
 which is not a combinatorial object and cannot be enumerated, modelled or proven
 in Lean. Anyone proposing to "model the encoder in Lean" to recover that 1.2 JOD
 is proposing to formalise signal processing, not to find an optimum.
+
+## Allocation, measured: the theorem's predicted gain is 0.026 dB
+
+`tools/waterfill.py` builds the greedy water-filling plan over measured
+per-frame R-D points (the constructive form of `greedy2_optimal`) and reports it
+against constant QP at the same total bits. On `space8k_1440x720_60f`, three
+QPs (194/198/202), luma SSE per frame:
+
+| plan | bits | total SSE | PSNR |
+|---|---:|---:|---:|
+| constant QP198 | 34,699 | 2.8732e9 | 31.486 dB |
+| **water-filled** | 34,685 | 2.8557e9 | **31.512 dB** |
+| delta | -14 B | **-0.61 %** | **+0.026 dB** |
+
+47 of 60 frames are re-quantised and the whole exercise is worth 0.026 dB.
+
+**So the provably-optimal allocation is worth ~0.03 dB, against a ~1.2 JOD gap
+to SVT.** That settles the allocation question in the negative with a proof
+behind the reference point rather than a heuristic: the P chain's bits are
+already spread nearly optimally, which is consistent with the per-frame shares
+(P 61.8 %, key 38.2 %) and with why TPL's bit-based reallocation lost.
+
+The remaining f0-32 deficit is therefore not allocation and not decisions. It is
+the cost of coding an inter frame at ~608 B: prediction accuracy plus
+residual/transform efficiency. No allocation theorem applies to it.
