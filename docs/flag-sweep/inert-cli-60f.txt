@@ -1,0 +1,56 @@
+--bit-depth	UNCHANGED	still rejected in this mode
+--cdf-continuity	UNCHANGED	still rejected in this mode
+--chroma	UNCHANGED	still rejected in this mode
+--cpu-threads	INERT	inert_cli60(60f)
+--crf	UNCHANGED	still rejected in this mode
+--effort-plan	UNCHANGED	still rejected in this mode
+--frames	EFFECTIVE	inert_cli60(60f)
+--nightly-b	UNCHANGED	still rejected in this mode
+--oppoint	UNCHANGED	still rejected in this mode
+--p-frames	INERT	inert_cli60(60f)
+--recon	UNCHANGED	still rejected in this mode
+--spatial-layers	UNCHANGED	still rejected in this mode
+--still	UNCHANGED	still rejected in this mode
+--still-dc	INERT	inert_cli60(still)
+--still-ddt	UNCHANGED	still rejected in this mode
+--still-deblock	INERT	inert_cli60(still)
+--still-depth	INERT	inert_cli60(still)
+--still-ist-scale	UNCHANGED	still rejected in this mode
+--still-sdp	UNCHANGED	still rejected in this mode
+--still-single	INERT	inert_cli60(still)
+--still-sub8	INERT	inert_cli60(still)
+--still-tx-type	INERT	inert_cli60(still)
+--still-tx-type-scale	UNCHANGED	still rejected in this mode
+--svc-lcr-id	UNCHANGED	still rejected in this mode
+--svc-temporal	UNCHANGED	still rejected in this mode
+--tiles	INERT	inert_cli60(60f)
+--video	INERT	inert_cli60(60f)
+--video-aq-bias	UNCHANGED	still rejected in this mode
+--video-aq-strength	UNCHANGED	still rejected in this mode
+--video-bru	UNCHANGED	still rejected in this mode
+--video-cdef-damping	UNCHANGED	still rejected in this mode
+--video-cfl-ds-filter	INERT	inert_cli60(60f)
+--video-drift-refresh	INERT	inert_cli60(60f)
+--video-drift-refresh-budget	INERT	inert_cli60(60f)
+--video-drift-refresh-qp	INERT	inert_cli60(60f)
+--video-drift-refresh-threshold	INERT	inert_cli60(60f)
+--video-edge-mask	UNCHANGED	still rejected in this mode
+--video-force-single	INERT	inert_cli60(60f)
+--video-gops	INERT	inert_cli60(60f)
+--video-idtx-1d	UNCHANGED	still rejected in this mode
+--video-key-intra-txpart	UNCHANGED	still rejected in this mode
+--video-lossless-intra-period	INERT	inert_cli60(60f)
+--video-max-depth	INERT	inert_cli60(60f)
+--video-me-range	EFFECTIVE	inert_cli60(60f)
+--video-min-block	UNCHANGED	still rejected in this mode
+--video-qp-lambda	INERT	inert_cli60(60f)
+--video-rdoq	UNCHANGED	still rejected in this mode
+--video-recon	INERT	inert_cli60(60f)
+--video-refs	INERT	inert_cli60(60f)
+--video-segments	INERT	inert_cli60(60f)
+--video-tlayer-anchor-residual	UNCHANGED	still rejected in this mode
+--video-tlayer-qp-offsets	UNCHANGED	still rejected in this mode
+--video-tlayer-refresh-budget	UNCHANGED	still rejected in this mode
+--video-tlayer-refresh-threshold	UNCHANGED	still rejected in this mode
+--video-trace	INERT	inert_cli60(60f)
+--vram-cap	INERT	inert_cli60(60f)

@@ -514,3 +514,23 @@ column of this table now rests on at least two independent carrier families
 ### Totals
 
 **558 rows -- 265 EFFECTIVE, 287 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE.**
+
+## CLI switches re-tested on a 60-frame carrier (`inert-cli-60f.txt`)
+
+The 56 INERT CLI switches/options (the non-env rows) were re-run on the
+60-frame carrier, which is the clip shape that uncovered the `RD_TAIL_*` and
+`RDOQ_*` gates:
+
+| result | count |
+|---|---:|
+| **EFFECTIVE** | **2** (`--video-me-range`, `--frames`) |
+| INERT | 25 |
+| not applicable in this mode (rejected by a stated companion) | 29 |
+
+`--video-me-range` is the substantive one: it was inert on the 12-frame clip and
+moves the 60-frame stream. `--frames` changes the clip length by construction,
+so its EFFECTIVE verdict says only that the option acts.
+
+### Totals so far
+
+**558 rows -- 267 EFFECTIVE, 285 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE.**

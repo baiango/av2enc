@@ -13,7 +13,7 @@ name	surface	verdict	evidence
 --effort	option	EFFECTIVE	explicit-table(still, 10)
 --effort-plan	switch	INERT	resolve3(still)
 --fast-decode	switch	EFFECTIVE	per-mode(video+still)
---frames	option	INERT	resolve(other)
+--frames	option	EFFECTIVE	inert_cli60(60f)
 --gpu-plan	option	OWN-WRITER-OK	final8(dry run: prints a 4x2 tile plan, writes no stream)
 --lossless	switch	OWN-WRITER-OK	still+table
 --lossless-fsc	switch	EFFECTIVE	resolve(lossless)
@@ -179,7 +179,7 @@ name	surface	verdict	evidence
 --video-lossless-b	switch	OWN-WRITER-OK	final7(79,344 B at -o; --qp 0 without the flag is refused, so no like-for-like baseline)
 --video-lossless-intra-period	option	INERT	per-mode(args)
 --video-max-depth	option	INERT	per-mode(args)
---video-me-range	option	INERT	per-mode(args)
+--video-me-range	option	EFFECTIVE	inert_cli60(60f)
 --video-mfh	switch	EFFECTIVE	comp3
 --video-mhccp	switch	EFFECTIVE	comp3
 --video-min-block	option	INERT	per-mode(args)
