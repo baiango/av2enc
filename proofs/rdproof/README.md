@@ -348,3 +348,28 @@ helped" is not evidence that no subset helps. Measured consequence, on
 DIP. So the best configuration found is **+0.033 JOD** (8% of the AVM gap), from
 `--video-dip --video-ibp`, and the probe of tools is *not* closed — only the
 singleton sweep is.
+
+## Cap.lean — can it be proved that fixing coefficient-dense regions closes the gap?
+
+No. What we have is **concentration** (edge blocks 1.37 dB short, flat 0.74; top
+10 % of blocks hold 39 % of the SSE gap). Closing the cap needs **confinement**
+plus **sufficiency**, and neither is measurable:
+
+- confinement bounds every *other* mechanism's gain — a quantification over
+  tools we do not have, which no measurement discharges;
+- sufficiency is certifiable only constructively: build the better coder and
+  show it reaches the target.
+
+The file proves the two facts that make the tempting argument unsound:
+
+- `share_does_not_bound_gain` — a region can hold 70 % of a 100-unit deficit
+  while fixing it recovers 20;
+- `fixing_the_biggest_bucket_need_not_close` — so "most of the deficit is in
+  coefficient-dense blocks" can be true while "fixing them closes the gap" is
+  false.
+
+**What replaces it** is a necessary condition worth computing
+(`necessary_bit_reduction`): the deficit is equivalent to ~41 % rate, so for the
+coefficient path alone to close it, that path must deliver **1 − 1/1.41 = 29 %
+fewer bits at equal distortion** in those blocks. That is falsifiable, and only
+by building it.

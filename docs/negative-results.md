@@ -1536,3 +1536,16 @@ each ranked at its own bytes against the shipped curve:
 PSNR-Y is identical (24.489) across all six -- the axis moves chroma only, so the
 CVVDP movement is purely the perceptual weighting of chroma error. The shipped
 default is the best of the seven points, so this axis is closed.
+
+## Can "fixing coefficient-dense regions closes the cap" be proved?
+
+No, and the reason is structural: the evidence is concentration, the claim needs
+confinement + sufficiency. `proofs/rdproof/Cap.lean` proves the tempting argument
+is unsound -- a region can hold 70 % of a 100-unit deficit while fixing it
+recovers 20, so "most of the deficit is in coefficient-dense blocks" does not
+imply "fixing them closes the gap".
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| PROVEN | Argue closure from the deficit's distribution | `Cap.share_does_not_bound_gain`: concentration does not bound achievable gain | Use the necessary condition: the coefficient path must save **29 % of its bits at equal distortion** (1 - 1/1.41, from the +41 %-rate equivalent) to close the cap alone |
+| NOT PROVABLE | Expect a non-constructive proof of closure | Sufficiency quantifies over mechanisms we do not have, and AVM is a black box | Build the better coefficient coder and measure whether it reaches 29 %; that certificate proves it *for that mechanism*, never that no other mechanism would also close it |
