@@ -321,3 +321,30 @@ Recipe per tool:
 
 What none of these can do is refute the tool *set*; every certificate lives
 inside the space the tools express.
+
+## Lack.lean — can it be proved what av2enc lacks?
+
+Only the constructive direction. If encoding with tool `T` is cheaper at matched
+rate, the encoder without `T` lacks the value of `T`, and the certificate is the
+stream. "av2enc lacks `X`, and `X` is why it is 0.394 JOD behind AVM" additionally
+needs that no other mechanism gives the same gain — a quantification over an open
+space, which no measurement discharges.
+
+**The hole it proves:** the six-tool sweep tested each tool *alone*.
+`singleton_elimination_is_not_compositional` exhibits a cost function where both
+tools are neutral alone and the pair is strictly better, so "none of the six
+helped" is not evidence that no subset helps. Measured consequence, on
+`src720.png` at matched bytes:
+
+| arm | Δ vs baseline |
+|---|---:|
+| dip alone | +0.024 |
+| **dip + ibp** | **+0.033** |
+| dip + ist | +0.032 |
+| dip + idtx | +0.027 |
+| dip + mrl | -0.004 |
+
+`ist` and `ibp` are individually negative and still add ~+0.008 each on top of
+DIP. So the best configuration found is **+0.033 JOD** (8% of the AVM gap), from
+`--video-dip --video-ibp`, and the probe of tools is *not* closed — only the
+singleton sweep is.

@@ -1462,3 +1462,27 @@ relax the gate, record `node.is_inter` instead of forcing 1, add an intra scope
 to the report, and fill `rate_diag` for intra leaves in the decision. Until that
 exists, "our coefficient contexts are worse than AVM's" is a hypothesis, not a
 measurement.
+
+### Tool combinations: singletons do not bound subsets (measured)
+
+`ist` and `ibp` are individually negative on the still, yet on top of DIP:
+
+| arm | bytes | cvvdp | base @ those bytes | delta |
+|---|---:|---:|---:|---:|
+| dip | 23,017 | 7.1477 | 7.1239 | +0.024 |
+| **dip+ibp** | 23,156 | 7.1645 | 7.1315 | **+0.033** |
+| dip+ist | 23,029 | 7.1565 | 7.1246 | +0.032 |
+| dip+idtx | 23,023 | 7.1510 | 7.1243 | +0.027 |
+| dip+mrl | 23,891 | 7.1677 | 7.1717 | -0.004 |
+
+Best configuration now on record: `--video-dip --video-ibp`, **+0.033 JOD** at
+matched bytes (8 % of the 0.394 JOD AVM gap).
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| PROVEN + measured | Conclude "no tool helps" from a singleton sweep | `Lack.singleton_elimination_is_not_compositional`: tools interact; `ist`/`ibp` are negative alone and positive on top of DIP | Measure subsets, at least the DIP-paired ones; the space is 2^6 from 6 switches and only 10 of 63 subsets have been run |
+
+Also worth recording: the first attempt at these four runs failed with "multiple
+input files specified" because zsh does not word-split an unquoted `$args`.
+Flags must be written literally or as an array -- a repeat of the same trap
+noted earlier in this project.
