@@ -772,6 +772,8 @@ lambda * plan_rate_bits`). Gate-off is byte-identical on all four pins.
 
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
+Bracket and second-QP confirmation (same clip): weight 16 -> 6.9472 (+0.107), weight 32 -> 6.9634 (+0.123). The curve saturates between w8 (+0.110) and w32 (+0.123), and w16 dipping to +0.107 shows those differences are inside the cross-run ripple, so the plateau is **~+0.11 to +0.12** from w8 upward. At a second QP point (**QP190**, baseline 21,431 B / 7.4873) weight 8 still wins but smaller: 7.5516 at matched bytes, **+0.064**. So the lever is positive at two QPs and on two clips, and decays with rate.
+
 | **KEEP — positive, both clips** | Price partition nodes on luma only | Adding the chroma term is worth **+0.11 JOD on space8k and +0.08 on loral at matched bytes**, and the gain grows monotonically with the weight (1 → 4 → 8: +0.072 / +0.097 / +0.110). The probe was making split decisions blind to the plane that the `-23` chroma offset makes most expensive per bit | `AV2ENC_PART_PROBE_CHROMA=8` is the measured best of the swept weights; weights 16/32 were not swept, so the peak is not yet bracketed |
 
 Note the loral point is a small extrapolation (72 B beyond the upper bracket
