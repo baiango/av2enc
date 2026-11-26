@@ -94,21 +94,19 @@ name	surface	verdict	evidence
 --still-user-qm	switch	EFFECTIVE	still+table/still
 --still-uv-full	switch	EFFECTIVE	still+table/still
 --still-wiener	switch	EFFECTIVE	still+table/still
---svc-embedded	option	REJECTED	argsweep(2 values)
+--svc-embedded	option	EFFECTIVE	resolve2(svc carrier, value 2)
 --svc-inter-layer	switch	REJECTED	comp5/still
 --svc-layers	option	EFFECTIVE	resolve(svc, x0=480x240)
---svc-lcr-id	option	REJECTED	argsweep(2 values)
---svc-temporal	option	REJECTED	argsweep(2 values)
+--svc-lcr-id	option	INERT	resolve2(svc carrier, value 1)
+--svc-temporal	option	INERT	resolve2(svc carrier, value 1)
 --tiles	option	INERT	per-mode(args)
 --video	switch	INERT	per-mode(video+still)
---video):	switch	REJECTED	still+table
 --video-adaptive-mvd	switch	EFFECTIVE	comp3
 --video-aq	switch	EFFECTIVE	comp3
 --video-aq-bias	option	REJECTED	argsweep(2 values)
 --video-aq-clamp	option	REJECTED	argsweep(2 values)
 --video-aq-strength	option	REJECTED	argsweep(2 values)
 --video-bawp	switch	EFFECTIVE	per-mode(video+still)
---video-bawp):	switch	REJECTED	still+table
 --video-bawp-carrier	switch	EFFECTIVE	per-mode(video+still)
 --video-brt	switch	EFFECTIVE	flip(nightly)
 --video-bru	switch	REJECTED	plain-rejudge
@@ -195,7 +193,6 @@ name	surface	verdict	evidence
 --video-olk	switch	REJECTED	plain-rejudge
 --video-opfl	switch	EFFECTIVE	hand-batch
 --video-palette	switch	EFFECTIVE	comp3
---video-palette/--video-ibc/--video-morph	switch	REJECTED	still+table
 --video-partition-rd	switch	EFFECTIVE	per-mode(video+still)
 --video-partition-rd-depth	option	REJECTED	argsweep(2 values)
 --video-partition-rd-lambda	option	EFFECTIVE	argsweep(2 values)

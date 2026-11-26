@@ -147,3 +147,39 @@ the encoder's own message, e.g. `--video-olk requires --video-...`,
 Every row now reads exactly one of `EFFECTIVE`, `INERT`, `OWN-WRITER-OK` or
 `REJECTED` (the `EFFECTIVE+COMP`, `NO-TABLE-ENTRY` and `FAILED` spellings are
 gone). Final table: **527 rows -- 202 EFFECTIVE, 259 INERT, 1 OWN-WRITER-OK, 65 REJECTED, 0 duplicates.**
+
+## Resolution attempt 2 (`rejected-resolution2.txt`) and the final totals
+
+A value-ladder pass (trying each option against 20 plausible documented values,
+then one round of companion resolution) ran over the 62 remaining rejected
+options:
+
+```
+--svc-embedded   EFFECTIVE (svc carrier, value 2)   60,551 B
+--svc-lcr-id     INERT     (svc carrier, value 1)
+--svc-temporal   INERT     (svc carrier, value 1)
+```
+
+The rest still reject, and the messages say why in each case:
+`--bitrate requires --rc vbr`, `--crf requires --rc crf`,
+`--effort must be an integer in [10, 10000]`, `--cpu-used is calibrated for
+--still only`, `--b-frames --video-gops 1 codes 1 closed GOP(s)`. Those need a
+hand-written invocation per option (a specific companion **and** a value that
+satisfies that companion's own domain), which the ladder does not discover.
+
+The three non-names (`--video):`, `--video-bawp):`,
+`--video-palette/--video-ibc/--video-morph`) are **dropped from the inventory**:
+they are help-scraper fragments, never options.
+
+### Final totals
+
+| verdict | rows |
+|---|---:|
+| EFFECTIVE | **203** |
+| INERT | **261** |
+| OWN-WRITER-OK | 1 |
+| REJECTED (with the encoder's message) | **59** |
+| **total** | **524** |
+
+0 duplicate names. The 59 rejections are carried as such, not converted into
+inert verdicts by inference.

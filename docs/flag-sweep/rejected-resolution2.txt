@@ -1,0 +1,46 @@
+--b-frames	REJECTED	av2enc: error: --b-frames --video-gops 1 codes 1 closed GOP(s): pass e
+--bitrate	REJECTED	av2enc: --bitrate requires --rc vbr
+--cpu-used	REJECTED	av2enc: --effort/--cpu-used is calibrated for --still only; there is n
+--crf	REJECTED	av2enc: --crf requires --rc crf
+--effort	REJECTED	av2enc: --effort must be an integer in [10, 10000] (log scale)
+--effort-plan	REJECTED	av2enc: multiple input files specified
+--gpu-plan	REJECTED	av2enc: --gpu-plan is a host-planning dry run; do not combine it with 
+--nightly-b	REJECTED	av2enc: multiple input files specified
+--oppoint	REJECTED	av2enc: --svc-* requires --svc-layers x0=WxH[,x1=WxH,...]
+--rc	REJECTED	av2enc: --rc must be cqp, crf or vbr
+--recon	REJECTED	av2enc: error: --recon is wired for the --bit-depth 10 and --chroma fo
+--spatial-layers	REJECTED	av2enc: select at most one of --oppoint, --alllayers or --spatial-laye
+--still-ccso-bands	REJECTED	av2enc: --still-ccso-bands requires --still-ccso
+--still-cdef-strengths	REJECTED	av2enc: --still-cdef-strengths requires --still-cdef
+--still-ddt	REJECTED	av2enc: multiple input files specified
+--still-delta-q-res	REJECTED	av2enc: --still-delta-q-res requires --still-delta-q
+--still-gpu	REJECTED	av2enc: multiple input files specified
+--still-ibc-search	REJECTED	av2enc: error: --still-ibc-search requires --still-ibc
+--still-ist-scale	REJECTED	av2enc: --still-ist-scale requires --still-ist
+--still-qm-level	REJECTED	av2enc: --still-qm-level requires --still-qm
+--still-rdo-scale	REJECTED	av2enc: --still-rdo-scale requires --still-rdo-intra
+--still-rdoq-scale	REJECTED	av2enc: --still-rdoq-scale requires --still-rdoq
+--still-sdp	REJECTED	av2enc: multiple input files specified
+--still-seg-delta	REJECTED	av2enc: error: --still-seg-delta requires --still-per-segment-q
+--still-tcq-scale	REJECTED	av2enc: --still-tcq-scale requires --still-tcq
+--still-tx-type-scale	REJECTED	av2enc: --still-tx-type-scale requires --still-tx-type
+--svc-embedded	EFFECTIVE	value 2 (60551 B)
+--svc-inter-layer	REJECTED	av2enc: --svc-inter-layer is not a conforming AV2 v1.0.0 feature: §6.8
+--svc-lcr-id	INERT	value 1 (18876 B)
+--svc-temporal	INERT	value 1 (18876 B)
+--video-aq-bias	REJECTED	av2enc: --video-aq-strength/--video-aq-clamp/--video-aq-bias require -
+--video-aq-clamp	REJECTED	av2enc: --video-aq-strength/--video-aq-clamp/--video-aq-bias require -
+--video-aq-strength	REJECTED	av2enc: --video-aq-strength/--video-aq-clamp/--video-aq-bias require -
+--video-bru	REJECTED	av2enc: multiple input files specified
+--video-cdef-damping	REJECTED	av2enc: Video P-frame encode complete
+--video-cdef-search	REJECTED	av2enc: --video-cdef-search must be full, ladder, step or fast
+--video-delta-q-res	REJECTED	av2enc: --video-delta-q-res requires --video-delta-q or --video-aq
+--video-gpu	REJECTED	av2enc: multiple input files specified
+--video-idtx-1d	REJECTED	av2enc: multiple input files specified
+--video-leading	REJECTED	av2enc: error: --video-leading: leading + regular frames exceed the 8 
+--video-lossless-b	REJECTED	av2enc: multiple input files specified
+--video-mv-precision	REJECTED	av2enc: --video-mv-precision must be eighth, quarter or half
+--video-num-ref-frames	REJECTED	av2enc: --video-num-ref-frames must be an integer in [4, 8]
+--video-olk	REJECTED	av2enc: multiple input files specified
+--video-partition-rd-depth	REJECTED	av2enc: --video-partition-rd-depth requires --video-partition-rd
+--video-ras	REJECTED	av2enc: multiple input files specified
