@@ -915,3 +915,33 @@ lost detail. Source flat alternation is 0.504 (Y) / 0.300 (U).
 | **CONFIRMED 2026-11-25** | Copy the full reconstruction (and MV/JOINT/UV grids) per tree node in the key prune "because a trial must be undone" | The grids are never written by a trial leaf and the syntax buffers are append-only, so the copies were pure work; removing them is byte-identical | Snapshot only what a trial reads or writes (`intra_joint_`, superblock state, block count); restore recon in place |
 | **CONFIRMED 2026-11-25** | Cache the §5.20.7.30 diagonal scan in `uv_rd::trellis_plan` (it is regenerated per chroma candidate for the same `(tx_size, class)`) | Byte-identical but **1.003x** (19.575 -> 19.51 s median, 4 interleaved reps): the scan build is a few hundred integer writes, invisible next to the forward transform and the RDOQ model it sits behind | Leave it; a `get_scan` cost in a profile is a leaf attribution, not a lever today (`docs/cpu-speed-720p-still.md` §5) |
 | **CONFIRMED 2026-11-25** | Vectorise the inverse-transform column pass with a transposed intermediate (contiguous taps) | Exact for every shape (prototype: bit-identical over square and rectangular sizes) and 1.3-1.6x on the isolated inner loop, but the pass is only ~9 % of the still and too short for that to show: **1.005x** end to end (16.87 -> 16.785 s median, 4 interleaved reps) | Not landed.  A micro-benchmark win on a 1-2 % general step is not a lever here; the measured levers were the RDOQ trellis/scratch and the key prune's copies |
+
+## Why f0-32 inter frames cost too much: measured drift, and why refreshing does not pay
+
+Diagnosed 2026-11-26 on `space8k_1440x720_60f` at QP198, per-frame luma PSNR:
+
+```
+f0   33.60 dB (key, 13,465 B)   f9   31.60 dB (646 B)   f59  30.62 dB (625 B)
+f1   33.66 dB (duplicate)       f11  31.43 dB (632 B)
+f4   32.53 dB (new content, 520 B)
+```
+
+Two facts fall out:
+
+1. **Duplicates inherit their reference's error exactly** (f1 33.66 ~ f0 33.60,
+   f5 ~ f4, f7 ~ f6). A skip frame costs ~100 B and re-codes nothing.
+2. **PSNR decays monotonically, ~3 dB over the chain.** Each new-content frame is
+   coded coarsely on top of an already-degraded reference, so inherited error is
+   never repaid.
+
+That is exactly what `--video-drift-refresh` targets, so it was measured.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Expect `--video-drift-refresh` with its defaults to help | The default `drift_refresh_qp = 0` codes the refresh residual at the *same* QP, so nothing resets: the stream is **byte-identical** (`320bdd55`) while the log still prints "drift refresh frames 8 (1587 extra payload bytes)". A no-op default plus a **reporting bug** (requests counted, not applied). The 1,200 B default budget also rejects every refresh on this content; 8,000 B saturates at 11 frames | Set `--video-drift-refresh-qp` and raise `--video-drift-refresh-budget` |
+| CONFIRMED - negative | Pay to refresh the chain at this rate | With a real QP drop the stream changes, but matched bytes loses: base 36,813 B / 7.1331 and 37,798 B / 7.2165, against refresh qpdrop10 37,952 B / **7.1489** and qpdrop16 38,704 B / 7.1615. Base interpolated to 37,952 B is **7.2295**, so the refresh arm is **-0.08 JOD**; at 36,813 B it is a tie | At ~608 B per frame, paying to reset the chain costs about what the reset saves. The deficit is structural: refresh (costly) or drift (free, but the error persists) |
+
+**Untested follow-up this suggests:** the pulldown cadence makes ~40 % of frames
+near-duplicates under 1,000 bits. A refresh scheduled on a content-change frame
+(already expensive) rather than on a PSNR threshold may be much cheaper. Not
+measured; do not cite as a lever.
