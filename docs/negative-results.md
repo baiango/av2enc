@@ -1852,3 +1852,34 @@ returns the scalar levels.
 | RETRACTED | "RDOQ cannot reach intra; the fix belongs in `encode_intra_luma_tx_partition`" | It is already wired there via `search_luma_tx`, with `level` defaulting true |
 | CONFIRMED | `--video-rdoq-off` changes nothing on the still | Measured, md5-identical |
 | OPEN (next) | Instrument the `intra_rdoq` branch inside `search_luma_tx` | That branch must be shown to run and to change levels before any quality claim |
+
+## RDOQ on intra: both RDOQ-capable paths are bypassed (trace evidence)
+
+Instrumented the enable chain (`video_tx_search.cpp:977`) and the `compute_tx`
+RDOQ entry, then forced the key-intra exact stage on (temporary
+`AV2ENC_KEY_INTRA_TX_PART` hook, since `enable_key_intra_tx_part` has **no CLI
+option** and defaults false -- video_frame.h:344).
+
+| experiment | result |
+|---|---|
+| still QP212, `--video-rdoq-off` on/off | md5 **identical** every time (`e2e739e3...`, 25,168 B) |
+| `search_luma_tx` enable chain, key frame | `rdoq=0 use_tcq=0 opt_rdoq=0 intra_rdoq=0 ok=0` -- **every term false** |
+| with exact stage forced on | same all-zero trace |
+| `compute_tx` RDOQ engage counter | `ENGAGED=0`, `model.init FAILED=0` |
+| intra-luma `compute_tx` calls (earlier trace) | **0** |
+
+So the key frame's luma plan is produced by a path that is neither
+`search_luma_tx`-with-RDOQ nor `compute_tx`-with-RDOQ. Both RDOQ-capable entries
+are bypassed, which is why six different fixes (call-site flag, `is_inter` gate,
+`info.is_inter`, `kcfg.level`, `allow_rdoq` at 3599, exact-stage force) all
+produced byte-identical output.
+
+| Status | Meaning |
+|---|---|
+| CONFIRMED (evidence) | `enable_key_intra_tx_part` defaults false and is **not reachable from the CLI** | Even forcing it internally does not enable RDOQ, so it is necessary but not sufficient |
+| CONFIRMED (evidence) | The `search_luma_tx` chain receives all-false flags on the key frame | RDOQ is not requested at that entry |
+| OPEN (blocker) | **Which function produces the key frame's final luma TxPlan** | Until that is identified, no RDOQ edit can engage. Cheapest probe: a one-line log in the key luma writer printing the producing function name, or `--video-trace` if it already names the TX path |
+
+All code edits reverted; tree clean. Six attempted fixes, zero effect, all
+explained by the same fact: the instrumented entries are not the ones coding a
+key frame's luma.
