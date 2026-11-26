@@ -357,3 +357,28 @@ allowance is `AV2ENC_PIPE_BUDGET_SCALE` thousandths, which binds at 500
 
 So the nine gates carried as inert/unjudged are all live. The only silent no-op
 found in the whole sweep remains `AV2ENC_RD_JOINT_P`.
+
+## RETRACTION: AV2ENC_RD_JOINT_P is not a silent disable (see JOINT.md)
+
+The one candidate the sweep reported as a silent no-op was an artefact of the
+same harness error that produced the pipe-budget verdict. The trace I based it
+on ran **without** the gate set, so `armed=0` was trivial. With
+`AV2ENC_RD_JOINT_P=1` actually set, `armed=1` on every inter frame; only
+`pipe_probe_ready_` is false, and that is populated by `plan_pass()` under
+`pipe_perc::enabled() || eff_perc::enabled() || pipe_ba::enabled()`.
+
+```
+AV2ENC_EFF_PERC=1                     10,026 B
+AV2ENC_EFF_PERC=1 AV2ENC_RD_JOINT_P=1 10,074 B   (joint-trace result=1)
+```
+
+The gate fires and changes the stream. The warning now names the missing
+companion instead of asserting the gate "cannot fire".
+
+**Conclusion for the objective: no silent disable exists in av2enc.** Every
+candidate, across 207 boolean switches, 65 argument options, 232 env gates, 21
+scalar gates, 97 formerly-rejected flags and the pipe-budget / joint-plan
+arming chains, turned out to be a switch whose companion, mode or carrier was
+unset. The recurring shape: *a switch whose companion is unset behaves exactly
+like a switch that does nothing* -- a diagnostics problem, addressed by the
+warnings in 4dbe3af0 and this pass, not a correctness bug.

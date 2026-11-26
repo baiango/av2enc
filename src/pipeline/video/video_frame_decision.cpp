@@ -873,23 +873,39 @@ bool InterFrameEncoder::decide(std::string& error) {
                    options_.tip_block_ref ? 1 : 0, tile_w_, tile_h_,
                    pipe_probe_ready_ ? 1 : 0);
     }
-    // Flag-sweep finding: --nightly and --nightly-b both set
-    // AV2ENC_RD_JOINT_P=1 and its own comment credits it with +0.68 K, but on
-    // the default path it never fires: the feature exclusions all pass while
-    // `armed` and `probe_ready` are false, and nothing says so.  Warn once
-    // instead of silently ignoring the preset's intent.
+    // Flag-sweep finding: AV2ENC_RD_JOINT_P=1 on its own does nothing, and
+    // nothing said so.  It is not unreachable -- it needs the shared pipe probe
+    // built, which requires one of AV2ENC_EFF_PERC / AV2ENC_PIPE_PERC /
+    // AV2ENC_PIPE_BA (plan_pass builds pipe_probe_ and sets
+    // pipe_probe_ready_ only under that guard).  With AV2ENC_EFF_PERC=1 the
+    // solve fires and the stream changes (240p 12-frame nightly: 10,026 ->
+    // 10,074 B).  Say which companion is missing instead of failing quietly.
     if (!joint_p && !keyframe_ && !joint_plan_off_) {
       const char* joint_env = std::getenv("AV2ENC_RD_JOINT_P");
       const bool requested = joint_env != nullptr && joint_env[0] != '0';
       static bool joint_warned = false;
       if (requested && !joint_warned) {
         joint_warned = true;
-        std::fprintf(stderr,
-                     "av2enc: warning: AV2ENC_RD_JOINT_P is set but the joint "
-                     "solve cannot fire here (armed=%d probe_ready=%d); the "
-                     "preset is not doing what this gate claims.\n",
-                     joint_plan::armed(arming_ordinal()) ? 1 : 0,
-                     pipe_probe_ready_ ? 1 : 0);
+        if (!joint_plan::armed(arming_ordinal())) {
+          std::fprintf(stderr,
+                       "av2enc: warning: AV2ENC_RD_JOINT_P is set but this "
+                       "picture is outside the armed ordinal range "
+                       "(AV2ENC_RD_JOINT_P_FIRST/LAST); the joint solve is "
+                       "not running.\n");
+        } else if (!pipe_probe_ready_) {
+          std::fprintf(stderr,
+                       "av2enc: warning: AV2ENC_RD_JOINT_P is set but the "
+                       "joint solve needs the shared pipe probe, which is only "
+                       "built when AV2ENC_EFF_PERC, AV2ENC_PIPE_PERC or "
+                       "AV2ENC_PIPE_BA is enabled; set one of those or the "
+                       "gate does nothing.\n");
+        } else {
+          std::fprintf(stderr,
+                       "av2enc: warning: AV2ENC_RD_JOINT_P is set but the "
+                       "joint solve is excluded for this configuration (sdp, "
+                       "force-single, palette, ibc, qp-tools, tcq, tip or a "
+                       "tile smaller than the frame).\n");
+        }
       }
     }
     // The exclusion used to be `!qp_tools_active()`, which switched the whole
