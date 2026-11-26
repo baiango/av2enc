@@ -378,3 +378,45 @@ path, and there it writes its dump and leaves the stream byte-identical.
 The three remaining rows are blocked by the build or the format, not by arming:
 two CUDA-only switches on a CPU reference build, and one option for a syntax the
 AV2 v1.0.0 spec does not define.
+
+## Env gates derived from call sites, and the 454-name reconciliation
+
+The env surface was rebuilt from **read sites in `src`**, not from the help or a
+name pattern:
+
+```python
+getenv("AV2ENC_...")                       -> 190 names
+env_int/env_positive/env_number("AV2ENC_...") ->  88 names
+union (real read sites)                    -> 276 names
+```
+
+**The 454 figure counted non-gates.** Of the 454 distinct `AV2ENC_*` tokens in
+`src`, 178 are not environment variables at all:
+
+| token class | count | example |
+|---|---:|---|
+| include guards | 96 | `AV2ENC_CLI_OPTIONS_H`, `AV2ENC_CUDA_CFL_H_` |
+| syntax/table constants | 65 | `AV2ENC_CDEF_HD`, `AV2ENC_ADD_CDF` |
+| names only in comments | 17 | mentions in doc comments |
+
+276 + 178 = 454. **Every one of the 276 real read sites now has a verdict**:
+`env-baseline` covered 231, the scalar and integer passes covered 55, and this
+pass swept the **34 that had never been run** at 0.5 and 4.0 on two carriers (a
+plain nightly baseline and one with EFF_PERC, PIPE_BA, PIPE_PERC, RD_TAIL_FLOOR,
+PART_DIAG, P_DRIFT, RD_SEQTREE, TPL and RD_DRIVER all armed):
+
+| gate | verdict |
+|---|---|
+| `EFF_PERC_CHROMA` | **EFFECTIVE** (armed, 0.5 and 4.0) |
+| `PIPE_BA_LAMBDA`, `PIPE_BA_WEIGHT` | **EFFECTIVE** |
+| `PIPE_LPL_DEEP`, `PIPE_LPL_REFRESH` | **EFFECTIVE** (even on the plain carrier) |
+| `P_DRIFT_ALPHA` | **EFFECTIVE** |
+| `RD_DRIVER_EDGE`, `RD_DRIVER_HF` | **EFFECTIVE** |
+| the other 26 (incl. `JOINT_TRACE`, `RDOQ_TRACE`, the `*_HF`/`*_EDGE`/`*_LAMBDA` knobs of unarmed families) | INERT at both values on both carriers |
+
+**Eight more live gates**, all previously unwatched — the same pattern as every
+other family in this sweep: the read site existed, the coverage list did not.
+
+### Totals
+
+**558 rows -- 243 EFFECTIVE, 309 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE.**
