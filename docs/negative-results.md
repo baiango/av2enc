@@ -945,3 +945,32 @@ That is exactly what `--video-drift-refresh` targets, so it was measured.
 near-duplicates under 1,000 bits. A refresh scheduled on a content-change frame
 (already expensive) rather than on a PSNR threshold may be much cheaper. Not
 measured; do not cite as a lever.
+
+## Cross-encoder decomposition: where a stronger encoder's advantage lives
+
+Measured 2026-11-26 with `tools/oracle.py` on `space8k_1440x720_60f` (60 f),
+matched at 294.5 kbps. `SvtAv1EncApp --preset 0 --crf 63` codes the same clip to
+**36,165 B / cvvdp 8.2317 / PSNR-Y 34.64 dB** against av2enc QP200
+**36,813 B / 7.1331 / 31.49 dB**: **+1.10 JOD and +3.1 dB in 648 fewer bytes**.
+
+Cross-candidate replacement (substitute one segment of OUR decoded stream with
+SVT's decoded frames; base K 44.886):
+
+| segment | dK with SVT frames | dK with perfect source |
+|---|---:|---:|
+| key f0 | +0.93 | +1.81 |
+| **f0-32** | **+6.48** | +18.28 |
+| f33-43 | +2.19 | +5.52 |
+| f44-59 | +2.34 | +7.18 |
+
+**Pooling bounds, not encodable streams**: they say where the quality deficit
+lives, not what a fix would buy.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Attribute the cross-encoder gap to allocation, key funding or decision optimality | All three are measured and excluded: water-filling is worth +0.026 dB, every decision lever <= 0.03 JOD, and substituting SVT's KEY buys only +0.93 K (less than our own key's +1.81 headroom) | Inter frame coding in f0-32, worth +6.48 K of the gap |
+| CONFIRMED | Expect AVM/AVM-class ceilings to be provable | AVM is a black box by policy and no AVM encoder binary exists here (metrics-only JSONs in `bench/avm_baseline`). "Why is theirs higher" is a claim about two artifacts, not a proposition with a proof; even our own optimality is only a conditional bound | Use SVT as a runnable black-box reference and attribute by segment, as above |
+
+**The triangulation is the result.** Three independent methods put the deficit in
+the same place: the source ceiling (+18.28 on f0-32), the per-frame bit split
+(P already holds 61.8 % of the stream), and cross-encoder replacement (+6.48 K).
