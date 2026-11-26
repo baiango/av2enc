@@ -1142,3 +1142,27 @@ Interpolated to matched bytes:
 
 Note this is intra-only, so it is untouched by the SEF-duplicate win (that needs
 inter frames). Both findings are independent.
+
+## Intra gap diagnostic: the search and allocation are closed; coefficient pricing is not
+
+Method: `Pricing.lean` (proofs/rdproof) bounds the loss a mispriced decision can
+cause at `2 * n * e` bits, where `e` is the per-leaf model error. So measuring
+`e` decides whether the intra deficit is a decision problem or a tool problem.
+
+`AV2ENC_RATE_HYBRID_S_MEASURE=1`, 24 inter frames at QP198, 7,577 leaves:
+
+| term | predicted | actual | bias | p90 abs |
+|---|---:|---:|---:|---:|
+| mode syntax | 4.199 | 4.203 | -0.00 | **0.77** |
+| coefficients (residual leaves, n=245) | **51.27** | **36.96** | **+14.32** | **26.57** |
+| coefficients (all leaves) | 1.658 | 1.195 | +0.46 | 0.00 |
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Look for the intra deficit in partitioning or search | `--video-min-block 4` (25,905 B), `--video-max-depth 6` (25,168 B, identical), `--video-ext-partitions` (25,729 B) are all >= the 25,168 B baseline at QP212, and `RdProof` already proves the tree optimal given its candidates | Fix the coefficient rate model: it prices a coding residual **39% too high**, one-sidedly, so every residual-versus-skip and fine-versus-coarse comparison is biased toward not coding |
+| OPEN | Assume the coefficient bias is intra-specific or inter-specific | The measurement is on inter leaves only -- the writer's rate report is gated to `plan_.inter_frame` | Enable the report for key frames and re-measure |
+
+Note the bias is **one-sided (positive)**, which matters: a symmetric error
+mostly cancels in comparisons, a positive one systematically discourages
+residual coding. The mode-syntax model shows what a good model looks like
+(p90 0.77 bits).

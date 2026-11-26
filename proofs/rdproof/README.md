@@ -177,3 +177,70 @@ already spread nearly optimally, which is consistent with the per-frame shares
 The remaining f0-32 deficit is therefore not allocation and not decisions. It is
 the cost of coding an inter frame at ~608 B: prediction accuracy plus
 residual/transform efficiency. No allocation theorem applies to it.
+
+## Pricing.lean — is the intra gap a mispriced decision or a missing tool?
+
+`RdProof` closes the search (the chosen tree is optimal given the candidates) and
+`RdAlloc` closes the allocation (+0.026 dB). Neither explains the measured
+intra deficit (0.147 JOD at 25 KB on `src720.png`). `Pricing.lean` splits what
+is left into the only two remaining buckets.
+
+**The bound.** The encoder minimises an additive price over independent leaves;
+the truth is what the range coder spends. If every leaf is priced within `e`
+bits of its true cost, then for the chosen coding `c` and any alternative `a`
+
+    sumTrue c ≤ sumTrue a + 2 * nerr e c          (pricing_gap_bound)
+
+where `nerr e l` is `l.length * e`. So a decision that is optimal under the
+model can miss the true optimum by at most **twice the total mispricing** — and
+`e = 0` (an exact model) makes it truly optimal
+(`exact_model_is_true_optimal`), which retires tuning as a lever.
+
+**Consequence for the decision we face.** Measure `e`. If it is small, the
+deficit is *model error* (syntax/tools) and no decision change can close it; if
+it is large, fixing the model is a bounded, provable gain.
+
+### What the measurement says
+
+`AV2ENC_RATE_HYBRID_S_MEASURE=1` records the actual range-coder bits per leaf
+next to the decision's prediction. On 24 inter frames at QP198 (7,577 leaves):
+
+| term | leaves | predicted | actual | bias | p90 abs |
+|---|---:|---:|---:|---:|---:|
+| mode syntax (`syntax_new`) | 7,577 | 4.199 | 4.203 | -0.00 | **0.77** |
+| coefficients, residual leaves | 245 | **51.27** | **36.96** | **+14.32** | **26.57** |
+| coefficients, all leaves | 7,577 | 1.658 | 1.195 | +0.46 | 0.00 |
+
+Mode syntax is priced almost exactly. The **coefficient model is ~39% too
+expensive on the leaves that actually code a residual**, with a one-sided
+(positive) bias. That is the shape the bound cares about: every
+residual-versus-skip decision made with this model is biased toward *not*
+coding the residual.
+
+The same `estimate_tx_bits` / Laplacian-magnitude model prices intra
+coefficients, so the bias is expected to transfer — but that is an argument,
+not a measurement; the writer's rate report is gated to `plan_.inter_frame`, so
+intra leaves are not recorded yet. Enabling it for key frames is the first step
+to confirming it.
+
+### Intra frontier probe (same day, all at QP212 on `src720.png`)
+
+| setting | bytes |
+|---|---:|
+| baseline `--nightly` | 25,168 |
+| `--video-min-block 4` | 25,905 |
+| `--video-max-depth 6` | 25,168 (identical — depth cap not binding) |
+| `--video-ext-partitions` | 25,729 |
+| both (`min-block 4` + `max-depth 6`) | 34,025 |
+
+No partitioning setting is cheaper at the same QP, so intra is at its frontier
+for the tree it searches: consistent with `RdProof`, and consistent with the
+deficit coming from coefficient pricing rather than decisions.
+
+### Scope
+
+`Pricing.lean` is a bound, not an estimate. It says nothing about *how* to make
+the coefficient model exact, and nothing about which tool SVT has that we lack.
+It converts "we are 0.147 JOD behind" into "how much of that is mispricing",
+which is answerable by measurement — and the measurement now says most of the
+observable model error is in coefficients.
