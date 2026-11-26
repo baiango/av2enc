@@ -139,6 +139,49 @@ inline double edge_gain() {
   return env_double("AV2ENC_RD_DRIVER_EDGE", 0.0);
 }
 
+// AV2ENC_TX_LAMBDA_TEXTURED (default 0 = off): scale the KEY leaf TX lambda by
+// leaf texture content.  Unlike every arm in docs/k52-budget-pipe.md §8, this
+// SPENDS precision instead of trading it for rate: a textured leaf gets a
+// SMALLER lambda, so its RD cost prefers finer coefficient levels.  The
+// candidate set and the syntax are unchanged; only the price changes.
+//
+// docs/k52-budget-pipe.md §4 measured 75.7% of our extra luma error against the
+// reference encoder in high-activity blocks, where our 1-px band error is 1.70x
+// the reference's against 1.43x in flat blocks -- the textured leaves are where
+// the accuracy deficit lives, so they are where a lower lambda can pay.
+//
+// The value is the fractional lambda REDUCTION applied at full activity ratio
+// (0.25 = a leaf at 2x the picture's mean activity searches at 0.75x lambda);
+// the reduction is clamped to [0, 0.75] and the ratio is capped at 4x.  0 is
+// byte-identical to the historical lambda at every leaf.
+inline double& g_tx_lambda_textured_mut() {
+  static double value = [] {
+    const char* v = std::getenv("AV2ENC_TX_LAMBDA_TEXTURED");
+    if (v == nullptr || *v == '\0') return 0.0;
+    char* end = nullptr;
+    const double parsed = std::strtod(v, &end);
+    if (end == v || !std::isfinite(parsed) || parsed <= 0.0) return 0.0;
+    return parsed > 0.75 ? 0.75 : parsed;
+  }();
+  return value;
+}
+// The per-leaf multiplier the encoder publishes before each key leaf search.
+// 1.0 is the historical value.
+inline double& g_tx_lambda_leaf_scale_mut() {
+  static double value = 1.0;
+  return value;
+}
+// The picture's mean 1-px activity, published once per frame by the encoder
+// (video_frame_decision.cpp `publish_hf_mask_reference`).  0 when unset.
+inline double& hf_mask_reference_mut() {
+  static double value = 0.0;
+  return value;
+}
+inline void set_hf_mask_reference(double value) {
+  hf_mask_reference_mut() = value > 0.0 ? value : 0.0;
+}
+inline double hf_mask_reference() { return hf_mask_reference_mut(); }
+
 // The lambda the key leaf's own TX plan search minimises with: the key TX RD
 // gate (AV2ENC_RD_KEY_TX, docs/rd-lane3.md) prices the plan at
 // `key_tx_rd_lambda * tx_scale` with tx_scale = 0.25 by default.  That constant

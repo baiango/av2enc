@@ -384,6 +384,10 @@ add_library(av2enc_core STATIC
   src/pipeline/video/video_frame_filters.cpp
   src/pipeline/video/video_frame_write.cpp
   src/pipeline/video/video_frame_sequence.cpp
+  # AV2ENC_PIPE_BUDGET: budget-closed per-superblock allocation (its own
+  # frame/leaf loops; the decision walk itself lives in
+  # video_frame_decision.cpp because the leaf body is the coder's own).
+  src/pipeline/video/video_pipe_budget.cpp
   # Format video core (10-bit 4:2:0/4:2:2/4:4:4/4:0:0 and 8-bit 4:2:2/4:4:4/
   # 4:0:0).  The CPU reference and the shared orchestration live here; the CUDA
   # backend is under src/cuda/pipeline/video/hbd/.

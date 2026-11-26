@@ -205,4 +205,10 @@ struct Result {
             const std::uint8_t* prediction, const Options& options,
             Result* out, std::string& error);
 
+// AV2ENC_TX_HF_MASK_CONTENT: the picture's mean 1-px activity (mean squared
+// 3x3 high-pass of the source luma).  The encoder publishes it once per frame;
+// the search uses it to split flat from textured blocks for the per-block
+// high-frequency mask.  0 (the default) keeps the unconditional mask.
+void set_hf_mask_reference(double value);
+
 }  // namespace av2enc::video::txtsearch

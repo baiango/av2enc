@@ -1767,11 +1767,17 @@ ParseStatus validate_options(Options& options, std::string& error) {
       // the raw base_q_idx §8.3.1 CDF slice, so a per-superblock delta-Q
       // qindex is consistent.  Segmentation changes the quantizer through
       // ALT_Q, which the trellis model does not replay.
-      if (options.video_segmentation || options.video_per_segment_q ||
-          options.video_uv_delta_q) {
+      // --video-uv-delta-q is NOT in this list: the trellis quantises each
+      // plane against the caller's own PlaneQuantStep, and the UV delta only
+      // changes that step (get_q(q, u_ac) / get_q(q, v_ac)), so the trellis
+      // already replays it.  The old guard lumped it in with ALT_Q, which is a
+      // genuinely different quantiser the trellis cannot price; that made
+      // per-plane chroma steps unreachable under --nightly-b (which always
+      // sets RDOQ) and cost the arm entirely.
+      if (options.video_segmentation || options.video_per_segment_q) {
         error = "--video-rdoq does not compose with segmentation/"
-                "--video-uv-delta-q: the trellis does not replay the "
-                "§7.14.2 ALT_Q or per-plane step";
+                "--video-per-segment-q: the trellis does not replay the "
+                "§7.14.2 ALT_Q";
         return ParseStatus::kError;
       }
       if (options.video_lossless || options.qp == 0) {

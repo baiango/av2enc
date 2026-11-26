@@ -1092,6 +1092,13 @@ class Writer {
     const char* decision_dump = std::getenv("AV2ENC_DECISION_DUMP");
     decision_dump_active_ = decision_dump != nullptr && *decision_dump != '\0';
     if (decision_dump_active_) decision_dump_path_ = decision_dump;
+    if (const char* eob_dump = std::getenv("AV2ENC_EOB_DUMP")) {
+      eob_dump_active_ = *eob_dump != '\0';
+      if (eob_dump_active_) {
+        eob_dump_path_ = eob_dump;
+        std::fprintf(stderr, "eob-dump: %s\n", eob_dump);
+      }
+    }
     cost_meter_.active = census_active_ ||
                          std::getenv("AV2ENC_SYMBOL_COST") != nullptr ||
                          rate_interval::detail::stats_enabled();
@@ -1517,6 +1524,27 @@ class Writer {
     RawScope& operator=(const RawScope&) = delete;
   };
   bool append_census(std::size_t payload_bytes);
+
+  // AV2ENC_EOB_DUMP (diagnosis only, default off): one JSON line per TXB that
+  // codes an EOB, so the 'eob' census bucket can be reconciled at the
+  // granularity it is actually charged at.  Records nothing that affects a
+  // decision, and the file is opened only when the variable is set.
+  struct EobRecord {
+    int txb_index = 0;
+    int plane = 0;
+    int eob = 0;
+    int eob_pt = 0;
+    int cdf_n = 0;
+    int multisize = 0;
+    int extra_symbols = 0;   // eob_extra CDF symbols coded (0 or 1)
+    int raw_extra_bits = 0;  // raw eob_extra bits
+    int escape_bits = 0;     // escape literal width when eob_pt > cdf_n
+    double priced_bits = 0.0;  // -log2(p) charged to the 'eob' bucket
+  };
+  void record_eob_txb(const EobRecord& record);
+  bool eob_dump_active_ = false;
+  std::string eob_dump_path_;
+  std::size_t eob_dump_written_ = 0;
   void dump_decision(const BlockSyntax& node) const;
   // R09 (AV2ENC_RATE_HYBRID_S[_MEASURE]) report: accumulate the write-time
   // -log2(p) of the inter syntax symbols by group.  `rate_tag_` is set around

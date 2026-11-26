@@ -101,6 +101,96 @@ inline const bool g_dump_dead_zone = [] {
   return on;
 }();
 
+// AV2ENC_TX_HF_MASK_CONTENT: gate the mask per block on that block's own
+// residual high-frequency activity against the frame reference.
+inline const bool g_tx_hf_mask_content = [] {
+  const char* v = std::getenv("AV2ENC_TX_HF_MASK_CONTENT");
+  return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+}();
+inline double& g_tx_hf_mask_ref_mut() {
+  static double value = 0.0;
+  return value;
+}
+inline double g_tx_hf_mask_ref() { return g_tx_hf_mask_ref_mut(); }
+inline const double g_tx_hf_mask_thresh_scale = [] {
+  const char* v = std::getenv("AV2ENC_TX_HF_MASK_SCALE");
+  if (v == nullptr || *v == '\0') return 1.0;
+  char* end = nullptr;
+  const double parsed = std::strtod(v, &end);
+  if (end == v || parsed == 0.0 || !std::isfinite(parsed)) return 1.0;
+  return parsed;
+}();
+inline const bool g_tx_hf_mask_above = [] {
+  const char* v = std::getenv("AV2ENC_TX_HF_MASK_POLARITY");
+  return v != nullptr && std::strcmp(v, "above") == 0;
+}();
+// AV2ENC_TX_DZ_TEXTURED (default 0 = off): content-adaptive dead-zone.
+inline double g_tx_dz_textured_storage = [] {
+  const char* v = std::getenv("AV2ENC_TX_DZ_TEXTURED");
+  if (v == nullptr || *v == '\0') return 0.0;
+  char* end = nullptr;
+  const double parsed = std::strtod(v, &end);
+  if (end == v || !std::isfinite(parsed) || parsed <= 0.0) return 0.0;
+  return parsed > 0.49 ? 0.49 : parsed;
+}();
+inline double& g_tx_dz_textured_mut() { return g_tx_dz_textured_storage; }
+
+// AV2ENC_RDOQ_REFINE_RECON (default off): after the trellis picks levels, run
+// a closed-loop +-1/+-2 level pass scored by the ACTUAL reconstruction error
+// (integer dequant + inverse transform) instead of the trellis's
+// per-coefficient transform-domain model.
+inline const bool g_rdoq_refine_recon = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_REFINE_RECON");
+  return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+}();
+// AV2ENC_RDOQ_REFINE_CALIBRATE: diagnosis only, reports the pixel-vs-transform
+// distortion ratio so the refine lambda can be calibrated.
+inline const bool g_rdoq_refine_calibrate = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_REFINE_CALIBRATE");
+  return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+}();
+// Counters behind AV2ENC_RDOQ_REFINE_STATS (diagnosis only).
+inline long long& g_refine_calls() { static long long v = 0; return v; }
+inline long long& g_refine_rdoq() { static long long v = 0; return v; }
+inline long long& g_refine_entered() { static long long v = 0; return v; }
+inline long long& g_refine_changed() { static long long v = 0; return v; }
+// AV2ENC_RDOQ_REFINE_INSERT (default off): let the refine pass turn an
+// interior zero level into +-1 and flip a level's sign.  Without it the search
+// can only shrink non-zero levels, which is why it moved 2 of 78,723 TXBs --
+// the trellis's local optimum is already a local optimum of that restricted
+// move set.  Insertion is where a pixel-domain objective actually disagrees
+// with the transform-domain trellis (one coefficient spreads over the block).
+inline const bool g_rdoq_refine_insert = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_REFINE_INSERT");
+  return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+}();
+// AV2ENC_RDOQ_REFINE_STATS: diagnosis only, prints how many calls reached the
+// refine pass and how many TXBs it actually changed.
+inline const bool g_rdoq_refine_stats = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_REFINE_STATS");
+  if (v == nullptr || *v == '\0' || std::strcmp(v, "0") == 0) return false;
+  static const bool installed = [] {
+    std::atexit([] {
+      std::fprintf(stderr,
+                   "refine-stats calls=%lld use_rdoq=%lld entered=%lld "
+                   "changed_txb=%lld\n",
+                   g_refine_calls(), g_refine_rdoq(), g_refine_entered(),
+                   g_refine_changed());
+    });
+    return true;
+  }();
+  (void)installed;
+  return true;
+}();
+// AV2ENC_RDOQ_REFINE_LAMBDA: independent scale on the refine pass's lambda.
+inline const double g_rdoq_refine_lambda = [] {
+  const char* v = std::getenv("AV2ENC_RDOQ_REFINE_LAMBDA");
+  if (v == nullptr || *v == '\0') return 1.0;
+  char* end = nullptr;
+  const double parsed = std::strtod(v, &end);
+  if (end == v || !std::isfinite(parsed) || parsed <= 0.0) return 1.0;
+  return parsed;
+}();
 // AV2ENC_RDOQ_ZERO_TO_ONE: let a coefficient whose scalar level rounded to
 // zero try a non-zero level in the trellis.  The scalar quantiser in
 // tx_variants.cpp is lround(coeff * quant_factor), which hard-zeroes anything
@@ -683,7 +773,41 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   // which for div=2 is the highest-frequency quarter in each axis (the 8x8
   // (4..7,4..7) corner, where the checkerboard basis lives).  div=0 is the
   // historical behaviour and reproduces every pin exactly.
-  if (hf_mask_div >= 2) {
+  bool mask_this_block = hf_mask_div >= 2;
+  if (mask_this_block && g_tx_hf_mask_content && g_tx_hf_mask_ref() > 0.0) {
+    double hp = 0.0;
+    int hp_n = 0;
+    for (int y = 0; y < leaf_h; ++y) {
+      for (int x = 0; x < leaf_w; ++x) {
+        int low = 0;
+        int used = 0;
+        for (int dy = -1; dy <= 1; ++dy) {
+          for (int dx = -1; dx <= 1; ++dx) {
+            const int sy = y + dy;
+            const int sx = x + dx;
+            if (sy < 0 || sy >= leaf_h || sx < 0 || sx >= leaf_w) continue;
+            low += coded[static_cast<std::size_t>(sy) *
+                             static_cast<std::size_t>(leaf_w) +
+                         static_cast<std::size_t>(sx)];
+            ++used;
+          }
+        }
+        const double d =
+            static_cast<double>(
+                coded[static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(leaf_w) +
+                      static_cast<std::size_t>(x)]) -
+            static_cast<double>(low) / static_cast<double>(used);
+        hp += d * d;
+        ++hp_n;
+      }
+    }
+    const double act = hp_n > 0 ? hp / static_cast<double>(hp_n) : 0.0;
+    const double thresh =
+        g_tx_hf_mask_ref() * std::abs(g_tx_hf_mask_thresh_scale);
+    mask_this_block = g_tx_hf_mask_above ? (act >= thresh) : (act <= thresh);
+  }
+  if (mask_this_block) {
     const int r_lo = params.w / hf_mask_div;
     const int c_lo = params.h / hf_mask_div;
     for (int y = 0; y < params.h; ++y) {
@@ -699,6 +823,39 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     }
   }
   std::int32_t* levels = scratch.levels;
+  double dz = 0.0;
+  if (g_tx_dz_textured_mut() > 0.0 && g_tx_hf_mask_ref() > 0.0) {
+    double hp = 0.0;
+    int hp_n = 0;
+    for (int y = 0; y < leaf_h; ++y) {
+      for (int x = 0; x < leaf_w; ++x) {
+        int low = 0;
+        int used = 0;
+        for (int dy = -1; dy <= 1; ++dy) {
+          for (int dx = -1; dx <= 1; ++dx) {
+            const int sy = y + dy;
+            const int sx = x + dx;
+            if (sy < 0 || sy >= leaf_h || sx < 0 || sx >= leaf_w) continue;
+            low += coded[static_cast<std::size_t>(sy) *
+                             static_cast<std::size_t>(leaf_w) +
+                         static_cast<std::size_t>(sx)];
+            ++used;
+          }
+        }
+        const double d =
+            static_cast<double>(
+                coded[static_cast<std::size_t>(y) *
+                          static_cast<std::size_t>(leaf_w) +
+                      static_cast<std::size_t>(x)]) -
+            static_cast<double>(low) / static_cast<double>(used);
+        hp += d * d;
+        ++hp_n;
+      }
+    }
+    if (hp_n > 0 && hp / static_cast<double>(hp_n) >= g_tx_hf_mask_ref()) {
+      dz = g_tx_dz_textured_mut();
+    }
+  }
   for (int i = 0; i < area; ++i) {
     const int q = i == 0 ? dcq : acq;
     const double factor = scaled / static_cast<double>(q);
@@ -706,7 +863,12 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
         use_ddt ? static_cast<double>(coeff_i[static_cast<std::size_t>(i)])
                 : coeff[static_cast<std::size_t>(i)];
     const double x = source * factor;
-    const std::int32_t level = static_cast<std::int32_t>(std::lround(x));
+    std::int32_t level = 0;
+    if (dz <= 0.0) {
+      level = static_cast<std::int32_t>(std::lround(x));
+    } else if (x > 0.5 + dz || x < -(0.5 + dz)) {
+      level = static_cast<std::int32_t>(std::lround(x));
+    }
     levels[static_cast<std::size_t>(i)] = level;
     if (g_dump_dead_zone) {
       DeadZoneDump& d = dead_zone_dump();
@@ -800,9 +962,19 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   // The trellis returns syntax levels, so the reconstruction below and the
   // syntax writer see exactly the same coefficients.
   double rdoq_level_bits = -1.0;
-  const bool intra_rdoq_ok = is_inter || options.intra_rdoq;
+  // AV2ENC_RDOQ_REFINE_RECON: the refine pass needs the trellis's level set as
+  // its seed, so enabling it also enables the intra-level trellis (the key
+  // call site hardcodes intra_rdoq=false).  Without this the refine block was
+  // unreachable on a key picture and every lambda measured byte-identical.
+  const bool intra_rdoq_ok =
+      is_inter || options.intra_rdoq || g_rdoq_refine_recon;
   const bool use_rdoq = rdoq && !use_tcq && options.rdoq && intra_rdoq_ok &&
                         dcq == acq && tx_type <= 9 && !use_ddt;
+  // AV2ENC_RDOQ_REFINE_STATS (diagnosis only): count how often each gate on the
+  // path to the refine pass is reached, so a byte-identical arm can be told
+  // apart from an unreachable one.
+  if (g_rdoq_refine_stats) ++g_refine_calls();
+  if (g_rdoq_refine_stats && use_rdoq) ++g_refine_rdoq();
   if (use_rdoq) {
     const std::span<std::int32_t> scalar_scan(
         scratch.aux, static_cast<std::size_t>(area));
@@ -942,6 +1114,195 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
           result.levels[static_cast<std::size_t>(c)];
     }
     rdoq_level_bits = result.rate_bits;
+    if (g_rdoq_refine_recon && result.eob > 0 && dcq == acq &&
+        tx_type <= 9 && !use_ddt) {
+      if (g_rdoq_refine_stats) ++g_refine_entered();
+      const double lam_refine =
+          av2enc::rdo::lambda_sse_from_quant_step(
+              static_cast<double>(acq) / scaled, options.rdoq_sse_scale) *
+          g_rdoq_refine_lambda;
+      std::int32_t* lv = levels;
+      std::int32_t* dqbuf = scratch.dequant;
+      std::int16_t* rbuf = scratch.recon;
+      // Seed copy for the acceptance counter (diagnosis only).
+      std::int32_t seed_levels[64];
+      const int seed_n = std::min(result.eob, 64);
+      for (int i = 0; i < seed_n; ++i) seed_levels[i] = lv[i];
+      // AV2ENC_RDOQ_REFINE_CALIBRATE (diagnosis only): measure, for this block,
+      // the ratio between the two objectives' DISTORTION scales so the refine
+      // lambda can be calibrated instead of guessed.
+      //   transform-domain distortion the trellis minimises:
+      //       sum_i (coeff_i - level_i*step)^2
+      //   pixel-domain SSE this pass minimises:
+      //       sum_p (recon_p - residual_p)^2
+      // They differ by the inverse transform's energy gain, so one lambda
+      // cannot price both.  Report sum_ratio = sum(pixel_sse)/sum(txd) over the
+      // block, plus the lambda each domain would need.
+      if (g_rdoq_refine_calibrate) {
+        double txd = 0.0;
+        for (int i = 0; i < area; ++i) {
+          const int q = i == 0 ? dcq : acq;
+          const double step = static_cast<double>(q) / scaled;
+          const double src =
+              use_ddt ? static_cast<double>(coeff_i[static_cast<std::size_t>(i)])
+                      : coeff[static_cast<std::size_t>(i)];
+          const double rec =
+              static_cast<double>(lv[static_cast<std::size_t>(i)]) * step;
+          const double d = src - rec;
+          txd += d * d;
+        }
+        // pixel-domain SSE of the same levels
+        double px = 0.0;
+        for (int i = 0; i < area; ++i) {
+          const int q = i == 0 ? dcq : acq;
+          const std::int32_t l = lv[static_cast<std::size_t>(i)];
+          const std::int32_t aqv = l < 0 ? -l : l;
+          const std::int32_t high = (aqv * q) & 0xFFFFFF;
+          const std::int32_t dq =
+              txv::round2(high, txv::kQuantTableBits) / params.dq_denom;
+          dqbuf[static_cast<std::size_t>(i)] =
+              std::max(-(1 << 15),
+                       std::min((1 << 15) - 1, l < 0 ? -dq : dq));
+        }
+        txv::inverse_block(dqbuf, params, rbuf);
+        for (int i = 0; i < coded_n; ++i) {
+          const std::int64_t d =
+              static_cast<std::int64_t>(rbuf[static_cast<std::size_t>(i)]) -
+              coded[static_cast<std::size_t>(i)];
+          px += static_cast<double>(d * d);
+        }
+        static long long n = 0;
+        static double sum_txd = 0.0, sum_px = 0.0;
+        sum_txd += txd;
+        sum_px += px;
+        ++n;
+        if ((n % 500) == 0) {
+          std::fprintf(stderr,
+                       "refine-calib n=%lld sum_txd=%.4e sum_px=%.4e "
+                       "ratio=%.4f\n", n, sum_txd, sum_px,
+                       sum_txd > 0.0 ? sum_px / sum_txd : 0.0);
+        }
+      }
+      const auto recon_sse = [&]() -> std::int64_t {
+        for (int i = 0; i < area; ++i) {
+          const int q = i == 0 ? dcq : acq;
+          const std::int32_t l = lv[static_cast<std::size_t>(i)];
+          const std::int32_t aq = l < 0 ? -l : l;
+          const std::int32_t high = (aq * q) & 0xFFFFFF;
+          const std::int32_t dq =
+              txv::round2(high, txv::kQuantTableBits) / params.dq_denom;
+          dqbuf[static_cast<std::size_t>(i)] =
+              std::max(-(1 << 15),
+                       std::min((1 << 15) - 1, l < 0 ? -dq : dq));
+        }
+        txv::inverse_block(dqbuf, params, rbuf);
+        std::int64_t sse = 0;
+        for (int i = 0; i < coded_n; ++i) {
+          const std::int64_t d =
+              static_cast<std::int64_t>(rbuf[static_cast<std::size_t>(i)]) -
+              coded[static_cast<std::size_t>(i)];
+          sse += d * d;
+        }
+        return sse;
+      };
+      // Full-block rate: re-price the WHOLE scan in order, carrying the
+      // prev-abs state chain.  A single-symbol delta misses the context change
+      // a modified level causes at the NEXT position, which under-prices the
+      // candidate and inflates the stream.
+      const auto block_rate = [&]() -> double {
+        double bits = 0.0;
+        std::int32_t prev = 0;
+        for (int c2 = 0; c2 < result.eob; ++c2) {
+          const std::int32_t l =
+              lv[static_cast<std::size_t>(scan[static_cast<std::size_t>(c2)])];
+          const int eob_flag = (c2 == result.eob - 1) ? 1 : 0;
+          const double b = av2enc::rdoq::av2::Model::coefficient_rate(
+              &model, c2, prev, l, 0, eob_flag);
+          bits += std::isfinite(b) ? b : 0.0;
+          prev = std::min(std::abs(l), config.prev_level_cap);
+        }
+        return bits;
+      };
+      const double base_bits = block_rate();
+      std::int64_t best_sse = recon_sse();
+      double best_rate = base_bits;
+      bool changed = true;
+      for (int iter = 0; iter < 8 && changed; ++iter) {
+        changed = false;
+        for (int c = 0; c < result.eob; ++c) {
+          const std::size_t pos = scan[static_cast<std::size_t>(c)];
+          const std::int32_t before = lv[pos];
+          // Magnitudes +-1 and +-2 (the objective is not convex in the level).
+          for (int delta : {-1, 1, -2, 2}) {
+            const std::int32_t cand = before + delta;
+            if (cand == before) continue;
+            if (!g_rdoq_refine_insert) {
+              if ((delta > 0 && before == 0)) continue;  // no 0 -> 1 (pins)
+              if (cand < 0 && before >= 0) continue;  // sign flips not searched
+              if (cand > 0 && before < 0) continue;
+            } else if (before == 0) {
+              // Insertion: only magnitude 1 is meaningful from a zero level.
+              if (delta != 1 && delta != -1) continue;
+            }
+            // The scan's last non-zero coefficient defines the EOB; dropping
+            // it is a syntax change, so leave the final position alone.
+            if (c == result.eob - 1 && cand == 0) continue;
+            lv[pos] = cand;
+            const std::int64_t sse = recon_sse();
+            const double rate = block_rate();
+            const double j = static_cast<double>(sse) + lam_refine * rate;
+            const double j_best =
+                static_cast<double>(best_sse) + lam_refine * best_rate;
+            if (j < j_best) {
+              best_sse = sse;
+              best_rate = rate;
+              changed = true;
+            } else {
+              lv[pos] = before;
+            }
+          }
+        }
+        // Pairwise pass: a single coefficient often cannot pay for itself, but
+        // two adjacent ones changing together can (the classic EOB/run pair).
+        for (int c = 0; c + 1 < result.eob; ++c) {
+          const std::size_t pa = scan[static_cast<std::size_t>(c)];
+          const std::size_t pb = scan[static_cast<std::size_t>(c + 1)];
+          const std::int32_t ba = lv[pa];
+          const std::int32_t bb = lv[pb];
+          for (int da : {-1, 1}) {
+            for (int db : {-1, 1}) {
+              if (da > 0 && ba == 0) continue;
+              if (db > 0 && bb == 0) continue;
+              const std::int32_t na = ba + da;
+              const std::int32_t nb = bb + db;
+              if (na < 0 || nb < 0) continue;
+              if (c + 1 == result.eob - 1 && nb == 0) continue;
+              lv[pa] = na;
+              lv[pb] = nb;
+              const std::int64_t sse = recon_sse();
+              const double rate = block_rate();
+              const double j = static_cast<double>(sse) + lam_refine * rate;
+              const double j_best =
+                  static_cast<double>(best_sse) + lam_refine * best_rate;
+              if (j < j_best) {
+                best_sse = sse;
+                best_rate = rate;
+                changed = true;
+              } else {
+                lv[pa] = ba;
+                lv[pb] = bb;
+              }
+            }
+          }
+        }
+      }
+      bool txb_changed = false;
+      for (int i = 0; i < seed_n; ++i) {
+        if (lv[i] != seed_levels[i]) { txb_changed = true; break; }
+      }
+      if (txb_changed) ++g_refine_changed();
+    }
+
   }
 
   // Real §8.3 coefficient rate for candidate selection under --video-rdoq.
@@ -1516,6 +1877,10 @@ bool scan_coefficient_bits(std::int32_t tx_size, std::int32_t tx_type,
                            /*tcq=*/false, /*txb_skip_ctx=*/0,
                            /*dc_sign_ctx=*/0, plane, scratch, slice,
                            out_bits);
+}
+
+void set_hf_mask_reference(double value) {
+  g_tx_hf_mask_ref_mut() = value > 0.0 ? value : 0.0;
 }
 
 }  // namespace av2enc::video::txtsearch
