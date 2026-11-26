@@ -17,7 +17,8 @@ Surfaces: `switch` (boolean CLI switch), `option` (argument-taking CLI option),
 | boolean CLI switches | **197** | `flip/result.txt` (207 entries, 6 of them scraper duplicates and 3 non-names: see below) |
 | argument-taking options | **65** | `arg-baseline.txt`, no duplicates, no punctuation |
 | environment gates | **231** | `env-baseline.txt` -- 231 verdict lines, 231 distinct names |
-| **total** | **493** | one row per distinct name |
+| integer env gates (call-site derived) | **34** | `int-gates-pass1/2`, `family-arm-pass1/2` |
+| **total** | **527** | one row per distinct name |
 
 ### Two corrections this table forced
 
