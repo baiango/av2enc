@@ -1,0 +1,853 @@
+plain baseline 18845 B md5 de0fe01b07ee302cd29bbf3b2f8d7236
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --metadata-frame-hash
+PLAIN-REJECTED --adaptive-cdf;
+PLAIN-REJECTED --lossless
+PLAIN-REJECTED --alllayers
+PLAIN-REJECTED --effort-plan
+PLAIN-REJECTED --lossless-fsc
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-ccso
+PLAIN-REJECTED --nightly-b
+PLAIN-REJECTED --still-ccso-bands
+PLAIN-REJECTED --no-deblock
+PLAIN-REJECTED --still-ccso-edge
+PLAIN-REJECTED --no-cfl
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-cdef-strengths
+PLAIN-REJECTED --still-cdef-on-skip-txfm
+PLAIN-REJECTED --still-cfl-explicit
+PLAIN-REJECTED --still-cdef
+PLAIN-REJECTED --still-cctx
+PLAIN-REJECTED --still-chroma-lr
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-content-interpretation
+PLAIN-REJECTED --still-full-intra
+PLAIN-REJECTED --still-dc
+PLAIN-REJECTED --still-dc-ac-delta-q
+PLAIN-REJECTED --still-deblock
+PLAIN-REJECTED --still-ddt
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-gdf
+PLAIN-REJECTED --still-ibp
+PLAIN-REJECTED --still-delta-q
+PLAIN-REJECTED --still-ext-partitions
+PLAIN-REJECTED --still-dip
+PLAIN-REJECTED --still-delta-q-res
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-ist
+PLAIN-REJECTED --still-ibc
+PLAIN-REJECTED --still-gpu)
+PLAIN-REJECTED --still-grain-adaptive
+PLAIN-REJECTED --still-grain
+PLAIN-REJECTED --still-idtx
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-pc-wiener
+PLAIN-REJECTED --still-ist-scale
+PLAIN-REJECTED --still-palette
+PLAIN-REJECTED --still-mrl
+PLAIN-REJECTED --still-mhccp
+PLAIN-REJECTED --still-rdoq
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-per-segment-q
+PLAIN-REJECTED --still-rdo-scale
+PLAIN-REJECTED --still-qm
+PLAIN-REJECTED --still-qm-level
+PLAIN-REJECTED --still-rdo-intra
+PLAIN-REJECTED --still-rdoq-scale
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-sdp
+PLAIN-REJECTED --still-sb128
+PLAIN-REJECTED --still-seg-delta
+PLAIN-REJECTED --still-sub8
+PLAIN-REJECTED --still-sb256
+PLAIN-REJECTED --still-segmentation
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-tx-type
+PLAIN-REJECTED --still-tcq-scale
+PLAIN-REJECTED --still-single
+PLAIN-REJECTED --still-tcq
+PLAIN-REJECTED --still-tx-partition
+PLAIN-REJECTED --still-uv-full
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --still-tx-type-scale
+PLAIN-REJECTED --still;
+PLAIN-REJECTED --video):
+PLAIN-REJECTED --svc-inter-layer
+PLAIN-REJECTED --still-user-qm
+PLAIN-REJECTED --still-wiener
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-bawp):
+PLAIN-REJECTED --video-ccso-bands
+PLAIN-REJECTED --video-bru
+PLAIN-REJECTED --video-compound
+PLAIN-EFFECTIVE --video-adaptive-mvd
+PLAIN-EFFECTIVE --video-aq
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-compound-wedge
+PLAIN-REJECTED --video-compound-near-near
+PLAIN-REJECTED --video-compound-diffwtd
+PLAIN-EFFECTIVE --video-decoder-model
+PLAIN-EFFECTIVE --video-delta-q
+PLAIN-EFFECTIVE --video-compound-interintra
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-cwp-weighted
+PLAIN-REJECTED --video-force-integer-mv
+PLAIN-REJECTED --video-head-tx
+PLAIN-REJECTED --video-force-single)
+PLAIN-REJECTED --video-drl-reorder-always)
+PLAIN-EFFECTIVE --video-flex-mvres
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-idtx-1d
+PLAIN-REJECTED --video-gpu
+PLAIN-REJECTED --video-imp-mask
+PLAIN-EFFECTIVE --video-ibc
+PLAIN-EFFECTIVE --video-gme
+PLAIN-EFFECTIVE --video-implicit-ref-map
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-lossless
+PLAIN-REJECTED --video-lossless-b
+PLAIN-REJECTED --video-key-qp-offset
+PLAIN-EFFECTIVE --video-mfh
+PLAIN-EFFECTIVE --video-long-term
+PLAIN-EFFECTIVE --video-mhccp
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-mv-traj
+PLAIN-REJECTED --video-mvd-sign-derive
+PLAIN-REJECTED --video-palette/--video-ibc/--video-morph
+PLAIN-REJECTED --video-mv-precision
+PLAIN-EFFECTIVE --video-multi-sequence
+PLAIN-EFFECTIVE --video-morph
+tr: illegal option -- ;
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-olk
+PLAIN-REJECTED --video-qm).
+PLAIN-REJECTED --video-qm
+PLAIN-REJECTED --video-opfl
+PLAIN-EFFECTIVE --video-per-segment-q
+PLAIN-EFFECTIVE --video-palette
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-same-ref-compound
+PLAIN-REJECTED --video-ras
+PLAIN-REJECTED --video-rdoq.
+PLAIN-REJECTED --video-rdoq-scale
+PLAIN-EFFECTIVE --video-ref-mvs
+PLAIN-EFFECTIVE --video-refmvbank
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-scc-force
+PLAIN-REJECTED --video-refine-mv
+PLAIN-EFFECTIVE --video-sdp
+PLAIN-EFFECTIVE --video-ref-mvs-stress
+PLAIN-EFFECTIVE --video-sb256
+PLAIN-EFFECTIVE --video-sb128
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-EFFECTIVE --video-seg-globalmv
+PLAIN-EFFECTIVE --video-sef
+PLAIN-EFFECTIVE --video-seg-temporal
+PLAIN-EFFECTIVE --video-short-refresh
+PLAIN-EFFECTIVE --video-segmentation
+PLAIN-EFFECTIVE --video-seg-skip
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-switch
+PLAIN-REJECTED --video-tail-tx
+PLAIN-REJECTED --video-seq-seg-info-frozen
+PLAIN-REJECTED --video-tier
+PLAIN-REJECTED --video-seq-seg-info
+PLAIN-EFFECTIVE --video-tcq
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-tip
+PLAIN-REJECTED --video-tlayer-anchor-residual
+PLAIN-REJECTED --video-tip-block-ref
+PLAIN-REJECTED --video-tip-no-hole-fill
+PLAIN-REJECTED --video-tlayers)
+PLAIN-EFFECTIVE --video-timing
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+tr: illegal option -- ;
+usage: tr [-Ccsu] string1 string2
+       tr [-Ccu] -d string1
+       tr [-Ccu] -s string1
+       tr [-Ccu] -ds string1 string2
+PLAIN-REJECTED --video-tlayers
+PLAIN-REJECTED --video-tx-search)
+PLAIN-REJECTED --video-user-qm
+PLAIN-EFFECTIVE --video-warp
