@@ -247,3 +247,45 @@ the coefficient model exact, and nothing about which tool SVT has that we lack.
 It converts "we are 0.147 JOD behind" into "how much of that is mispricing",
 which is answerable by measurement — and the measurement now says most of the
 observable model error is in coefficients.
+
+## SpecOptimal.lean — what "our tools are better in the AV2 spec" can mean
+
+"Better" needs a comparator. Only one of the three available comparators is a
+theorem:
+
+| comparator | status |
+|---|---|
+| better than the spec's normative decoder | not a goal — matching §7 is conformance, not superiority |
+| **better than other CHOICES inside the same syntax** | **certifiable**: the certificate is a lower bound over the set of *valid streams*, a real object defined by the spec and checkable with the reference decoder |
+| better than an encoder using syntax we do not implement | not certifiable from our side — its streams are outside the space we can enumerate |
+
+So the provable claim is: *for a specified block class, our chosen coding
+minimises cost over every stream the spec permits for it.* Two conditions decide
+whether that is meaningful.
+
+1. **Exhaustiveness.** `exhaustive_is_spec_optimal`: if the search's candidate
+   list contains every valid coding, the result is at most every valid stream's
+   cost. `pruning_breaks_optimality` exhibits the failure: spec permits {2, 5},
+   search visits {5}, returns 5 — true and irrelevant. Nothing inside the
+   encoder knows what it failed to visit.
+2. **The cost must be the true cost.** Optimality over a wrong cost is
+   optimality of the wrong problem, which `PricingWrong.lean` measures failing
+   on the coefficient model today.
+
+**The protocol that would actually prove it**, per block class:
+
+1. Fix a small block (8x8, say) and enumerate every legal coding of it under
+   the spec — partition, intra modes, TX shapes, CBF/EOB forms.
+2. Emit each as a standalone stream and verify it with `avmdec` (a coding that
+   does not decode is not in the feasible set).
+3. Measure exact bits and distortion for each — that is the true optimum of the
+   spec's feasible set for that block, by enumeration.
+4. Compare our encoder's choice. Equal ⇒ spec-optimal for that class, proven by
+   exhaustion. Worse ⇒ a counterexample *and* a bound on the gain.
+
+Feasibility is the constraint: the enumeration is exponential, so it holds for
+one or two block classes, not a frame. That is the honest scope of a
+"spec-optimal" claim.
+
+**Not obtained:** that our tools beat any particular encoder. Beating SVT stays
+an empirical claim about two artefacts.
