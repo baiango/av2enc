@@ -118,3 +118,37 @@ segment the oracle attributes the deficit to.
 
 Caveat: segment rows are pooling bounds, not encodable streams; they upper-bound
 what any decision change in that range could recover, they do not promise it.
+
+## Allocation model (`RdAlloc.lean`): what Lean can and cannot tell you about f0-32
+
+`RdProof` bounds a *decision* gap. `RdAlloc` models the other candidate: how the
+bits are spread **within** the chain.
+
+The oracle put +18.28 JOD of ceiling on f0-32, but the per-frame bits showed the
+P chain already holds 61.8 % of the stream — so "P needs more bits" is not the
+deficit. What is *not* normally optimal is spreading: constant QP gives the same
+quantiser to a pulldown near-duplicate (<1,000 bits) and to a frame with new
+content (5,000 bits), whose marginal slopes differ.
+
+| theorem | statement | axioms |
+|---|---|---|
+| `greedy2_optimal` | for frames with diminishing returns, no split of two bits beats the greedy (largest-marginal-first) plan | `propext, Quot.sound` |
+| `split_beats_flat_right` | one-bit-each beats both-bits-on-one exactly when the other frame's first marginal exceeds this frame's second | same |
+| `split_beats_flat_left` | mirror direction | same |
+
+Lean rejected the first draft of `split_beats_flat_right`, which claimed
+`B.g0 > A.g1 ⟹ split(2) < split(0)`. That implication is false (`A.g0` can
+dominate the total), and the assistant caught it — the second time today a
+proof refused an overclaim that looked plausible when written in prose.
+
+**What this buys, and what it does not.** It gives the provable yardstick for
+any per-frame QP planner, which is exactly what the TPL experiments lacked:
+those allocated from measured *bits* rather than marginal *slopes*, and lost
+0.03-0.21 JOD. A water-filling plan against measured per-frame R-D curves is the
+one allocation design with a proof behind it.
+
+It does **not** move f0-32 by itself. The measured ~1.2 JOD there is inter
+residual coding at 608 B per 1440x720 frame — transform and entropy efficiency,
+which is not a combinatorial object and cannot be enumerated, modelled or proven
+in Lean. Anyone proposing to "model the encoder in Lean" to recover that 1.2 JOD
+is proposing to formalise signal processing, not to find an optimum.

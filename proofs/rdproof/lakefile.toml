@@ -1,4 +1,8 @@
 name = "rdproof"
-defaultTargets = ["RdProof"]
+defaultTargets = ["RdProof", "RdAlloc"]
+
 [[lean_lib]]
 name = "RdProof"
+
+[[lean_lib]]
+name = "RdAlloc"
