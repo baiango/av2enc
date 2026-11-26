@@ -1667,3 +1667,38 @@ than the bits they save. (TCQ and RDOQ do not compose -- each owns the levels.)
 
 This retires my earlier claim that "a better coefficient coder" was the live
 lever: the room exists, but none of the three legal ways to reach it pays.
+
+## TCQ diagnostics: the switches do not reach the intra path
+
+Follow-up on making TCQ better (`Partition`-style invariant: a trellis whose
+candidate set contains the scalar level cannot lose at equal lambda).
+
+`AV2ENC_RDOQ_REFINE_RECON=1` on the PNG-derived still at QP206:
+
+| arm | bytes | cvvdp |
+|---|---:|---:|
+| tcq | 23,622 | 7.1447 |
+| tcq + refine-recon | **23,622** | **7.1447** |
+
+**Byte-identical.** So refine-recon does not reach the intra TCQ path either.
+
+The pattern across this whole investigation is now itself a result -- every
+diagnostic switch that should influence intra level decisions is inert:
+
+| switch | effect on the still |
+|---|---|
+| `AV2ENC_RATE_HYBRID_S` | byte-identical |
+| `AV2ENC_DECISION_EXACT_RATE` | byte-identical |
+| `AV2ENC_INTRA_COEFF_PRICE` (new gate) | byte-identical |
+| `--video-rdoq-off` | byte-identical |
+| `AV2ENC_RDOQ_REFINE_RECON` | byte-identical |
+| `--video-tcq` | **large effect** (25,168 -> 18,255 B at QP212) |
+
+| Status | Meaning |
+|---|---|
+| CONFIRMED | TCQ is the only level-decision lever that actually reaches intra. RDOQ and refine-recon are wired elsewhere, so neither can be used to diagnose or improve the intra trellis until that plumbing is fixed |
+| OPEN (cheapest decisive step) | Add an assertion in the trellis that the scalar-quantised level is in the candidate set. Static assertion, no algorithm change: if it holds, the -0.021 JOD is provably a *pricing* bug; if not, the search is excluding the level that guarantees >= 0 |
+
+Six switches measured, five inert, one large and negative. Before writing better
+TCQ, the intra path needs to actually observe the controls that are supposed to
+shape it.
