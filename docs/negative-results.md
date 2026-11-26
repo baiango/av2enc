@@ -1166,3 +1166,33 @@ Note the bias is **one-sided (positive)**, which matters: a symmetric error
 mostly cancels in comparisons, a positive one systematically discourages
 residual coding. The mode-syntax model shows what a good model looks like
 (p90 0.77 bits).
+
+## The coefficient pricing bug: located, partly fixed, and it is not the intra gap
+
+Follow-up to the pricing diagnostic. The model charged, per TX part,
+
+    bits = 8.0 + (inter ? 4.0 : 0) + [magnitude term] + 0.5 * eob
+
+and the measured error is one-sided and scales with `eob`, not with the nonzero
+count (three-point sweep, fixed decision stream, residual leaves):
+
+| QP | mean eob | mean nonzero | predicted | actual | bias |
+|---|---:|---:|---:|---:|---:|
+| 220 | 10.7 | 2.23 | 29.51 | 19.75 | **+9.76** |
+| 198 | 26.9 | 5.53 | 51.27 | 36.96 | **+14.32** |
+| 180 | 54.7 | 3.85 | 51.29 | 27.87 | **+23.42** |
+
+So the defect is the **per-position term** (`0.5` bits per coded coefficient)
+and the **per-part overhead** (`8.0`), not the magnitude model (the Laplacian
+tracks `meanabs` ≈ 1.0 well).  A first fit gave `bias ≈ 0.31·eob + 6.4`, i.e.
+position ≈ 0.19 and overhead ≈ 1.6.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| FIXED (gated, off by default) | Leave the constants at 0.5 / 8.0 | They overprice a coding residual by 30-60 % of its bits at coarse QPs, one-sidedly, so every residual-versus-skip decision is biased toward skipping | `kCoeffPositionBits = 0.04`, `kCoeffPartOverhead = 1.6`: mean abs bias **16.0 -> 6.6 bits**, and 24 frames of space8k at QP198 go 21,588 B / 7.2229 -> **21,493 B / 7.2335** (+0.011 JOD at 0.4 % fewer bytes) |
+| CONFIRMED - negative | Expect two fitted constants to make the model exact | No linear form fits all three rates: the residual bias is `-3.33 / -9.00 / -7.43` bits at eob 10.7 / 26.9 / 54.7, i.e. *non-monotone* | Price coefficients from the context model itself: the writer already records `exact[kTagResid]` = write-time -log2(p) per leaf, so the true cost is available and does not need an analytic surrogate |
+| CONFIRMED - negative | Assume this fixes the 0.147 JOD intra gap | `AV2ENC_RATE_HYBRID_S=1` on `src720.png` at QP212 gives a **byte-identical** stream (25,168 B / 7.2415): the gate never reaches intra decisions, so the coefficient model is not what intra uses | The intra gap needs its own diagnosis: instrument the key-frame writer path (the rate report is gated to `plan_.inter_frame`) rather than assuming the inter model transfers |
+
+Default-path pins unchanged (the historical `search_plan_estimate_bits` is
+untouched): fast-decode `0639b436`, nightly-b `8f0b85d8`, milestone `9a8ee8d5`,
+stack 25081 B / `3705ac02`.

@@ -115,6 +115,24 @@ inline bool coeff_enabled() {
 // geometric (discrete Laplacian) with the ML scale b = mean(|level|); the
 // caller adds the existing EOB/TX-type overhead and 0.5 bits per coded
 // position.  b comes from the block itself -- no tuning constant.
+// Measured coefficient-model constants (2026-11-26).
+//
+// The historical model charged `8.0` bits of per-part overhead and `0.5` bits
+// per coded coefficient position.  Measuring the model against the actual
+// range-coder bits on residual leaves (`AV2ENC_RATE_HYBRID_S_MEASURE`) at three
+// QPs on space8k gives a one-sided error of
+//
+//     bias = 0.31 * eob + 6.4 bits          (finely: 10.7/26.9/54.7 eob ->
+//                                            9.76/14.32/23.42 bits)
+//
+// so both constants were too high and the error is dominated by the position
+// term, not by the magnitude model (which tracks `meanabs` well).  Correcting
+// them: 8.0 - 6.4 = 1.6.  A second pass with the corrected overhead leaves a
+// residual error of -0.154 * eob, so the position term is 0.19 - 0.154 ~ 0.04:
+// the significance map really is close to free once the EOB is coded once.
+inline constexpr double kCoeffPositionBits = 0.04;
+inline constexpr double kCoeffPartOverhead = 1.6;
+
 inline double laplacian_bits(std::span<const std::int32_t> levels, int count) {
   if (count <= 0) return 0.0;
   const int n = std::min<int>(count, static_cast<int>(levels.size()));
@@ -135,9 +153,8 @@ inline double laplacian_bits(std::span<const std::int32_t> levels, int count) {
   const double mag =
       static_cast<double>(nonzero) *
       std::log2(std::exp(1.0) * (1.0 + p) / (1.0 - p));
-  // Position/EOB term keeps the historical 0.5 bits per coded coefficient:
-  // the Laplacian prices the magnitudes, not the significance map.
-  return mag + 0.5 * static_cast<double>(count);
+  // Position/EOB term.
+  return mag + kCoeffPositionBits * static_cast<double>(count);
 }
 
 // ---------------------------------------------------------------------------

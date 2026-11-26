@@ -217,11 +217,14 @@ expensive on the leaves that actually code a residual**, with a one-sided
 residual-versus-skip decision made with this model is biased toward *not*
 coding the residual.
 
-The same `estimate_tx_bits` / Laplacian-magnitude model prices intra
-coefficients, so the bias is expected to transfer — but that is an argument,
-not a measurement; the writer's rate report is gated to `plan_.inter_frame`, so
-intra leaves are not recorded yet. Enabling it for key frames is the first step
-to confirming it.
+**Correction (measured same day): the bias does *not* reach intra.** The
+guess above was that `estimate_tx_bits` / the Laplacian model prices intra
+coefficients too, so the bias would transfer.  Tested: `src720.png` at QP212
+with `AV2ENC_RATE_HYBRID_S=1` produces a **byte-identical** stream (25,168 B,
+cvvdp 7.2415, both runs), so the gate does not touch intra decisions and the
+0.147 JOD intra gap is *not* this bug.  The coefficient pricing defect is an
+inter-residual problem (worth +0.011 JOD at 0.4 % fewer bytes on 24 frames of
+space8k), and the intra gap must be sought elsewhere.
 
 ### Intra frontier probe (same day, all at QP212 on `src720.png`)
 

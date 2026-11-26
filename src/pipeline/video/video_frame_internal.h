@@ -1477,13 +1477,13 @@ inline double laplacian_raster_prefix(std::span<const std::int32_t> levels,
   const double mag =
       static_cast<double>(nonzero) *
       std::log2(std::exp(1.0) * (1.0 + p) / (1.0 - p));
-  return mag + 0.5 * static_cast<double>(eob);
+  return mag + rate_hybrid::kCoeffPositionBits * static_cast<double>(eob);
 }
 
 inline double laplacian_plan_bits(const TxPlan& plan, bool is_inter_luma) {
   if (!plan.searched) {
     if (plan.eob == 0) return 1.0;
-    return 8.0 + (is_inter_luma ? 4.0 : 0.0) +
+    return rate_hybrid::kCoeffPartOverhead + (is_inter_luma ? 4.0 : 0.0) +
            laplacian_raster_prefix(plan.levels, plan.adj_w, plan.adj_h,
                                    plan.eob);
   }
@@ -1493,7 +1493,7 @@ inline double laplacian_plan_bits(const TxPlan& plan, bool is_inter_luma) {
       bits += 1.0;
       continue;
     }
-    bits += 8.0 + (is_inter_luma ? 4.0 : 0.0) +
+    bits += rate_hybrid::kCoeffPartOverhead + (is_inter_luma ? 4.0 : 0.0) +
             rate_hybrid::laplacian_bits(part.levels, part.eob);
   }
   return bits;
