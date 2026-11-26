@@ -1250,3 +1250,29 @@ pipeline is worth the pricing fix only (+0.03 JOD at 1.25 % fewer bytes). It has
 been measured on one clip; it is not yet a shipped default, and `--nightly-b`
 (hierarchical B) does not use it because the SEF path lives in the low-delay P
 encoder.
+
+## Can it be proved that the *tools* are not optimal?
+
+Two claims hide in this, and only one of them is provable.
+
+| claim | status | why |
+|---|---|---|
+| "the tool SET (given syntax/predictors/transforms) is not optimal" | **not falsifiable as stated** | Optimality is relative to a space. There is no certificate that a tool is missing, and SVT's stream is not one: it is a different syntax, so it cannot witness anything about what our syntax can express |
+| "our IMPLEMENTATION of the tools is not optimal" | **PROVED** | `Partition.measured_loss_refutes_optimality`: allowing a 4x4 floor enlarges the candidate set, so an optimal search over it cannot measure worse; it does measure worse, so the run that was *allowed* the larger set did not reach that set's minimum |
+
+The proof (`proofs/rdproof/Partition.lean`, axioms `propext`, `Classical.choice`,
+`Quot.sound`):
+
+    achieved(16x16 floor) < achieved(4x4 allowed)   [measured]
+    min(4x4 allowed) <= min(16x16 floor)            [proved, superset]
+    => achieved(4x4 allowed) != min(4x4 allowed)    [search/pricing, not tools]
+
+`optimality_is_relative` states the complementary fact so it cannot be
+over-read: being optimal over one candidate set says nothing about any other
+set. No amount of work inside a tool set can be concluded sufficient from an
+optimality proof alone.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| PROVEN | Claim "our tools are suboptimal" and stop | That is not a statement about anything checkable; the certificate does not exist | Claim the stronger, checkable thing: our search/pricing fails to reach its own optimum, certified by our own re-encode |
+| OPEN (needs one number) | Treat the matched-bytes 4x4 loss as a strict equal-lambda refutation | The theorem compares costs at the same lambda; the measurement is at matched bytes, which witnesses suboptimality of at least one of the two runs but is not literally a D + lambda*R comparison | Log the per-frame D + lambda*R of both arms at one QP and the refutation becomes exact rather than curve-level |

@@ -149,4 +149,50 @@ theorem measured_loss_is_a_defect {A B : List Int}
   have h := unrestricted_is_at_least_as_cheap hA hB hsub
   omega
 
+/-- A run is OPTIMAL over a candidate set when the cost it achieved is the
+    set's minimum.  `achieved < minList` is impossible, so the only way to be
+    suboptimal is to land above the minimum. -/
+def Optimal (achieved : Int) (C : List Int) : Prop := achieved = minList C
+
+/-- **Our implementation of the tools is provably not optimal.**
+
+    Measured (src720.png, matched bytes): the encoder allowed 4x4 partitions
+    achieves a *worse* cost than the same encoder restricted to a 16x16 floor.
+    With exact costs that is impossible for an optimal search over the larger
+    set, because the larger set contains the smaller one.  So the run that was
+    allowed the larger candidate set did not reach that set's minimum.
+
+    This refutes optimality of the *implementation* -- search or pricing -- and
+    it does so for our own encoder, with our own syntax, using a certificate we
+    can actually construct.  It says nothing about whether the tool SET is
+    sufficient: that would need a certificate against the set of all possible
+    coding tools, which cannot be constructed. -/
+theorem measured_loss_refutes_optimality {A B : List Int}
+    (hA : A ≠ []) (hB : B ≠ [])
+    (hsub : ∀ x ∈ A, x ∈ B)
+    {achA achB : Int}
+    (hmemA : achA ∈ A) (hmemB : achB ∈ B)
+    (hloss : achA < achB) :
+    ¬ Optimal achB B := by
+  intro hopt
+  have hmin : minList B ≤ minList A :=
+    unrestricted_is_at_least_as_cheap hA hB hsub
+  have hminA : minList A ≤ achA :=
+    minWith_le_mem (head A) A achA hmemA
+  have hminB : minList B ≤ achB :=
+    minWith_le_mem (head B) B achB hmemB
+  unfold Optimal at hopt
+  omega
+
+/-- The other half of the separation, stated so it cannot be over-read: being
+    optimal over a candidate set says nothing about any *other* set, so no
+    amount of implementation work inside this tool set can be concluded to be
+    sufficient from an optimality proof alone.  Optimality is relative to a
+    space, and the space is a choice, not a theorem. -/
+theorem optimality_is_relative (achieved : Int) (C D : List Int)
+    (hC : Optimal achieved C) (hne : minList D < achieved) :
+    ¬ Optimal achieved D := by
+  unfold Optimal at hC ⊢
+  omega
+
 end Partition
