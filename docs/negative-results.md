@@ -1883,3 +1883,47 @@ produced byte-identical output.
 All code edits reverted; tree clean. Six attempted fixes, zero effect, all
 explained by the same fact: the instrumented entries are not the ones coding a
 key frame's luma.
+
+## RDOQ bug FIXED: it now engages on intra, and --video-rdoq controls it
+
+Root cause chain, established by trace:
+
+1. `kcfg.on` (`AV2ENC_RD_KEY_TX`, default off) gates the whole exact TX stage;
+   with it off the key frame keeps the *screen* result and RDOQ is skipped
+   (`search_part` traced 17 calls, **all `exact=0`**).
+2. With the stage on, the chain read `opt_rdoq=1 intra_rdoq=1 ok=1` but the
+   local `rdoq` term was 0, so `use_rdoq = rdoq && ...` stayed false.
+3. Even when RDOQ ran, the key path passed `exact && kcfg.level` and **never
+   consulted `enable_rdoq`**, so `--video-rdoq-off` could not disable it.
+
+Fixes applied:
+
+- `video_tx_search.cpp`: `use_rdoq = (rdoq || options.rdoq) && ...`;
+- `video_frame_intra.cpp`: `allow_rdoq` and `intra_rdoq` now
+  `exact && kcfg.level && options_.enable_rdoq`;
+- `AV2ENC_RDOQ_TRACE` diagnostics kept (env-gated, no stream effect).
+
+Evidence (`src720_1f.y4m`, QP212, `AV2ENC_RD_KEY_TX=1`):
+
+| arm | bytes | md5 |
+|---|---:|---|
+| `--video-rdoq` (default) | **24,560** | 9b1b935d... |
+| `--video-rdoq-off` | 25,241 | 9f4b02d4... |
+
+**The two now differ** -- previously identical in every configuration. Quality at
+matched bytes: 24,560 B / cvvdp **7.2105** against the baseline curve's 7.2083 at
+the same bytes, **+0.0022 JOD**.
+
+Pin consequence (behaviour legitimately changed; all four shifted, all smaller at
+the same QP):
+
+| pin | was | now |
+|---|---|---|
+| fast-decode | 0639b436 | 54f402bd |
+| nightly-b | 8f0b85d8 | f374a246 |
+| milestone | 9a8ee8d5 | 32a6e4c4 |
+| stack arm | 25,081 B / 3705ac02 | **24,532 B / 255a77ad** |
+
+The pins must be re-baselined with quality confirmation at matched bytes before
+this is called a win on inter content; the still measurement above is the only
+quality evidence so far.

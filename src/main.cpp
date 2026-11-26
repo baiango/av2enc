@@ -1910,6 +1910,9 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   video_options.user_qm = options.video_user_qm;
   video_options.enable_tcq = options.video_tcq;
   video_options.enable_rdoq = options.video_rdoq;
+  if (std::getenv("AV2ENC_KEY_INTRA_TX_PART") != nullptr) {
+    video_options.enable_key_intra_tx_part = true;
+  }
   video_options.rdoq_sse_scale = options.video_rdoq_scale;
   video_options.enable_cctx = options.video_cctx;
   video_options.film_grain = options.video_grain;

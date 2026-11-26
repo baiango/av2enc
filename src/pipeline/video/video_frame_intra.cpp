@@ -708,18 +708,30 @@ bool InterFrameEncoder::encode_intra_luma_tx_partition(
       live_ctx_for(part_mi_row, part_mi_col, tw / 4, th / 4, w / 4, h / 4,
                    &part_txb, &part_dc);
     }
+    if (std::getenv("AV2ENC_RDOQ_TRACE") != nullptr) {
+      static std::uint64_t n_sr = 0;
+      ++n_sr;
+      if (n_sr <= 4 || (n_sr % 2000) == 0) {
+        std::fprintf(stderr, "rdoq-trace-searchpart: #%llu exact=%d kcfg=%d\n",
+                     static_cast<unsigned long long>(n_sr), exact ? 1 : 0,
+                     kcfg.level ? 1 : 0);
+      }
+    }
     return search_luma_tx(
         source_, px, py, tw, th, pred, st.current_qindex,
         txtsearch::Mode::kIntra, search_lambda, options_.enable_idtx_intra,
         mapped_mode, options_.enable_tcq, qctx,
         /*enable_inter_ddt=*/false, /*search_partition=*/false,
         exact ? true : options_.tx_context_rate, /*trace=*/false,
-        /*allow_rdoq=*/exact && kcfg.level, /*rdoq_qctx=*/qctx,
+        // RDOQ bug fix: was `exact && kcfg.level`, which ignores --video-rdoq,
+        // so --video-rdoq-off could not disable RDOQ on the key path.
+        /*allow_rdoq=*/exact && kcfg.level && options_.enable_rdoq,
+        /*rdoq_qctx=*/qctx,
         level_scale, *out, error, part_mask,
         /*distortion_weight=*/nullptr,
         /*cdf_slice=*/kcfg.live_cdf ? eff_cdf_slice() : nullptr, key_csf,
         key_csf2,
-        /*intra_rdoq=*/exact && kcfg.level,
+        /*intra_rdoq=*/exact && kcfg.level && options_.enable_rdoq,
         /*model_rate_scale=*/kcfg.model_rate_scale,
         /*txb_skip_ctx_live=*/part_txb, /*dc_sign_ctx_live=*/part_dc,
         /*use_live_ctx=*/live_ctx_on,

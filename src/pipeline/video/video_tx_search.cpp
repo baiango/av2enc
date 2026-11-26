@@ -974,7 +974,22 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
   // unreachable on a key picture and every lambda measured byte-identical.
   const bool intra_rdoq_ok =
       is_inter || options.intra_rdoq || g_rdoq_refine_recon;
-  const bool use_rdoq = rdoq && !use_tcq && options.rdoq && intra_rdoq_ok &&
+  if (std::getenv("AV2ENC_RDOQ_TRACE") != nullptr && options.rdoq) {
+    static std::uint64_t trace_rdoq_n = 0;
+    ++trace_rdoq_n;
+    if (trace_rdoq_n <= 3) {
+      std::fprintf(stderr,
+                   "rdoq-trace977: inter=%d rdoq=%d use_tcq=%d opt_rdoq=%d "
+                   "intra_rdoq=%d ok=%d\n",
+                   is_inter ? 1 : 0, rdoq ? 1 : 0, use_tcq ? 1 : 0,
+                   options.rdoq ? 1 : 0, options.intra_rdoq ? 1 : 0,
+                   intra_rdoq_ok ? 1 : 0);
+    }
+  }
+  // RDOQ bug fix: the local `rdoq` is 0 on the intra exact stage even when the
+  // request arrives (options.rdoq=1, intra_rdoq=1) -- measured with
+  // AV2ENC_RDOQ_TRACE on a key frame.  Let the request drive it.
+  const bool use_rdoq = (rdoq || options.rdoq) && !use_tcq && options.rdoq && intra_rdoq_ok &&
                         dcq == acq && tx_type <= 9 && !use_ddt;
   // AV2ENC_RDOQ_REFINE_STATS (diagnosis only): count how often each gate on the
   // path to the refine pass is reached, so a byte-identical arm can be told
