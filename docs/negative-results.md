@@ -1702,3 +1702,32 @@ diagnostic switch that should influence intra level decisions is inert:
 Six switches measured, five inert, one large and negative. Before writing better
 TCQ, the intra path needs to actually observe the controls that are supposed to
 shape it.
+
+## TCQ model bug, step 1: the coefficient rate constants are not the cause
+
+Reading `default_coefficient_rate` (tcq.cpp:129) shows the heuristic charges
+**0.5-1.0 bits for a ZERO** and **4 bits for a level of 1** -- over-pricing
+everything, and nonzeros relative to zeros, which is the right shape to explain
+TCQ zeroing coefficients it should keep.
+
+Tested by adding a two-sided geometric rate model (`AV2ENC_TCQ_GEOM_RATE`,
+gated off by default; P(0)=0.8, so a zero costs 0.32 bits and a level-1 nonzero
+2.32 + 1 sign):
+
+| arm | @ 25,168 B |
+|---|---:|
+| scalar baseline | **7.2415** |
+| heuristic TCQ | 7.2205 |
+| geometric-rate TCQ | **7.2218** |
+
+**+0.0013** -- the rate constants move the result but do not close the 0.020
+deficit. So the dominant model error is elsewhere.
+
+| Status | Meaning |
+|---|---|
+| CONFIRMED - negative | The coefficient rate constants are the model bug | Fixing them changes the matched-bytes result by 0.0013 while TCQ stays 0.020 behind scalar |
+| OPEN (next suspect) | `local_dist` in the DP loop | It prices distortion as `(original - quant*half_step)^2` in the *transform* domain: no rounding, no clipping, and it assumes an orthonormal transform. The integer transform is not orthonormal and the dequant rounds, so a level the model thinks is cheap can reconstruct worse than it predicts -- the other way to lose quality while saving bytes |
+
+The candidate set was verified complete by inspection (`for q = 0; q <= bound`),
+so TCQ's loss is provably a cost-model error, and the rate term is now excluded
+by measurement. The distortion term is the remaining candidate.

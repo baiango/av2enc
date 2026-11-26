@@ -139,6 +139,20 @@ double default_coefficient_rate(void* context, std::int32_t scan_pos,
   (void)signed_quant;
   (void)level_context;
   const std::int32_t magnitude = abs_i32(base_level);
+  // AV2ENC_TCQ_GEOM_RATE: price levels with a two-sided geometric model instead
+  // of the flat heuristic above.  The heuristic charges 0.5-1.0 bits for a ZERO
+  // and 4 bits for a level of 1; in a sparse block zeros are the probable
+  // symbol and a level-1 nonzero costs about half that, so the heuristic
+  // systematically over-prices everything and over-prices nonzeros relative to
+  // zeros -- which drives the trellis to zero out coefficients it should keep
+  // (the observed "fewer bytes, worse quality").
+  static const bool geom_rate = std::getenv("AV2ENC_TCQ_GEOM_RATE") != nullptr;
+  if (geom_rate) {
+    // P(0) = 0.8, P(m>0) = 0.2 * 0.5^(m-1) * 0.5 per sign.
+    if (magnitude == 0) return 0.322;          // -log2(0.8)
+    const double m = static_cast<double>(magnitude);
+    return 2.322 + (m - 1.0) * 1.0 + 1.0;      // -log2(0.2*0.5^m) + sign
+  }
   if (magnitude == 0) {
     return state == 0 ? 0.5 : 1.0;
   }
