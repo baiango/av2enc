@@ -1,0 +1,57 @@
+A) drift refresh engages? off 12885 B, on 12885 B -> identical (never triggers)
+   --video-drift-refresh-threshold 1 : 12885 B INERT
+   --video-drift-refresh-threshold 3 : 12885 B INERT
+   --video-drift-refresh-budget 1 : 12885 B INERT
+   --video-drift-refresh-budget 3 : 12885 B INERT
+   --video-drift-refresh-qp 3 : 12885 B INERT
+
+B) integer gates at =64 against 12-frame nightly baseline (9973 B)
+   AV2ENC_CDEF_MAX_STRENGTH            9973 B INERT
+   AV2ENC_COMPOUND_EXACT_RATE          9973 B INERT
+   AV2ENC_COMPOUND_NEWMV_RADIUS        9973 B INERT
+   AV2ENC_COMPOUND_PAIR_LIMIT          9973 B INERT
+   AV2ENC_COMPOUND_RATE                9973 B INERT
+   AV2ENC_COMPOUND_RATE_SCALE          9973 B INERT
+   AV2ENC_DECISION_EXACT_RATE          9973 B INERT
+   AV2ENC_EFF_PERC_RATE                9973 B INERT
+   AV2ENC_EFF_PERC_TOP                 9973 B INERT
+   AV2ENC_EXACT_RD_TOP                 9973 B INERT
+   AV2ENC_LAMBDA_TRACE                 9973 B INERT
+   AV2ENC_MODE_TOPN                    9973 B INERT
+   AV2ENC_PART_DIAG_MAX                9973 B INERT
+   AV2ENC_PIPE_BA_W                    9973 B INERT
+   AV2ENC_PIPE_BUDGET                  9973 B INERT
+   AV2ENC_PIPE_BUDGET_STATS            9973 B INERT
+   AV2ENC_PIPE_PERC_TOP                9973 B INERT
+   AV2ENC_PORT_HORIZON                 9973 B INERT
+   AV2ENC_PORT_HORIZON_K               9973 B INERT
+   AV2ENC_RATE_HYBRID_DEBUG            9973 B INERT
+   AV2ENC_RATE_HYBRID_S                9941 B EFFECTIVE
+   AV2ENC_RATE_HYBRID_S_COEFF          9973 B INERT
+   AV2ENC_RATE_HYBRID_S_MEASURE        9973 B INERT
+   AV2ENC_RATE_HYBRID_S_SYNTAX         9973 B INERT
+   AV2ENC_RATE_INTERVAL                9971 B EFFECTIVE
+   AV2ENC_RATE_INTERVAL_STATS          9973 B INERT
+   AV2ENC_RATE_INTERVAL_TRACE          9973 B INERT
+   AV2ENC_RDOQ_REFINE_LAMBDA           9973 B INERT
+   AV2ENC_RDOQ_TRELLIS_STEP_SCALE      9973 B INERT
+   AV2ENC_RDO_RDOQ_SCALE               9973 B INERT
+   AV2ENC_RDO_SCALE                    9973 B INERT
+   AV2ENC_RD_DRIVER_MIN                9973 B INERT
+   AV2ENC_RD_DRIVER_RATE_FIT           9973 B INERT
+   AV2ENC_RD_KEY_LEVEL                 9973 B INERT
+   AV2ENC_RD_KEY_LEVEL_SCALE           9973 B INERT
+   AV2ENC_RD_KEY_MODEL_RATE            9973 B INERT
+   AV2ENC_RD_KEY_TX_D                  9973 B INERT
+   AV2ENC_RD_KEY_TX_SCALE              9973 B INERT
+   AV2ENC_RD_KEY_TX_TOP                9973 B INERT
+   AV2ENC_RD_TAIL_LEVEL                9973 B INERT
+
+D) AV2ENC_RD_JOINT_P=1 with the other named companions
+   AV2ENC_PIPE_PERC=1: 9981 B vs +JOINT 9983 B -> JOINT FIRES
+   AV2ENC_PIPE_BA=1: 9997 B vs +JOINT 9982 B -> JOINT FIRES
+
+C) RD_ENGINE sites on the nightly-b carrier (26504 B)
+   AV2ENC_RD_ENGINE_KEY       0.5:INERT  4.0:INERT
+   AV2ENC_RD_ENGINE_INTER     0.5:INERT  4.0:INERT
+   AV2ENC_RD_ENGINE_CHROMA    0.5:INERT  4.0:INERT

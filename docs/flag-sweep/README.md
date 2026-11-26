@@ -382,3 +382,23 @@ arming chains, turned out to be a switch whose companion, mode or carrier was
 unset. The recurring shape: *a switch whose companion is unset behaves exactly
 like a switch that does nothing* -- a diagnostics problem, addressed by the
 warnings in 4dbe3af0 and this pass, not a correctness bug.
+
+## The four residual verdicts, measured (see RESIDUAL.md)
+
+1. **`--video-drift-refresh-{threshold,budget,qp}`** on 60 frames: `--nightly`
+   with and without `--video-drift-refresh-off` gives the same 12,885 B, and all
+   five option runs are inert. The mechanism is now named, not assumed:
+   `--video-trace` shows the drift path reached 59 times with `refresh=0`
+   because the trigger is `ref_psnr < anchor - threshold` and this clip's
+   reference PSNR stays above its anchor. Raising the threshold makes it
+   strictly harder. **Content-gated; liveness not demonstrated.**
+2. **The 38 "boolean-equivalent" integer gates** re-run at `=64`: the same 2 are
+   EFFECTIVE (`RATE_HYBRID_S` 9,941 B, `RATE_INTERVAL` 9,971 B) and the same 38
+   inert. Two distinct non-default values, measured rather than inferred.
+3. **`RD_ENGINE_{KEY,INTER,CHROMA}`**: inert at 0.5 and 4.0 on the nightly-b pin
+   carrier, and provably unable to matter -- `site_scale()` is referenced only
+   from `print_stats()` (video_rd_engine.h:718-719) and the site counters it
+   prints are never incremented anywhere in `src/`.
+4. **The joint-plan companions**: all three fire the solve --
+   `EFF_PERC` 10,026 -> 10,074 B, `PIPE_PERC` 9,981 -> 9,983 B, `PIPE_BA`
+   9,997 -> 9,982 B (each `+AV2ENC_RD_JOINT_P=1`).
