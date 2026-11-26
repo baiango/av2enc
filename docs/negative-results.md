@@ -750,6 +750,37 @@ extract, QP202, scored with `tools/quality.py` against the source.
 | **KEEP — the single largest lever measured (+0.54 JOD)** | Test `--video-partition-rd` by *adding* the flag under `--nightly` and conclude it is inert | `--nightly` already sets `video_partition_rd = true` (`src/cli/nightly.cpp:147`), so adding the flag changes nothing and the stream is byte-identical (`013fb546…`). That looks like inertness but is a **testing artifact**. The correct test is `--video-partition-rd-off`. space8k 12 f QP202: probe **on 16,069 B / 6.8406 JOD**; probe off 13,555 B / 5.9521, 14,366 / 6.0927, 15,078 / 6.1903, 16,236 / 6.3187 -> interpolated to 16,069 B **6.3002**, i.e. the probe is worth **+0.54 JOD at matched bytes**. | Keep it on; to size any partition change, A/B against `--video-partition-rd-off`, never by adding the flag |
 | CONFIRMED — matched-rate negative | Expect `--video-ext-partitions` to help at this operating point | Real but negative at matched bytes: space8k flat **16,069 B / 6.8406** vs ext 15,879 B / 6.7341 and 16,860 B / 6.8563 -> interpolated **6.7578 (-0.08)**; loral flat **16,608 B / 7.3182** vs ext 16,544 / 7.2803 and 17,109 / 7.3502 -> **7.2882 (-0.03)**. The space8k README's +0.05 JOD for this tool was at ~300 kbps (QP217-219); at QP202 the sign is negative | Re-test per operating point; it is not a free win |
 
+### Probe price (`--video-partition-rd-lambda`): a tie, not a lever
+
+The probe's syntax-bit price was calibrated at 240p / 100 kbps (`2.75e-6`), so
+re-tuning it at 720p was the obvious first thing to try. Measured on space8k
+12 f, matched to 16,069 B:
+
+| lambda | bytes @QP202 | CVVDP @ matched 16,069 B |
+|---|---:|---:|
+| 2.75e-6 (**default**) | 16,069 | **6.8406** |
+| 1e-6 | 16,080 | — (same stream in practice) |
+| 2e-6 | 15,711 | — |
+| 4e-6 | 15,509 (QP202), 16,285 (QP200), 16,909 (QP198) | 6.8420 (**+0.001**) |
+| 8e-6 | 15,124 | — |
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Re-tune `--video-partition-rd-lambda` for 720p | The best re-tune lands **+0.001 JOD**, i.e. a tie inside the clip's cross-run ripple. The price is already near-optimal; the preset's 240p calibration transfers | Leave it at 2.75e-6. Note also that lambda <= 1e-6 is effectively inert (16,080 vs 16,069 B) — the split decision saturates there |
+
+### Where the probe's remaining headroom actually is (code-level, not yet built)
+
+`partition_probe_leaf_cost` (`src/pipeline/video/video_frame.cpp:411`) prices a
+candidate as `min(skip: pred_sse + lambda*skip_bits, residual: res_sse +
+lambda*(mode_bits + plan_rate_bits))` using **plane 0 only** —
+`compute_tx(source_, 0, ...)` and `sse_against_source(..., 0, ...)`. No chroma
+distortion or chroma rate enters the probe's cost, so a split whose luma cost is
+neutral but whose chroma cost is not is decided on half the picture. At
+`--video-uv-qp-offset -23` chroma is coded *finer* than luma, which makes its
+share of the bits larger than the default, so this gap is not small on the
+current preset. That is the next thing to build; the depth and price axes are
+both closed.
+
 ### Probe depth: 1 is the optimum, deeper is negative
 
 `--video-partition-rd-depth` bounds how many split levels the measured probe
