@@ -1,0 +1,14 @@
+svcbase                          INERT      31056 B base 31056 B
+--oppoint                        INERT      31056 B base 31056 B
+--spatial-layers                 INERT      31056 B base 31056 B
+--video-segments                 INERT      31056 B base 31056 B
+--video-uv-delta-q               INERT      31056 B base 31056 B
+--video-y-dc-delta-q             INERT      31056 B base 31056 B
+--gpu-plan                       REJECTED av2enc: --gpu-plan is a host-planning dry run; do not combin
+--recon10                        REJECTED av2enc: error: --bit-depth/--chroma request 10-bit 4:2:2 doe
+tl-base                          INERT      8306 B base 8306 B
+--video-tlayer-drop              EFFECTIVE  5756 B base 31056 B
+--video-tlayer-qp-offsets        REJECTED av2enc: --video-tlayer-qp-offsets needs the chained --video-
+--video-tlayer-anchor-residual   REJECTED av2enc: --video-tlayer-anchor-residual needs the chained --v
+--video-tlayer-refresh-budget    REJECTED av2enc: --video-tlayer-anchor-residual needs the chained --v
+--video-tlayer-refresh-threshold REJECTED av2enc: --video-tlayer-anchor-residual needs the chained --v

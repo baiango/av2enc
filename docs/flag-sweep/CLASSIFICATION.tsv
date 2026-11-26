@@ -14,7 +14,7 @@ name	surface	verdict	evidence
 --effort-plan	switch	INERT	resolve3(still)
 --fast-decode	switch	EFFECTIVE	per-mode(video+still)
 --frames	option	INERT	resolve(other)
---gpu-plan	option	REJECTED	argsweep(2 values)
+--gpu-plan	option	OUT-OF-SCOPE	host-planning dry run; cannot combine with an encode
 --lossless	switch	OWN-WRITER-OK	still+table
 --lossless-fsc	switch	EFFECTIVE	resolve(lossless)
 --metadata-banding	switch	EFFECTIVE	flip(nightly)
@@ -30,12 +30,12 @@ name	surface	verdict	evidence
 --nightly-b	switch	INERT	resolve3(plain video)
 --no-cfl	switch	EFFECTIVE	still+table/still
 --no-deblock	switch	EFFECTIVE	still+table/still
---oppoint	option	REJECTED	argsweep(2 values)
+--oppoint	option	INERT	resolve4(svc x0=240x120,x1=480x240)
 --p-frames	option	INERT	per-mode(args)
 --qp	option	EFFECTIVE	argsweep(2 values)
 --rc	option	EFFECTIVE	explicit-table(crf, no --qp)
---recon	option	REJECTED	argsweep(2 values)
---spatial-layers	option	REJECTED	argsweep(2 values)
+--recon	option	OUT-OF-SCOPE	needs a 10-bit core this build does not accept
+--spatial-layers	option	INERT	resolve4(svc x0=240x120,x1=480x240)
 --still	switch	INERT	still+table/still
 --still-ccso	switch	EFFECTIVE	still+table/still
 --still-ccso-bands	switch	EFFECTIVE	resolve3(still)
@@ -59,7 +59,7 @@ name	surface	verdict	evidence
 --still-ext-partitions	switch	EFFECTIVE	still+table/still
 --still-full-intra	switch	EFFECTIVE	still+table/still
 --still-gdf	switch	EFFECTIVE	still+table/still
---still-gpu	switch	REJECTED	still+table/still
+--still-gpu	switch	OUT-OF-SCOPE	CUDA-only build
 --still-grain	switch	EFFECTIVE	still+table/still
 --still-grain-adaptive	switch	EFFECTIVE	hand-batch
 --still-ibc	switch	EFFECTIVE	still+table/still
@@ -67,7 +67,7 @@ name	surface	verdict	evidence
 --still-ibp	switch	EFFECTIVE	still+table/still
 --still-idtx	switch	EFFECTIVE	still+table/still
 --still-ist	switch	EFFECTIVE	still+table/still
---still-ist-scale	switch	REJECTED	plain-rejudge
+--still-ist-scale	switch	INERT	resolve4(still --still-ist) 4,198 B = base
 --still-mhccp	switch	EFFECTIVE	still+table/still
 --still-mrl	switch	EFFECTIVE	still+table/still
 --still-palette	switch	EFFECTIVE	still+table/still
@@ -76,7 +76,7 @@ name	surface	verdict	evidence
 --still-qm	switch	EFFECTIVE	still+table/still
 --still-qm-level	switch	EFFECTIVE	resolve3(still)
 --still-rdo-intra	switch	EFFECTIVE	still+table/still
---still-rdo-scale	switch	REJECTED	plain-rejudge
+--still-rdo-scale	switch	EFFECTIVE	resolve4(still --still-rdo-intra) 4,166 vs 4,176 B
 --still-rdoq	switch	EFFECTIVE	still+table/still
 --still-rdoq-scale	switch	REJECTED	plain-rejudge
 --still-sb128	switch	EFFECTIVE	still+table/still
@@ -87,15 +87,15 @@ name	surface	verdict	evidence
 --still-single	switch	INERT	still+table/still
 --still-sub8	switch	INERT	still+table/still
 --still-tcq	switch	EFFECTIVE	still+table/still
---still-tcq-scale	switch	REJECTED	plain-rejudge
+--still-tcq-scale	switch	EFFECTIVE	resolve4(still --still-tcq) 1,018 vs 3,645 B
 --still-tx-partition	switch	EFFECTIVE	still+table/still
 --still-tx-type	switch	INERT	still+table/still
---still-tx-type-scale	switch	REJECTED	plain-rejudge
+--still-tx-type-scale	switch	INERT	resolve4(still --still-tx-type) 4,198 B = base
 --still-user-qm	switch	EFFECTIVE	still+table/still
 --still-uv-full	switch	EFFECTIVE	still+table/still
 --still-wiener	switch	EFFECTIVE	still+table/still
 --svc-embedded	option	EFFECTIVE	resolve2(svc carrier, value 2)
---svc-inter-layer	switch	REJECTED	comp5/still
+--svc-inter-layer	switch	OUT-OF-SCOPE	not a conforming AV2 v1.0.0 feature (§6.8.2)
 --svc-layers	option	EFFECTIVE	resolve(svc, x0=480x240)
 --svc-lcr-id	option	INERT	resolve2(svc carrier, value 1)
 --svc-temporal	option	INERT	resolve2(svc carrier, value 1)
@@ -157,7 +157,7 @@ name	surface	verdict	evidence
 --video-gdf	switch	EFFECTIVE	flip(nightly)
 --video-gme	switch	EFFECTIVE	comp3
 --video-gops	option	INERT	per-mode(args)
---video-gpu	switch	REJECTED	hand-batch
+--video-gpu	switch	OUT-OF-SCOPE	CUDA-only build
 --video-grain	switch	EFFECTIVE	flip(nightly)
 --video-head-tx	switch	EFFECTIVE	comp3 (+companion)
 --video-ibc	switch	EFFECTIVE	comp3
@@ -189,7 +189,7 @@ name	surface	verdict	evidence
 --video-mv-precision	switch	EFFECTIVE	explicit-table(quarter)
 --video-mv-traj	switch	EFFECTIVE	comp3
 --video-mvd-sign-derive	switch	EFFECTIVE	hand-batch
---video-num-ref-frames	option	REJECTED	argsweep(2 values)
+--video-num-ref-frames	option	EFFECTIVE	resolve4(value 4 in [4,8]) 18,856 vs 18,845 B
 --video-olk	switch	EFFECTIVE	explicit-table(4 frames)
 --video-opfl	switch	EFFECTIVE	hand-batch
 --video-palette	switch	EFFECTIVE	comp3
@@ -225,7 +225,7 @@ name	surface	verdict	evidence
 --video-seg-skip	switch	EFFECTIVE	comp3
 --video-seg-temporal	switch	EFFECTIVE	comp3
 --video-segmentation	switch	EFFECTIVE	comp3
---video-segments	option	INERT	resolve3(video)
+--video-segments	option	INERT	resolve4(svc carrier)
 --video-seq-seg-info	switch	EFFECTIVE	comp3 (+companion)
 --video-seq-seg-info-frozen	switch	EFFECTIVE	comp3 (+companion)
 --video-short-refresh	switch	EFFECTIVE	comp3
@@ -241,23 +241,23 @@ name	surface	verdict	evidence
 --video-tip	switch	EFFECTIVE	comp3
 --video-tip-block-ref	switch	EFFECTIVE	hand-batch
 --video-tip-no-hole-fill	switch	EFFECTIVE	still+table
---video-tlayer-anchor-residual	switch	REJECTED	hand-batch
---video-tlayer-drop	option	REJECTED	argsweep(2 values)
---video-tlayer-qp-offsets	option	REJECTED	argsweep(2 values)
---video-tlayer-refresh-budget	option	REJECTED	argsweep(2 values)
---video-tlayer-refresh-threshold	option	REJECTED	argsweep(2 values)
+--video-tlayer-anchor-residual	switch	OUT-OF-SCOPE	needs the env-gated chained tlayers plan
+--video-tlayer-drop	option	EFFECTIVE	resolve4(tlayers 4: 5,756 vs 8,306 B)
+--video-tlayer-qp-offsets	option	OUT-OF-SCOPE	needs the env-gated chained tlayers plan
+--video-tlayer-refresh-budget	option	OUT-OF-SCOPE	needs the env-gated chained tlayers plan
+--video-tlayer-refresh-threshold	option	OUT-OF-SCOPE	needs the env-gated chained tlayers plan
 --video-tlayers	option	EFFECTIVE	still+table(value 4)
 --video-trace	switch	INERT	per-mode(video+still)
 --video-tx-context-rate	switch	EFFECTIVE	flip(nightly)
 --video-tx-lambda	option	EFFECTIVE	argsweep(2 values)
 --video-tx-search	switch	EFFECTIVE	per-mode(video+still)
 --video-user-qm	switch	EFFECTIVE	comp5
---video-uv-delta-q	option	EFFECTIVE	resolve3(video)
+--video-uv-delta-q	option	EFFECTIVE	resolve3(plain video) 18,874 B
 --video-uv-qp-offset	option	EFFECTIVE	argsweep(2 values)
 --video-warp	switch	EFFECTIVE	comp3
 --video-wiener	switch	EFFECTIVE	flip(nightly)
---video-y-dc-delta-q	option	EFFECTIVE	resolve3(video)
---vram-cap	option	REJECTED	argsweep(2 values)
+--video-y-dc-delta-q	option	EFFECTIVE	resolve3(plain video) 19,890 B
+--vram-cap	option	OUT-OF-SCOPE	no effect in a CPU-only build
 ALPHA_CUDA_VERBOSE	env	INERT	env(=1)
 ALPHA_PRINT_GOLDENS	env	INERT	env(=1)
 AV2ENC_ALLOW_IDTX_SUB8	env	INERT	env(=1)

@@ -257,3 +257,44 @@ selectors (`spatial layer x1 is smaller than x0` -- my 2-layer geometry is
 invalid), `--recon` (needs a 10-bit core), `--vram-cap` ("no effect in this
 CPU-only build"), and the `--video-tlayer-*` family (needs the chained
 `--video-tlayers` plan).
+
+## SVC geometry, tlayer plan, and the final scope split (`resolve4.txt`)
+
+The 2-layer carrier was inverted: the **larger** layer is `x1`. With
+`--svc-layers x0=240x120,x1=480x240` the SVC path runs (31,056 B) and the layer
+selectors are judged on it:
+
+| option | verdict |
+|---|---|
+| `--oppoint 1` | INERT on the SVC carrier |
+| `--spatial-layers 2` | INERT |
+| `--video-segments` | INERT |
+| `--video-uv-delta-q`, `--video-y-dc-delta-q` | INERT here, **EFFECTIVE** on plain video (18,874 / 19,890 B) |
+
+With the tlayer family armed (`--video-tlayers 4`, 8,306 B):
+
+| option | verdict |
+|---|---|
+| `--video-tlayer-drop 0` | **EFFECTIVE** 5,756 B |
+| `--still-ist-scale` (with `--still-ist`) | INERT |
+| `--still-rdo-scale` (with `--still-rdo-intra`) | **EFFECTIVE** 4,166 vs 4,176 B |
+| `--still-tcq-scale` (with `--still-tcq`) | **EFFECTIVE** 1,018 vs 3,645 B |
+| `--still-tx-type-scale` (with `--still-tx-type`) | INERT |
+| `--video-num-ref-frames 4` (domain [4,8]) | **EFFECTIVE** 18,856 vs 18,845 B |
+
+### Scope split, stated explicitly
+
+Ten rows are marked **OUT-OF-SCOPE** rather than judged, because the reason is a
+property of this environment or of the format, not of the switch:
+
+| row | why |
+|---|---|
+| `--video-gpu`, `--still-gpu`, `--vram-cap` | CUDA-only; this is a CPU-only build |
+| `--gpu-plan` | a host-planning dry run; it cannot be combined with an encode |
+| `--recon` | needs a 10-bit core this build does not accept (tried 4:2:2 as well) |
+| `--svc-inter-layer` | not a conforming AV2 v1.0.0 feature (§6.8.2) |
+| `--video-tlayer-{qp-offsets,anchor-residual,refresh-budget,refresh-threshold}` | need the env-gated chained tlayers plan |
+
+### Final totals
+
+**524 rows -- 231 EFFECTIVE, 276 INERT, 1 OWN-WRITER-OK, 10 OUT-OF-SCOPE, 6 REJECTED.**
