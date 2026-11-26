@@ -1113,3 +1113,32 @@ this is a *pulldown/frozen-content* win, not a general coding-efficiency win.
 **Retires the earlier plan:** force-skip (estimated ~+0.11 K) is unnecessary;
 the SEF form is strictly better because it removes the 40-80 B inter-frame
 floor as well as the residual.
+
+## Still-image cross-encoder check at 25 KB (`src720.png`, 1280x720, intra only)
+
+Measured 2026-11-26 against `SvtAv1EncApp --preset 0 --qp N` (constant QP, not
+CRF: CRF lets the encoder vary the quantiser and is not like-for-like),
+avmdec/dav1d decode, `tools/quality.py` CVVDP.
+
+| arm | bytes | cvvdp | PSNR-Y |
+|---|---:|---:|---:|
+| shipped `--nightly` QP212 | 25,168 | 7.2415 | 24.668 |
+| stack arm QP186 | 24,094 | 7.2506 | 24.580 |
+| stack arm QP182 | 28,118 | 7.4412 | 24.996 |
+| SVT --qp 54 | 26,566 | 7.5206 | 25.612 |
+| SVT --qp 56 | 20,622 | 7.2166 | 24.876 |
+
+Interpolated to matched bytes:
+
+| rate | shipped `--nightly` | stack arm | SVT const-QP | gap |
+|---|---:|---:|---:|---:|
+| 25,000 B | 7.2323 | **7.2935** | **7.4405** | -0.147 (stack), -0.208 (shipped) |
+| 25,600 B | 7.2593 | 7.3219 | 7.4712 | -0.149 (stack), -0.212 (shipped) |
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Assume the shipped preset is our best still encoder | The TX HF-mask / textured-lambda / RD-driver stack gains **+0.061 JOD** at matched bytes over `--nightly` (7.2935 vs 7.2323 at 25 KB) | Quote the stack arm when comparing against other encoders |
+| CONFIRMED | Assume the intra gap is closed | At K = 7.44 SVT needs **26,566 B** and the stack arm **28,118 B** (+5.8 %); the shipped path needs 31,896 B (+20.1 %) | Intra is still ~0.15 JOD and ~6 % rate behind SVT at this operating point |
+
+Note this is intra-only, so it is untouched by the SEF-duplicate win (that needs
+inter frames). Both findings are independent.
