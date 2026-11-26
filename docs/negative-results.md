@@ -1338,3 +1338,27 @@ matched bytes is slightly larger than quoted.
 Speed: `--cpu-used=0` at qp200 gave 5,154 B in 996 s against `--cpu-used=2`'s
 5,142 B in 217 s -- 12 bytes apart at 4.6x the time, so the speed setting is not
 a confound for size at this operating point.
+
+## Which pricing makes av2enc lose the still? None of them (three no-ops)
+
+The intra leaf cost is `2.0 + luma_plan_bits(intra_y, false) + estimate_tx_bits(u/v) + syntax`,
+and `luma_plan_bits` contains the `nonzero * 2.5 + eob * 0.5` heuristic whose position
+term is proven double-counted. So the obvious hypothesis was that the intra
+decisions are mispriced the same way the inter ones were.
+
+Tested three independent switches on `src720.png` at QP212 unless noted:
+
+| switch | what it changes | result |
+|---|---|---|
+| `AV2ENC_RATE_HYBRID_S=1` | coefficient model in the decisions | **byte-identical**, 25,168 B / 7.2415 |
+| `AV2ENC_DECISION_EXACT_RATE=1` | TX-search §8.3 rate instead of the heuristic | **byte-identical**, 25,168 B / 7.2415 |
+| `AV2ENC_INTRA_COEFF_PRICE=1` (new, gated) | intra luma price = corrected model, no `eob*0.5` | **byte-identical**: QP206 31,896 B / 7.5190, QP210 27,493 B / 7.3437 — exactly the heuristic sizes |
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED - negative | Chase coefficient pricing to close the intra gap | Three reachable pricings change nothing: the intra decisions are insensitive to them, so no amount of fixing them moves the still | Treat the intra gap as **model error** (syntax/tool choices), as `Cause.no_affine_bias_fits` and `SpecOptimal` already imply |
+| CONFIRMED | Assume an inter-chain finding transfers to intra | The same model is on both paths and is inert on one of them; the inter pricing fix (+0.027 JOD) is worth exactly 0 here | Measure each path separately -- the intra path needed its own call-site gate to be tested at all |
+
+Context: AVM on this still is 24,875 B / 7.6873 against our best 25,081 B / 7.2935.
+That 0.394 JOD is now attributable to the tool set, not to a pricing bug we can
+point at -- which is the honest answer, and a negative worth as much as a fix.

@@ -5756,8 +5756,17 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
         measured.distortion += static_cast<double>(
             sse_vis(2, acx0, acy0, cw, ch, intra_v.recon));
       }
+      // AV2ENC_INTRA_COEFF_PRICE: price the intra luma residual with the
+      // corrected R09 model (no double-counted `eob * 0.5` position term)
+      // instead of the `nonzero * 2.5 + eob * 0.5` heuristic.  This is the
+      // pricing the measured intra gap points at; it is gated because it
+      // changes every intra stream.
+      static const bool intra_corrected_price =
+          std::getenv("AV2ENC_INTRA_COEFF_PRICE") != nullptr;
       measured.bits =
-          2.0 + luma_plan_bits(intra_y, false) +
+          2.0 + (intra_corrected_price
+                     ? laplacian_plan_bits(intra_y, false)
+                     : luma_plan_bits(intra_y, false)) +
           estimate_tx_bits(intra_u, false) +
           estimate_tx_bits(intra_v, false) +
           intra_luma_syntax_bits(intra_y_mode, intra_y_angle_delta,
