@@ -1,0 +1,73 @@
+--still-ccso-bands	REJECTED	base still (value 1) :: av2enc: missing value after '--still-ccso-bands'
+--still-cdef-strengths	REJECTED	base still (value 1) :: av2enc: missing value after '--still-cdef-strengths'
+--still-cfl-ds	EFFECTIVE	base still (4198 B)
+--still-depth	INERT	base still (value 1) (4198 B)
+--still-ibc-search	REJECTED	base still (value 1) :: av2enc: missing value after '--still-ibc-search'
+--still-ist-scale	REJECTED	base still :: av2enc: --still-ist-scale requires a positive number
+--still-qm-level	REJECTED	base still (value 1) :: av2enc: missing value after '--still-qm-level'
+--still-rdo-scale	REJECTED	base still :: av2enc: --still-rdo-scale requires a positive number
+--still-rdoq-scale	REJECTED	base still :: av2enc: --still-rdoq-scale requires a positive number
+--still-seg-delta	REJECTED	base still (value 1) :: av2enc: missing value after '--still-seg-delta'
+--still-tcq-scale	REJECTED	base still :: av2enc: --still-tcq-scale requires a positive number
+--still-tx-type-scale	REJECTED	base still :: av2enc: --still-tx-type-scale requires a positive number
+--still-delta-q-res	REJECTED	base still (value 1) :: av2enc: missing value after '--still-delta-q-res'
+--still-ddt	REJECTED	base still :: av2enc: --still-ddt is not signallable in a still picture: DDT/DDTX/FD
+--still-sdp	REJECTED	base still :: av2enc: error: SDP sub-tree partitions are not wired: node 22 at 64x64
+--still-gpu	REJECTED	base still :: av2enc: --qp must be an integer in [0, 303] (255 is MaxQ at 8-bit, 303
+--svc-embedded	REJECTED	base svc (value 1) :: av2enc: unknown option '--svc-'
+--svc-inter-layer	REJECTED	base svc :: av2enc: --svc-inter-layer is not a conforming AV2 v1.0.0 feature: §6.8
+--svc-layers	EFFECTIVE	base svc (18876 B)
+--svc-lcr-id	REJECTED	base svc (value 1) :: av2enc: unknown option '--svc-'
+--svc-temporal	REJECTED	base svc (value 1) :: av2enc: unknown option '--svc-'
+--spatial-layers	REJECTED	base svc (value 1) :: av2enc: unknown option '--svc-'
+--bitrate	REJECTED	base rate :: av2enc: --rc must be cqp, crf or vbr
+--crf	REJECTED	base rate :: av2enc: --rc must be cqp, crf or vbr
+--rc	REJECTED	base rate :: av2enc: --rc must be cqp, crf or vbr
+--oppoint	REJECTED	base rate :: av2enc: unknown option '--svc-'
+--gpu-plan	REJECTED	base rate (value 1) :: av2enc: missing value after '--gpu-plan'
+--vram-cap	REJECTED	base rate :: av2enc: --vram-cap requires a non-negative MiB value
+--lossless-fsc	EFFECTIVE	base lossless (57134 B)
+--video-lossless-b	REJECTED	base lossless :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+--video-aq-bias	REJECTED	base video :: av2enc: --video-aq-bias must be an integer in [-8, 8]
+--video-aq-clamp	REJECTED	base video :: av2enc: --video-aq-clamp must be an integer in [1, 8]
+--video-aq-strength	REJECTED	base video :: av2enc: --video-aq-strength must be a number in [-16, 16]
+--video-bru	REJECTED	base video :: av2enc: --video-bru is not decoder-gated: the pinned dav2d does not pa
+--video-ccso-refit	EFFECTIVE	base video (value 1) (18422 B)
+--video-cdef-damping	REJECTED	base video (value 1) :: av2enc: --video-cdef-damping must be an integer in [3, 6]
+--video-cdef-rd-lambda	EFFECTIVE	base video (value 1) (18206 B)
+--video-cdef-search	REJECTED	base video (value 1) :: av2enc: --video-cdef-search must be full, ladder, step or fast
+--video-cfl-ds-filter	INERT	base video (value 1) (18845 B)
+--video-delta-q-res	REJECTED	base video :: av2enc: --video-delta-q-res must be an integer in [0, 3]
+--video-idtx-1d	REJECTED	base video :: av2enc: unknown option '--strict'
+--video-leading	REJECTED	base video (value 1) :: av2enc: error: --video-leading: leading + regular frames exceed the 8 
+--video-mv-precision	REJECTED	base video (value 1) :: av2enc: --video-mv-precision must be eighth, quarter or half
+--video-num-ref-frames	REJECTED	base video (value 1) :: av2enc: --video-num-ref-frames must be an integer in [4, 8]
+--video-olk	REJECTED	base video :: av2enc: error: --video-olk requires exactly 4 input frames (CLK, OLK, 
+--video-partition-rd-depth	REJECTED	base video (value 1) :: av2enc: missing value after '--video-partition-rd-depth'
+--video-ras	REJECTED	base video :: av2enc: error: --video-ras requires exactly 3 input frames (CLK, SWITC
+--video-rd-preset	REJECTED	base video (value 1) :: av2enc: --video-rd-preset expects 'quality' or 'best' (the measured ro
+--video-rdoq-scale	REJECTED	base video (value 1) :: av2enc: missing value after '--video-rdoq-scale'
+--video-seg-delta	REJECTED	base video :: av2enc: --video-seg-delta must be an integer in [-351, 351]
+--video-segments	REJECTED	base video :: av2enc: --video-segments must be an integer in [1, 16]
+--video-switch	REJECTED	base video :: av2enc: error: --video-switch requires exactly 2 input frames (CLK, SW
+--video-tier	REJECTED	base video (value 1) :: av2enc: --video-tier expects 'high' or 'main'
+--video-tlayer-drop	REJECTED	base video (value 1) :: av2enc: --video-tlayers must be a positive integer
+--video-tlayer-qp-offsets	REJECTED	base video (value 1) :: av2enc: --video-tlayer-qp-offsets expects four comma-separated integer
+--video-tlayer-refresh-budget	REJECTED	base video (value 1) :: av2enc: --video-tlayers must be a positive integer
+--video-tlayer-refresh-threshold	REJECTED	base video (value 1) :: av2enc: --video-tlayers must be a positive integer
+--video-uv-delta-q	REJECTED	base video :: av2enc: --video-uv-delta-q must be an integer in [-63, 63]
+--video-y-dc-delta-q	REJECTED	base video :: av2enc: --video-y-dc-delta-q must be an integer in [-23, 8] (DELTA_DCQ
+--b-frames	REJECTED	base video :: av2enc: --video-gops must be a positive integer
+--effort-plan	REJECTED	base other :: av2enc: --effort/--cpu-used is calibrated for --still only; there is n
+--nightly-b	REJECTED	base other :: av2enc: --video-tlayers must be a positive integer
+--video-gpu	REJECTED	base other :: av2enc: --cpu-threads must be an integer in [0, 256] (0 = auto, 1 = se
+--video-tlayer-anchor-residual	REJECTED	base other :: av2enc: --video-tlayers must be a positive integer
+--cpu-threads	INERT	base other (value 1) (18845 B)
+--cpu-used	REJECTED	base other :: av2enc: --effort/--cpu-used is calibrated for --still only; there is n
+--effort	REJECTED	base other :: av2enc: --effort/--cpu-used is calibrated for --still only; there is n
+--frames	INERT	base other (18845 B)
+--chroma	INERT	base other (18845 B)
+--recon	REJECTED	base other (value 1) :: av2enc: --bit-depth must be 8 or 10 (12-bit is not signalable in AV2 v
+--video):	REJECTED	base other :: av2enc: unknown option '--video):'
+--video-bawp):	REJECTED	base other :: av2enc: unknown option '--video-bawp):'
+--video-palette/--video-ibc/--video-morph	REJECTED	base other :: av2enc: unknown option '--video-palette/--video-ibc/--video-morph'

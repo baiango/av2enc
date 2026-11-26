@@ -116,3 +116,34 @@ while armed on this clip.
 So `Q_LO` joins the live list; `BYTES` is inert by construction for positive
 values; the four TAIL_FLOOR gates and `P_DRIFT_{LAST,K}` are inert **while
 armed**, which is a different and stronger statement than "unjudged".
+
+
+## The rejected set, re-run in its own mode (`rejected-resolution.txt`)
+
+The 70 REJECTED + 3 NO-TABLE-ENTRY names were re-run in the mode their family
+implies (still options under `--still`, SVC options on an `--alllayers` carrier,
+rate-control options without `--qp`, lossless options on the lossless writer),
+with a value supplied (`1`, or `x0=480x240` for `--svc-layers`) and one round of
+companion resolution from the encoder's own error text.
+
+Result: **5 EFFECTIVE**, **5 INERT**, **63 still REJECTED**.
+
+```
+--still-cfl-ds           EFFECTIVE  4,198 B baseline
+--svc-layers             EFFECTIVE  18,876 B baseline (x0=480x240)
+--lossless-fsc           EFFECTIVE  57,134 B (own writer)
+--video-ccso-refit       EFFECTIVE  18,422 B
+--video-cdef-rd-lambda   EFFECTIVE  18,206 B
+--still-depth, --video-cfl-ds-filter, --cpu-threads, --frames, --chroma  INERT
+```
+
+The remaining 65 rows (63 from this pass plus 2 still-mode rejects) each carry
+the encoder's own message, e.g. `--video-olk requires --video-...`,
+`--video-aq-bias must be a ...`, `unknown option '--video): '`. They are
+**rejected with a stated reason**, not judged inert.
+
+### Verdict column normalised
+
+Every row now reads exactly one of `EFFECTIVE`, `INERT`, `OWN-WRITER-OK` or
+`REJECTED` (the `EFFECTIVE+COMP`, `NO-TABLE-ENTRY` and `FAILED` spellings are
+gone). Final table: **527 rows -- 202 EFFECTIVE, 259 INERT, 1 OWN-WRITER-OK, 65 REJECTED, 0 duplicates.**

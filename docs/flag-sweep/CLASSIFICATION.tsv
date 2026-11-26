@@ -6,17 +6,17 @@ name	surface	verdict	evidence
 --bit-depth	option	INERT	per-mode(args)
 --bitrate	option	REJECTED	argsweep(2 values)
 --cdf-continuity	switch	INERT	per-mode(video+still)
---chroma	option	REJECTED	argsweep(2 values)
---cpu-threads	option	REJECTED	argsweep(2 values)
+--chroma	option	INERT	resolve(other)
+--cpu-threads	option	INERT	resolve(other, value 1)
 --cpu-used	option	REJECTED	argsweep(2 values)
 --crf	option	REJECTED	argsweep(2 values)
 --effort	option	REJECTED	argsweep(2 values)
 --effort-plan	switch	REJECTED	hand-batch
 --fast-decode	switch	EFFECTIVE	per-mode(video+still)
---frames	option	REJECTED	argsweep(2 values)
+--frames	option	INERT	resolve(other)
 --gpu-plan	option	REJECTED	argsweep(2 values)
 --lossless	switch	OWN-WRITER-OK	still+table
---lossless-fsc	switch	REJECTED	hand-batch
+--lossless-fsc	switch	EFFECTIVE	resolve(lossless)
 --metadata-banding	switch	EFFECTIVE	flip(nightly)
 --metadata-cll	switch	EFFECTIVE	flip(nightly)
 --metadata-frame-hash	switch	EFFECTIVE	hand-batch
@@ -44,7 +44,7 @@ name	surface	verdict	evidence
 --still-cdef	switch	EFFECTIVE	still+table/still
 --still-cdef-on-skip-txfm	switch	EFFECTIVE	hand-batch
 --still-cdef-strengths	switch	REJECTED	plain-rejudge
---still-cfl-ds	option	REJECTED	argsweep(2 values)
+--still-cfl-ds	option	EFFECTIVE	resolve(still, value 1)
 --still-cfl-explicit	switch	EFFECTIVE	still+table/still
 --still-chroma-lr	switch	EFFECTIVE	still+table/still
 --still-content-interpretation	switch	EFFECTIVE	still+table/still
@@ -54,7 +54,7 @@ name	surface	verdict	evidence
 --still-deblock	switch	INERT	still+table/still
 --still-delta-q	switch	EFFECTIVE	still+table/still
 --still-delta-q-res	switch	REJECTED	plain-rejudge
---still-depth	option	REJECTED	argsweep(2 values)
+--still-depth	option	INERT	resolve(still, value 1)
 --still-dip	switch	EFFECTIVE	still+table/still
 --still-ext-partitions	switch	EFFECTIVE	still+table/still
 --still-full-intra	switch	EFFECTIVE	still+table/still
@@ -96,19 +96,19 @@ name	surface	verdict	evidence
 --still-wiener	switch	EFFECTIVE	still+table/still
 --svc-embedded	option	REJECTED	argsweep(2 values)
 --svc-inter-layer	switch	REJECTED	comp5/still
---svc-layers	option	REJECTED	argsweep(2 values)
+--svc-layers	option	EFFECTIVE	resolve(svc, x0=480x240)
 --svc-lcr-id	option	REJECTED	argsweep(2 values)
 --svc-temporal	option	REJECTED	argsweep(2 values)
 --tiles	option	INERT	per-mode(args)
 --video	switch	INERT	per-mode(video+still)
---video):	switch	NO-TABLE-ENTRY	still+table
+--video):	switch	REJECTED	still+table
 --video-adaptive-mvd	switch	EFFECTIVE	comp3
 --video-aq	switch	EFFECTIVE	comp3
 --video-aq-bias	option	REJECTED	argsweep(2 values)
 --video-aq-clamp	option	REJECTED	argsweep(2 values)
 --video-aq-strength	option	REJECTED	argsweep(2 values)
 --video-bawp	switch	EFFECTIVE	per-mode(video+still)
---video-bawp):	switch	NO-TABLE-ENTRY	still+table
+--video-bawp):	switch	REJECTED	still+table
 --video-bawp-carrier	switch	EFFECTIVE	per-mode(video+still)
 --video-brt	switch	EFFECTIVE	flip(nightly)
 --video-bru	switch	REJECTED	plain-rejudge
@@ -117,18 +117,18 @@ name	surface	verdict	evidence
 --video-ccso-header-rd	switch	EFFECTIVE	per-mode(video+still)
 --video-ccso-lambda	option	EFFECTIVE	argsweep(2 values)
 --video-ccso-rd	switch	EFFECTIVE	per-mode(video+still)
---video-ccso-refit	option	REJECTED	argsweep(2 values)
+--video-ccso-refit	option	EFFECTIVE	resolve(video, value 1)
 --video-ccso-unit-bits	option	EFFECTIVE	per-mode(args)
 --video-cctx	switch	EFFECTIVE	flip(nightly)
 --video-cdef	switch	EFFECTIVE	per-mode(video+still)
 --video-cdef-damping	option	REJECTED	argsweep(2 values)
 --video-cdef-rd	switch	EFFECTIVE	per-mode(video+still)
---video-cdef-rd-lambda	option	REJECTED	argsweep(2 values)
+--video-cdef-rd-lambda	option	EFFECTIVE	resolve(video, value 1)
 --video-cdef-search	option	REJECTED	argsweep(2 values)
 --video-cdef-strength	option	EFFECTIVE	per-mode(args)
 --video-cdf-per-frame-qp	switch	EFFECTIVE	flip(nightly)
 --video-cfl	switch	EFFECTIVE	flip(nightly)
---video-cfl-ds-filter	option	REJECTED	argsweep(2 values)
+--video-cfl-ds-filter	option	INERT	resolve(video, value 1)
 --video-chroma-lr	switch	EFFECTIVE	flip(nightly)
 --video-compound	switch	EFFECTIVE	comp5
 --video-compound-diffwtd	switch	EFFECTIVE	hand-batch
@@ -161,7 +161,7 @@ name	surface	verdict	evidence
 --video-gops	option	INERT	per-mode(args)
 --video-gpu	switch	REJECTED	hand-batch
 --video-grain	switch	EFFECTIVE	flip(nightly)
---video-head-tx	switch	EFFECTIVE+COMP	comp3
+--video-head-tx	switch	EFFECTIVE	comp3 (+companion)
 --video-ibc	switch	EFFECTIVE	comp3
 --video-ibp	switch	EFFECTIVE	flip(nightly)
 --video-idtx	switch	EFFECTIVE	flip(nightly)
@@ -195,7 +195,7 @@ name	surface	verdict	evidence
 --video-olk	switch	REJECTED	plain-rejudge
 --video-opfl	switch	EFFECTIVE	hand-batch
 --video-palette	switch	EFFECTIVE	comp3
---video-palette/--video-ibc/--video-morph	switch	NO-TABLE-ENTRY	still+table
+--video-palette/--video-ibc/--video-morph	switch	REJECTED	still+table
 --video-partition-rd	switch	EFFECTIVE	per-mode(video+still)
 --video-partition-rd-depth	option	REJECTED	argsweep(2 values)
 --video-partition-rd-lambda	option	EFFECTIVE	argsweep(2 values)
@@ -220,7 +220,7 @@ name	surface	verdict	evidence
 --video-same-ref-compound	switch	EFFECTIVE	comp3
 --video-sb128	switch	EFFECTIVE	comp3
 --video-sb256	switch	EFFECTIVE	comp3
---video-scc-force	switch	EFFECTIVE+COMP	comp3
+--video-scc-force	switch	EFFECTIVE	comp3 (+companion)
 --video-sdp	switch	EFFECTIVE	comp3
 --video-sef	switch	EFFECTIVE	comp3
 --video-seg-delta	option	REJECTED	argsweep(2 values)
@@ -229,13 +229,13 @@ name	surface	verdict	evidence
 --video-seg-temporal	switch	EFFECTIVE	comp3
 --video-segmentation	switch	EFFECTIVE	comp3
 --video-segments	option	REJECTED	argsweep(2 values)
---video-seq-seg-info	switch	EFFECTIVE+COMP	comp3
---video-seq-seg-info-frozen	switch	EFFECTIVE+COMP	comp3
+--video-seq-seg-info	switch	EFFECTIVE	comp3 (+companion)
+--video-seq-seg-info-frozen	switch	EFFECTIVE	comp3 (+companion)
 --video-short-refresh	switch	EFFECTIVE	comp3
 --video-skip-collapse	switch	EFFECTIVE	flip(nightly)
 --video-subpel-eighth	switch	EFFECTIVE	per-mode(video+still)
 --video-switch	switch	REJECTED	plain-rejudge
---video-tail-tx	switch	EFFECTIVE+COMP	comp3
+--video-tail-tx	switch	EFFECTIVE	comp3 (+companion)
 --video-tcq	switch	EFFECTIVE	comp3
 --video-tier	switch	REJECTED	plain-rejudge
 --video-tile-flush-min	switch	EFFECTIVE	per-mode(video+still)
@@ -295,7 +295,7 @@ AV2ENC_EOB_DUMP	env	INERT	env(=1)
 AV2ENC_EXACT_RD	env	EFFECTIVE	env(=1)
 AV2ENC_EXACT_RD_PARTITION	env	INERT	env(=1)
 AV2ENC_EXACT_RD_TOP	env	INERT	env(=1)
-AV2ENC_FRAME_QP_PLAN	env	FAILED	env(=1)
+AV2ENC_FRAME_QP_PLAN	env	REJECTED	env(=1)
 AV2ENC_GME_UNPROVEN_WARP	env	INERT	env(=1)
 AV2ENC_INTERP_BLOCK	env	EFFECTIVE	env(=1)
 AV2ENC_INTERP_BLOCK_CSF	env	INERT	env(=1)
@@ -313,7 +313,7 @@ AV2ENC_PART_DIAG_STATS	env	INERT	env(=1)
 AV2ENC_PART_DIAG_TRACE	env	INERT	env(=1)
 AV2ENC_PART_PROBE_CHROMA	env	EFFECTIVE	env(=1)
 AV2ENC_PART_TREE	env	INERT	env(=1)
-AV2ENC_PERCEPTUAL_FILTER	env	FAILED	env(=1)
+AV2ENC_PERCEPTUAL_FILTER	env	REJECTED	env(=1)
 AV2ENC_PERCEPTUAL_RD	env	INERT	env(=1)
 AV2ENC_PIPE_BA	env	EFFECTIVE	env(=1)
 AV2ENC_PIPE_BA_W	env	INERT	env(=1)
