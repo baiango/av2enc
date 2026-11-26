@@ -247,33 +247,3 @@ the coefficient model exact, and nothing about which tool SVT has that we lack.
 It converts "we are 0.147 JOD behind" into "how much of that is mispricing",
 which is answerable by measurement — and the measurement now says most of the
 observable model error is in coefficients.
-
-## Cause.lean — can the *cause* be proved?
-
-**No, not positively.** A discrepancy proves the model is wrong; it cannot prove
-which mechanism produced it. "The numbers fit mechanism X, therefore X caused
-them" is abduction — any flexible hypothesis fits three points.
-
-**Proved: elimination.** `no_affine_bias_fits` shows that the additive family
-`price = overhead + magnitude + position·eob`, whose bias against the coder is
-affine in `eob`, **cannot reproduce the three measurements at any constants**:
-the secant slopes disagree (`456·4401 ≠ 1406·1619`). So the defect is not a
-tuning constant — the family is misspecified, and further constant-fitting
-cannot succeed by construction. (Both early "fixes" in this session were exactly
-that, and both left residual error.)
-
-With the two measured eliminations this gives:
-
-| candidate cause | status |
-|---|---|
-| static model; adaptive contexts would fix it | **ruled out** (adaptive has the same bias: −7.86 vs −9.00 @QP198) |
-| a wrong constant in the additive family | **ruled out by proof** (`no_affine_bias_fits`) |
-| 4x4 partitions intrinsically worse | **ruled out** (`Partition.lean`) |
-| residual cost is non-additive over scan positions (context state / TX shape / significance-map structure) | **surviving hypothesis** — supported by elimination, not measured directly |
-
-**What would establish a cause positively:** a predicted-delta intervention —
-change one term, predict the bias movement, measure that it moves by exactly
-that. The `0.5 → 0` position change did move it by the predicted `−0.31·eob`
-(16.0 → 3.0 bits mean absolute), which is causal evidence that the double-counted
-position term was *a* cause. It was not the whole cause: the surviving −3.5..+4.6
-bit spread is precisely what elimination 2 says no additive form can absorb.

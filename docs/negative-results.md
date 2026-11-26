@@ -1197,20 +1197,56 @@ Default-path pins unchanged (the historical `search_plan_estimate_bits` is
 untouched): fast-decode `0639b436`, nightly-b `8f0b85d8`, milestone `9a8ee8d5`,
 stack 25081 B / `3705ac02`.
 
-## Can the *cause* of the pricing error be proved?
+## A "best settings" pipeline is not the union of the levers: the still-tuned stack does not transfer
 
-No -- not positively. A discrepancy proves the model is wrong; it cannot prove
-which mechanism produced it, and fitting a mechanism to three points is
-abduction, not proof. What is provable is elimination, and three are available:
+Built `tools/pipeline_best.sh` to combine every lever measured positive this
+session, then measured it at matched bytes on `space8k_1440x720_60f`.
 
-| candidate cause | verdict | basis |
-|---|---|---|
-| the model is static; adaptive contexts would fix it | **ruled out** | measured: `coeff_exact` (write-time -log2 p, real contexts) has the same bias as the analytic model (-7.86 vs -9.00 @QP198) |
-| a wrong constant in the additive family `overhead + magnitude + position*eob` | **ruled out by proof** | `Cause.no_affine_bias_fits`: the bias is affine in eob under that family, and the three measured points are not collinear (`456*4401 != 1406*1619`) |
-| 4x4 partitions intrinsically worse | **ruled out** | `Partition.lean` + the measured 4x4 loss |
-| residual cost is **non-additive** over scan positions (context state, TX shape, significance-map structure) | **surviving hypothesis** | supported by the three eliminations; not measured directly |
+**v1 (SEF duplicates + corrected pricing + the still-tuned stack): catastrophic.**
+
+| stage | result |
+|---|---|
+| QP needed to hit 37,798 B | **239** (plain `--nightly` needs 198) |
+| bytes at QP195 | 60,476 (plain `--nightly` ~40 KB) |
+| quality at 37,975 B | cvvdp **3.1191**, PSNR-Y **24.47** |
+
+**-4.10 JOD** against the 7.2165 baseline. The stack (TX HF-mask, textured
+lambda, RD driver, chroma offset -23, `--video-gdf`) was measured on a *still*
+and was worth +0.061 JOD there; on an inter chain it inflates rate and collapses
+quality at high QP. Assuming it transfers was the error.
+
+**Ablation (SEF + corrected pricing only, plain `--nightly`):**
+
+| arm | bytes | cvvdp | PSNR-Y |
+|---|---:|---:|---:|
+| baseline QP198 | 37,798 | 7.2165 | 31.486 |
+| SEF+pricing QP190 | 38,586 | 7.5257 | 32.047 |
+| SEF+pricing QP193 | 36,001 | 7.4001 | 31.825 |
+| **SEF+pricing interpolated to 37,798 B** | 37,798 | **~7.487** | ~31.98 |
 
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
-| PROVEN | Keep re-fitting constants | The family is provably misspecified (`no_affine_bias_fits`), so no constant can work -- both early attempts left residual error, exactly as the theorem requires | Change the functional form: price the significance map structurally (per-position context), not as `const + k*eob` |
-| CONFIRMED | Cite a mechanism as *the* cause because it fits the numbers | Three points fit many hypotheses; that is abduction | Use predicted-delta interventions: the 0.5->0 change moved the bias by the predicted -0.31*eob, establishing it as *a* cause (not the only one) |
+| CONFIRMED - negative | Ship a pipeline as the union of all measured-positive levers | The still-tuned stack transfers at **-4.10 JOD** on an inter chain; a lever measured on intra is not evidence for inter | Build the pipeline from levers measured **on the chain you are shipping**, and ablate |
+| CONFIRMED | Compare pipelines at matched QP | v1 needed QP239 where baseline needs QP198 for the same bytes -- QP is not a common operating point | Bisect QP to matched bytes (`tools/pipeline_best.sh`) |
+
+## Pipeline v2: SEF + corrected pricing, plain `--nightly` chain
+
+`tools/pipeline_best.sh <src> <out> <target_bytes>` bisects QP against stream
+size, so the comparison is at matched bytes.
+
+| arm | bytes | cvvdp | PSNR-Y |
+|---|---:|---:|---:|
+| baseline `--nightly` QP198 | 37,798 | 7.2165 | 31.486 |
+| **pipeline v2 (QP191)** | **37,612** | **7.4896** | 31.955 |
+
+**+0.273 JOD at matched bytes**, and 186 B *smaller* than the baseline point.
+`avmdec` decodes 60/60 and `tools/validate_avmdec.py` reports OK. That is ~25 %
+of the measured 1.10 JOD SVT gap, from two changes that are both understood:
+not coding duplicates, and a coefficient price that is no longer double-counted.
+
+Honest scope: the win is almost entirely the duplicate suppression, so it is a
+*pulldown / frozen-content* result. On content with no near-duplicates the same
+pipeline is worth the pricing fix only (+0.03 JOD at 1.25 % fewer bytes). It has
+been measured on one clip; it is not yet a shipped default, and `--nightly-b`
+(hierarchical B) does not use it because the SEF path lives in the low-delay P
+encoder.
