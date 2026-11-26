@@ -2736,6 +2736,21 @@ class InterFrameEncoder {
   // Returns true and fills `cost` when the probe can model this leaf.  Nodes
   // that cannot be predicted (sub-8, right/bottom edges outside the coded
   // extent, ME failure) are left to the caller's historical estimate.
+  // AV2ENC_PART_PROBE_CHROMA (default 0 = off): weight on the U/V cost the
+  // partition probe adds to each candidate.  The probe historically prices
+  // luma only; this lets it see a chroma-expensive split.
+  static int partition_probe_chroma_weight() {
+    static const int value = [] {
+      const char* v = std::getenv("AV2ENC_PART_PROBE_CHROMA");
+      if (v == nullptr || *v == '\0') return 0;
+      char* end = nullptr;
+      const long parsed = std::strtol(v, &end, 10);
+      if (end == v || *end != '\0') return 0;
+      return static_cast<int>(std::clamp<long>(parsed, 0, 64));
+    }();
+    return value;
+  }
+
     bool partition_probe_leaf_cost(const partition::PartitionNodeInfo& info,
                                  double lambda, double& cost) const;
 

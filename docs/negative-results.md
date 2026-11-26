@@ -750,6 +750,33 @@ extract, QP202, scored with `tools/quality.py` against the source.
 | **KEEP — the single largest lever measured (+0.54 JOD)** | Test `--video-partition-rd` by *adding* the flag under `--nightly` and conclude it is inert | `--nightly` already sets `video_partition_rd = true` (`src/cli/nightly.cpp:147`), so adding the flag changes nothing and the stream is byte-identical (`013fb546…`). That looks like inertness but is a **testing artifact**. The correct test is `--video-partition-rd-off`. space8k 12 f QP202: probe **on 16,069 B / 6.8406 JOD**; probe off 13,555 B / 5.9521, 14,366 / 6.0927, 15,078 / 6.1903, 16,236 / 6.3187 -> interpolated to 16,069 B **6.3002**, i.e. the probe is worth **+0.54 JOD at matched bytes**. | Keep it on; to size any partition change, A/B against `--video-partition-rd-off`, never by adding the flag |
 | CONFIRMED — matched-rate negative | Expect `--video-ext-partitions` to help at this operating point | Real but negative at matched bytes: space8k flat **16,069 B / 6.8406** vs ext 15,879 B / 6.7341 and 16,860 B / 6.8563 -> interpolated **6.7578 (-0.08)**; loral flat **16,608 B / 7.3182** vs ext 16,544 / 7.2803 and 17,109 / 7.3502 -> **7.2882 (-0.03)**. The space8k README's +0.05 JOD for this tool was at ~300 kbps (QP217-219); at QP202 the sign is negative | Re-test per operating point; it is not a free win |
 
+### Chroma costing in the partition probe: **POSITIVE (+0.11 JOD)**
+
+The probe priced a candidate with plane 0 only (`compute_tx(source_, 0, ...)`,
+`sse_against_source(..., 0, ...)`), so chroma distortion and chroma rate never
+entered a split decision. On the shipping preset that matters because
+`--video-uv-qp-offset -23` codes chroma *finer* than luma, so chroma is a larger
+share of the bits than at default.
+
+`AV2ENC_PART_PROBE_CHROMA=<0..64>` (default 0 = off) adds the U and V cost,
+each priced through the same measured path as luma (`predict_all` supplies the
+chroma prediction from the luma MV; `compute_tx(plane)` + `sse_against_source +
+lambda * plan_rate_bits`). Gate-off is byte-identical on all four pins.
+
+| arm | space8k @16,069 B | loral t=180 @16,608 B |
+|---|---:|---:|
+| **off (preset)** | **6.8406** | **7.3182** |
+| weight 1 | 6.9122 (**+0.072**) | — |
+| weight 4 | 6.9376 (**+0.097**) | 7.3992 (**+0.081**) |
+| weight 8 | 6.9504 (**+0.110**) | — |
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| **KEEP — positive, both clips** | Price partition nodes on luma only | Adding the chroma term is worth **+0.11 JOD on space8k and +0.08 on loral at matched bytes**, and the gain grows monotonically with the weight (1 → 4 → 8: +0.072 / +0.097 / +0.110). The probe was making split decisions blind to the plane that the `-23` chroma offset makes most expensive per bit | `AV2ENC_PART_PROBE_CHROMA=8` is the measured best of the swept weights; weights 16/32 were not swept, so the peak is not yet bracketed |
+
+Note the loral point is a small extrapolation (72 B beyond the upper bracket
+point); the space8k weight-8 point is inside its bracket.
+
 ### Probe price (`--video-partition-rd-lambda`): a tie, not a lever
 
 The probe's syntax-bit price was calibrated at 240p / 100 kbps (`2.75e-6`), so

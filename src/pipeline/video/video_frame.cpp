@@ -430,8 +430,16 @@ bool InterFrameEncoder::partition_probe_leaf_cost(const partition::PartitionNode
     std::string probe_error;
     inter::mc::Mv mv{};
     std::vector<std::uint8_t> pred;
+    // AV2ENC_PART_PROBE_CHROMA (default 0 = off): also price the U/V planes.
+    // Without it the probe decides a split on luma alone, and on the shipping
+    // preset chroma is coded finer than luma (--video-uv-qp-offset -23), so a
+    // chroma-expensive split is currently invisible to it.
+    const int chroma_weight = partition_probe_chroma_weight();
+    std::vector<std::uint8_t> pred_u, pred_v;
     if (!search_me(ref, ax0, ay0, bw, bh, mv, probe_error) ||
-        !predict_luma(ref, mv, ax0, ay0, bw, bh, pred)) {
+        !(chroma_weight > 0
+              ? predict_all(ref, mv, ax0, ay0, bw, bh, pred, pred_u, pred_v)
+              : predict_luma(ref, mv, ax0, ay0, bw, bh, pred))) {
       continue;
     }
     modeled = true;
@@ -448,6 +456,37 @@ bool InterFrameEncoder::partition_probe_leaf_cost(const partition::PartitionNode
           kPartitionProbeModeBits +
           plan_rate_bits(plan, 0, true, static_cast<int>(info.size));
       candidate = std::min(candidate, res_sse + lambda * bits);
+    }
+    if (chroma_weight > 0) {
+      // U and V at 4:2:0, each priced by the same measured TX path the luma
+      // term uses: distortion plus lambda times its own residual rate.
+      double chroma_cost = 0.0;
+      bool chroma_ok = false;
+      for (int plane = 1; plane <= 2; ++plane) {
+        const std::vector<std::uint8_t>& p = plane == 1 ? pred_u : pred_v;
+        const int cx = ax0 / 2;
+        const int cy = ay0 / 2;
+        const int cw = std::max(1, bw / 2);
+        const int ch = std::max(1, bh / 2);
+        if (p.empty() || plane_quant_[plane].ac <= 0) continue;
+        TxPlan cplan;
+        if (!compute_tx(source_, plane, cx, cy, cw, ch, p,
+                        plane_quant_[plane], cplan, probe_error,
+                        /*qm_state=*/nullptr, /*allow_tcq=*/false,
+                        /*qctx_slice=*/0, /*is_inter=*/true)) {
+          continue;
+        }
+        const double c_sse = static_cast<double>(
+            sse_against_source(source_, plane, cx, cy, cw, ch, cplan.recon));
+        const double c_bits =
+            kPartitionProbeModeBits +
+            plan_rate_bits(cplan, plane, true, static_cast<int>(info.size));
+        chroma_cost += c_sse + lambda * c_bits;
+        chroma_ok = true;
+      }
+      if (chroma_ok) {
+        candidate += chroma_weight * chroma_cost;
+      }
     }
     best = std::min(best, candidate);
   }
