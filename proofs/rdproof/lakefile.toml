@@ -1,0 +1,4 @@
+name = "rdproof"
+defaultTargets = ["RdProof"]
+[[lean_lib]]
+name = "RdProof"

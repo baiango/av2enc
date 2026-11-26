@@ -45,3 +45,10 @@ src/encoder/filters/spec_tables/raw/
 # Local subagent bug claims
 .agents/
 .oracle-cache/
+
+# Lean proof project (proofs/rdproof)
+.elan/
+.lake/
+lake-packages/
+*.olean
+*.ilean
