@@ -18,6 +18,7 @@
 #include "core/io/ivf.h"
 #include "core/io/y4m.h"
 #include "pipeline/video/video_frame.h"
+#include "pipeline/video/video_arnr.h"
 #include "codec/inter/bframes/bframes.h"
 #include "codec/inter/tlayers/tlayers.h"
 #include "codec/rate/rc/hrd/hrd.h"
@@ -1652,6 +1653,18 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
     input.u = std::span<const std::uint8_t>(f.u.data(), f.u.size());
     input.v = std::span<const std::uint8_t>(f.v.data(), f.v.size());
     inputs.push_back(input);
+  }
+
+  // AV2ENC_ARNR (default off): temporal prefilter over the resident sequence.
+  // The whole clip is already read, so the filter has both past and future
+  // frames; nothing about the frame loop or the bitstream changes, and an
+  // unset gate leaves `inputs` pointing at `owned` untouched.
+  av2enc::video::arnr::Storage arnr_storage;
+  if (av2enc::video::arnr::enabled()) {
+    if (!av2enc::video::arnr::apply(&inputs, &arnr_storage, &error)) {
+      std::cerr << "av2enc: error: " << error << "\n";
+      return 2;
+    }
   }
 
   if (!validate_video_sequence_length(options, inputs.size(), error)) {

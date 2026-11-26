@@ -680,6 +680,23 @@ stack. Every stream `validate_dav2d` OK.
 | CONFIRMED | Look for driver-λ / tree-λ headroom near the winner | λ×tree-λ grid: 6 of 8 points are **strictly dominated** (more bytes AND less K); λ304 is −1.44 K for 155 B | λ256 / tree-λ 0.10 is an interior optimum |
 | CONFIRMED | Reach for CCSO knobs to improve this stream | `--video-ccso-rd`, `--video-ccso-refit 2`, `--video-ccso-bands 3` are **byte-identical** — CCSO is off in the `--nightly-b` aggregate, so the axis does not exist here | n/a |
 
+## Temporal prefilter (ARNR) on 720p video (`src/pipeline/video/video_arnr.h`)
+
+Measured 2026-11-26 on `testdata/space8k_1440x720_60f.y4m` (1440x720/60, cut from
+the 8K orbital master; **no duplicated frames** in the first 12 — verified by
+byte comparison), 12 frames, QP202 `--nightly`, scored with `tools/quality.py`
+(CVVDP 0.5.7 `standard_fhd` MPS) against the **original** source, so filter blur
+is charged in full. Gate-off leaves all four pins byte-identical.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Expect an ARNR temporal prefilter to lift CVVDP on this content | Implemented as motion-compensated 16x16 (3-step integer search) with a per-pixel temporal inclusion test and a `strength/16` blend. Seven settings (radius 1-2, strength 4-16, threshold 1-20) all land within **+-0.0006 JOD** of the 6.8406 baseline. The aggressive arm (r2/s16/th20, 99.3 % of samples blended, 7.0 M of 18.7 M bytes changed) still measures 6.840 JOD and **costs 0.05 dB PSNR-Y** | The clip is already HEVC-coded at 138 Mbps, so its temporal noise is gone; every sample ARNR can average is real detail. ARNR needs a noisy camera source, not a transcoded master |
+
+**The mechanism is verified to reach the encoder** (6.6 M differing bytes at
+moderate settings), so this is a true null rather than a broken no-op. Note the
+lookahead it needs already exists: `run_video_encode` holds the entire clip in
+memory before coding, so the filter sees past *and* future frames.
+
 ## Flat-area 1-px checkerboard on the 720p still at 25 kB
 
 Measured 2026-11-25 on `src720_1f.y4m`, lone key, `AV2ENC_RD_DRIVER_MIN=16
