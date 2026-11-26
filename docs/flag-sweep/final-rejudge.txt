@@ -1,0 +1,26 @@
+baseline v12: 18845 B de0fe01b07ee302cd29bbf3b2f8d7236
+baseline v4: 8317 B 882ec6598acc6d2b69d73c5c07eaaea6
+baseline v6: 10555 B 9dee83d4bc19c3eaeda9fa16289ae799
+baseline v90: 105537 B 485eb138f9823ee875b766df3b7e5b8d
+baseline s: 4198 B 5798ed59f6c56aac34127e43474d6a2a
+EFFECTIVE --still-cdef-on-skip-txfm (+--still-cdef) [4212 B, base s]
+EFFECTIVE --still-grain-adaptive (+--still-grain) [4264 B, base s]
+EFFECTIVE --metadata-frame-hash (+) [4220 B, base s]
+REJECTED --effort-plan (+--effort 10) :: av2enc: effort: budget 10.0 (--effort 10); selected 1 featur
+REJECTED --video-tlayers (+--video-tlayers 3) :: av2enc: missing value after '--video-tlayers'
+REJECTED --video-tlayer-anchor-residual (+--video-tlayers 3 --video-gops 2) :: av2enc: --b-frames cannot be combined with the temporal-laye
+EFFECTIVE --video-mvd-sign-derive (+--video-mv-precision half) [26192 B, base v12]
+EFFECTIVE --video-tip-block-ref (+--video-tip --video-ref-mvs --video-force-single) [8267 B, base v6]
+EFFECTIVE --video-compound-near-near (+--video-compound) [8318 B, base v4]
+EFFECTIVE --video-compound-wedge (+--video-compound) [8323 B, base v4]
+EFFECTIVE --video-compound-diffwtd (+--video-compound) [8321 B, base v4]
+EFFECTIVE --video-cwp-weighted (+--video-compound --video-compound-near-near --video-imp-mask) [8322 B, base v4]
+EFFECTIVE --video-imp-mask (+--video-compound --video-compound-near-near --video-cwp-weighted) [8322 B, base v4]
+EFFECTIVE --video-opfl (+--video-compound --video-compound-near-near --video-refine-mv) [8323 B, base v4]
+EFFECTIVE --video-refine-mv (+--video-compound --video-compound-near-near --video-opfl) [8323 B, base v4]
+EFFECTIVE --video-qm (+) [53622 B, base v90]
+EFFECTIVE --video-rdoq (+--video-inter-residual) [18285 B, base v12]
+EFFECTIVE --adaptive-cdf (+--avg-cdf) [17722 B, base v12]
+REJECTED --lossless-fsc (+--video) :: av2enc: --lossless-fsc requires --lossless or --video-lossle
+REJECTED --video-gpu (+) :: av2enc: --cpu-threads is a CPU reference knob; the GPU backe
+REJECTED --nightly-b (+) :: av2enc: --video-edge-inter is measured on the low-delay P ch

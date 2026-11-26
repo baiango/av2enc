@@ -1,0 +1,78 @@
+video baseline  18845 B de0fe01b07ee302cd29bbf3b2f8d7236
+still baseline  4198 B 5798ed59f6c56aac34127e43474d6a2a
+EFFECTIVE --alllayers (+--svc-layers x0=480x240)
+NO-TABLE-ENTRY --metadata-frame-hash :: av2enc: error: --metadata-frame-hash is wired into the sti
+NO-TABLE-ENTRY --adaptive-cdf (cleaned from --adaptive-cdf;) :: av2enc: --adaptive-cdf on the video path needs --avg-cdf: 
+NO-TABLE-ENTRY --effort-plan :: av2enc: --effort/--cpu-used is calibrated for --still only
+OWN-WRITER-OK --lossless [45070 B]
+NO-TABLE-ENTRY --lossless-fsc :: av2enc: --lossless-fsc requires --lossless or --video-loss
+STILL-EFFECTIVE --no-deblock
+NO-TABLE-ENTRY --nightly-b :: av2enc: --video-edge-inter is measured on the low-delay P 
+STILL-EFFECTIVE --still-ccso
+STILL-EFFECTIVE --no-cfl
+STILL-EFFECTIVE --still-ccso-edge
+STILL-EFFECTIVE --still-cctx
+STILL-EFFECTIVE --still-cfl-explicit
+STILL-EFFECTIVE --still-cdef
+STILL-REJECTED --still-cdef-on-skip-txfm :: av2enc: --still-cdef-on-skip-txfm requires --still-cdef
+STILL-EFFECTIVE --still-chroma-lr
+STILL-INERT --still-dc
+STILL-EFFECTIVE --still-content-interpretation
+STILL-EFFECTIVE --still-dc-ac-delta-q
+STILL-INERT --still-deblock
+STILL-REJECTED --still-ddt :: av2enc: --still-ddt is not signallable in a still pictur
+STILL-EFFECTIVE --still-full-intra
+STILL-EFFECTIVE --still-delta-q
+STILL-EFFECTIVE --still-gdf
+STILL-EFFECTIVE --still-dip
+STILL-EFFECTIVE --still-ext-partitions
+STILL-EFFECTIVE --still-ibp
+STILL-EFFECTIVE --still-grain
+STILL-REJECTED --still-gpu (cleaned from --still-gpu)) :: av2enc: --still-gpu pins --qp 90; use --still for QP 1..
+STILL-REJECTED --still-grain-adaptive :: av2enc: --still-grain-adaptive requires --still-grain
+STILL-EFFECTIVE --still-ibc
+STILL-EFFECTIVE --still-idtx
+STILL-EFFECTIVE --still-ist
+STILL-EFFECTIVE --still-mrl
+STILL-EFFECTIVE --still-mhccp
+STILL-EFFECTIVE --still-pc-wiener
+STILL-EFFECTIVE --still-palette
+STILL-EFFECTIVE --still-rdoq
+STILL-EFFECTIVE --still-rdo-intra
+STILL-EFFECTIVE --still-per-segment-q
+STILL-EFFECTIVE --still-qm
+STILL-EFFECTIVE --still-sb128
+STILL-REJECTED --still-sdp :: av2enc: error: SDP sub-tree partitions are not wired: no
+STILL-EFFECTIVE --still-sb256
+STILL-EFFECTIVE --still-segmentation
+STILL-INERT --still-sub8
+STILL-EFFECTIVE --still-tcq
+STILL-INERT --still-single
+STILL-INERT --still-tx-type
+STILL-EFFECTIVE --still-tx-partition
+STILL-EFFECTIVE --still-uv-full
+STILL-EFFECTIVE --still-wiener
+STILL-INERT --still (cleaned from --still;)
+STILL-EFFECTIVE --still-user-qm
+NO-TABLE-ENTRY --video): :: av2enc: unknown option '--video):'
+NO-TABLE-ENTRY --video-bawp): :: av2enc: unknown option '--video-bawp):'
+STILL-REJECTED --video-compound-near-near (+--video-compound --video-compound-near-near --video-refs 2 --b-frames 2) :: av2enc: --b-frames owns the per-frame refere
+STILL-REJECTED --video-compound-diffwtd (+--video-compound --video-compound-near-near --video-refs 2 --b-frames 2) :: av2enc: --b-frames owns the per-frame refere
+STILL-REJECTED --video-compound-wedge (+--video-compound --video-compound-near-near --video-refs 2 --b-frames 2) :: av2enc: --b-frames owns the per-frame refere
+STILL-REJECTED --video-cwp-weighted (+--video-compound --video-compound-near-near --video-refs 2 --b-frames 2 --video-imp-mask) :: av2enc: --b-frames owns the per-frame refere
+EFFECTIVE --video-drl-reorder-always (cleaned from --video-drl-reorder-always)) [video]
+EFFECTIVE --video-force-integer-mv (+--video-scc-force --video-palette)
+INERT --video-force-single (cleaned from --video-force-single)) [video]
+NO-TABLE-ENTRY --video-gpu :: av2enc: --cpu-threads is a CPU reference knob; the GPU bac
+STILL-REJECTED --video-imp-mask (+--video-compound --video-compound-near-near --video-refs 2 --b-frames 2 --video-cwp-weighted) :: av2enc: --b-frames owns the per-frame refere
+NO-TABLE-ENTRY --video-palette/--video-ibc/--video-morph :: av2enc: unknown option '--video-palette/--video-ibc/--vide
+STILL-REJECTED --video-mvd-sign-derive (+--video-mv-precision quarter) :: av2enc: --video-mvd-sign-derive with quarter
+STILL-REJECTED --video-opfl (+--video-compound --video-compound-near-near --video-refs 2 --b-frames 2 --video-refine-mv) :: av2enc: --b-frames owns the per-frame refere
+NO-TABLE-ENTRY --video-qm (cleaned from --video-qm).) :: av2enc: --video-qm is gated at --qp 90: the shared device 
+NO-TABLE-ENTRY --video-rdoq (cleaned from --video-rdoq.) :: av2enc: --video-rdoq needs --video-inter-residual: the def
+STILL-REJECTED --video-refine-mv (+--video-compound --video-compound-near-near --video-refs 2 --b-frames 2 --video-opfl) :: av2enc: --b-frames owns the per-frame refere
+STILL-REJECTED --video-tip-block-ref (+--frames 6 --video-tip --video-ref-mvs --video-tip-block-ref) :: av2enc: error: --video-tip-block-ref require
+EFFECTIVE --video-tip-no-hole-fill (+--frames 6 --video-tip)
+STILL-REJECTED --video-tlayer-anchor-residual (+--video-tlayers 2 --video-gops 2) :: av2enc: --video-gops only applies to the --b
+STILL-REJECTED --video-tlayers (cleaned from --video-tlayers)) (+--video-tlayers 2) :: av2enc: missing value after '--video-tlayers
+EFFECTIVE --video-tx-search (cleaned from --video-tx-search)) [video]

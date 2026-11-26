@@ -225,3 +225,20 @@ and invoking them on the plain baseline:
 So the coverage count is corrected: 2 more flags judged effective, 1 judged inert,
 2 reclassified as companion-gated, 1 reclassified as value-taking, and 2 as
 mode-conflicting. None were phantom.
+
+## Correction: the still-path flags were never judged (see STILL.md)
+
+Every earlier pass ran all flags under `--video`. The still writer's options
+rejected that with "cannot be combined with --still" or "requires --still", and
+both were scored REJECTED -- never actually executed in their own mode.
+
+Re-run on a `--still` baseline (4,198 B): **36 STILL-EFFECTIVE**, 6 STILL-INERT,
+16 rejected for a further stated reason. Together with the numeric-companion and
+hand-table passes this tranche judged 97 flags that had no verdict: 58 EFFECTIVE,
+7 INERT, 1 own-writer, and 13 accounted for as plan-only / gated / CUDA-only /
+documented-mode-rejection / non-names.
+
+So the final coverage statement is: every boolean switch, every argument option,
+every env gate at `=1` plus the numeric ones value-swept, and every formerly
+rejected flag has now been executed in the mode it belongs to -- with exactly one
+silent disable found (`AV2ENC_RD_JOINT_P`, commit 4dbe3af0).
