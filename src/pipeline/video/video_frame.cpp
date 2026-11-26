@@ -3384,6 +3384,7 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
             static_cast<double>(payload_bytes) - drift_mean_inter_payload;
         if (extra > 0.0) drift_spent_bytes += extra;
         ++result.drift_refresh_frames;
+        if (options.drift_refresh_qp > 0) ++result.drift_refresh_qp_dropped;
         result.drift_refresh_bytes +=
             static_cast<std::uint64_t>(extra > 0.0 ? extra : 0.0);
       } else {

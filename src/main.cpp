@@ -2286,8 +2286,15 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
   }
   // --video-drift-refresh evidence (implementation, then docs).
   if (options.video_drift_refresh) {
+    // Report what was APPLIED, not what was requested.  `drift_refresh_frames`
+    // is the trigger count (kept because the gate keys on it); the subset with
+    // a real QP drop is what changed the stream.  The byte figure is each
+    // refreshed frame's payload minus the running mean, so it is a spend
+    // estimate and not a measured delta against a non-refreshed encode.
     std::cout << ", drift refresh frames " << result.drift_refresh_frames
-              << " (" << result.drift_refresh_bytes << " extra payload bytes)";
+              << " (" << result.drift_refresh_qp_dropped << " with QP drop, "
+              << result.drift_refresh_bytes
+              << " B above running mean)";
   }
   if (options.video_tlayer_anchor_residual) {
     std::cout << ", anchor refresh " << result.tlayer_anchor_refresh << "/"

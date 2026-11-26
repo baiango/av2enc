@@ -806,6 +806,12 @@ struct VideoSequenceResult {
   // payload bytes they were charged (frame payload minus the running mean
   // inter payload).
   std::uint64_t drift_refresh_frames = 0;
+  // Subset of `drift_refresh_frames` whose refresh actually reduced the frame
+  // QP.  With --video-drift-refresh-qp 0 the trigger still fires and the frame
+  // is flagged "refresh", but nothing about the coding changes (the forced
+  // residual quantises to zero at these rates), so the two counts differ.  The
+  // emitted stream is the truth: identical bytes means the refresh was a no-op.
+  std::uint64_t drift_refresh_qp_dropped = 0;
   std::uint64_t drift_refresh_bytes = 0;
   // Chained anchor refresh evidence: layer-0 anchors seen / forced.
   std::uint64_t tlayer_anchor_total = 0;
