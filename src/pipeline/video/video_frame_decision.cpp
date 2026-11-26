@@ -19,7 +19,17 @@
 
 namespace av2enc::video {
 
+// Defined in the anonymous namespace below (`seq_source_activity`); declared
+// here so `decide()` can publish the per-frame high-frequency reference.
+void publish_hf_mask_reference(const std::uint8_t* src, int width, int height,
+                               int stride);
+
 namespace {
+
+// Defined further down (the RD-driver section); declared here because the leaf
+// TX-search lambda scale reads it per leaf (AV2ENC_TX_LAMBDA_TEXTURED).
+double seq_source_activity(const std::uint8_t* src, int width, int height,
+                           int stride, int sx, int sy, int bw, int bh);
 
 // AV2ENC_PIPE_PERC coefficient price for one already-quantised plan.  The
 // inter luma TX search already filled `rate_bits` from the same static §8.3.2
@@ -813,6 +823,11 @@ bool InterFrameEncoder::decide(std::string& error) {
     precompute_leaf_me(base_superblocks, options_.cpu_threads);
   }
 
+  // AV2ENC_TX_HF_MASK_CONTENT: publish this picture's mean 1-px activity for
+  // the per-block high-frequency mask before any leaf is priced.
+  publish_hf_mask_reference(source_.y.data(), static_cast<int>(source_.width),
+                            static_cast<int>(source_.height),
+                            static_cast<int>(source_.width));
 #if defined(AV2ENC_VIDEO_DELTAQ)
   if (!prepare_qp_plan(error)) return false;
 #endif
@@ -843,10 +858,15 @@ bool InterFrameEncoder::decide(std::string& error) {
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     joint_p = joint_p && !options_.ext_partitions;
 #endif
+    // The sequential key driver composes with delta-Q: it reads each
+    // superblock's qindex from sb_qindex_, which collect_node() installs at
+    // depth 0 when QP tools are active.  A previous `!qp_tools_active()` term
+    // here silently dropped the whole driver whenever delta-Q was armed without
+    // the budget pipeline, costing ~5.6 K (19,335 B/23.40 dB against
+    // 26,180 B/24.62 dB at QP185).
     bool sequential_key =
         keyframe_ && rd_driver::enabled() && !options_.enable_sdp &&
-        !options_.force_single_block && !palette_enabled_ && !ibc_enabled_ &&
-        !qp_tools_active();
+        !options_.force_single_block && !palette_enabled_ && !ibc_enabled_;
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     // The driver walks the rect tree; the extended solver has no
     // base_superblocks to drive.
@@ -933,6 +953,13 @@ bool InterFrameEncoder::decide(std::string& error) {
       return true;
     }
     if (sequential_key) {
+      // AV2ENC_PIPE_BUDGET: the budget-closed per-superblock allocation walk
+      // replaces the uniform-qindex key driver when its gate is on.  It has
+      // its own frame loop, leaf loop and decision order and commits through
+      // the same collect_node() path.
+      if (keyframe_ && pipe_budget::enabled()) {
+        return pipe_budget_decide_frame(base_superblocks, error);
+      }
       sb_sinks_.resize(base_superblocks.size());
       for (std::size_t sb = 0; sb < base_superblocks.size(); ++sb) {
         PartitionNode chosen;
@@ -3295,10 +3322,11 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
           bool have_rd = false;
           const int n = std::min(rd_pred_n, choice.top_count);
           for (int i = 0; i < n; ++i) {
+            const std::size_t ti = static_cast<std::size_t>(i);
             if (!intra_luma_part_predict(
                     recon_[0], luma_avail, x0, y0, w, h,
-                    static_cast<int>(choice.top[i].mode),
-                    choice.top[i].angle_delta, options_.enable_ibp,
+                    static_cast<int>(choice.top[ti].mode),
+                    choice.top[ti].angle_delta, options_.enable_ibp,
                     above_smooth, left_smooth, trial_pred)) {
               continue;
             }
@@ -3328,9 +3356,10 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
             }
           }
           if (have_rd && best_i != 0) {
-            intra_y_mode = static_cast<std::uint8_t>(choice.top[best_i].mode);
-            intra_y_angle_delta =
-                static_cast<std::int8_t>(choice.top[best_i].angle_delta);
+            intra_y_mode = static_cast<std::uint8_t>(
+                choice.top[static_cast<std::size_t>(best_i)].mode);
+            intra_y_angle_delta = static_cast<std::int8_t>(
+                choice.top[static_cast<std::size_t>(best_i)].angle_delta);
             std::vector<std::uint8_t> reselect(
                 static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
             if (intra_luma_part_predict(
@@ -3485,6 +3514,38 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
     if (live_ctx_enabled_) {
       live_ctx_for(r, c, w / 4, h / 4, w / 4, h / 4, &live_txb, &live_dc);
     }
+    // AV2ENC_TX_LAMBDA_TEXTURED: publish this leaf's own activity ratio so its
+    // TX search spends precision where the picture is textured (docs/
+    // k52-budget-pipe.md §4/§9).  1.0 when the gate is off, which keeps the
+    // historical lambda at every leaf.
+    seq_rd::g_tx_lambda_leaf_scale_mut() = 1.0;
+    if (seq_rd::g_tx_lambda_textured_mut() > 0.0 &&
+        seq_rd::hf_mask_reference() > 0.0) {
+      const double leaf_act =
+          seq_source_activity(source_.y.data(),
+                              static_cast<int>(source_.width),
+                              static_cast<int>(source_.height),
+                              static_cast<int>(source_.width), ax0, ay0, w, h);
+      const double ratio =
+          std::clamp(leaf_act / seq_rd::hf_mask_reference(), 0.0, 4.0);
+      if (ratio > 1.0) {
+      // Binary split at the picture mean: a leaf above it takes the FULL
+      // reduction.  A ratio-proportional ramp was measured inert -- leaf
+      // activity ratios cluster at 1.0-1.1, so even a 0.75 reduction produced
+      // a 4.6% lambda cut and a byte-identical stream.
+      const double t = ratio > 1.0 ? 1.0 : 0.0;
+      seq_rd::g_tx_lambda_leaf_scale_mut() =
+          1.0 - seq_rd::g_tx_lambda_textured_mut() * t;
+        if (std::getenv("AV2ENC_TX_LAMBDA_DEBUG") != nullptr) {
+          static long long dbg = 0;
+          ++dbg;
+          std::fprintf(stderr, "txlam leaf=(%d,%d) %dx%d act=%.1f ref=%.1f "
+                               "ratio=%.2f scale=%.3f n=%lld\n",
+                       ax0, ay0, w, h, leaf_act, seq_rd::hf_mask_reference(),
+                       ratio, seq_rd::g_tx_lambda_leaf_scale_mut(), dbg);
+        }
+      }
+    }
     if (!luma_ok ||
         (options_.enable_tx_search
              ? (intra_tx_partition_search
@@ -3499,7 +3560,8 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
                           source_, ax0, ay0, w, h, intra_y_pred,
                           st.current_qindex, txtsearch::Mode::kIntra,
                           key_tx_rd_lambda(options_, st.current_qindex) *
-                              perceptual::tx_lambda_scale(perceptual_weights),
+                              perceptual::tx_lambda_scale(perceptual_weights) *
+                              seq_rd::g_tx_lambda_leaf_scale_mut(),
                           options_.enable_idtx_intra,
                           std::max(0, mrl_stream::mapped_intra_mode_for_mrl(
                                           intra_y_mode, intra_y_angle_delta,
@@ -6288,6 +6350,22 @@ double seq_source_activity(const std::uint8_t* src, int width, int height,
   return sum / static_cast<double>(bw * bh);
 }
 
+// AV2ENC_TX_HF_MASK_CONTENT: the picture's own mean 1-px activity, published to
+// the TX search once per frame so the per-block high-frequency mask can split
+// flat from textured blocks.  Called from the key driver; 0 (unset gate) keeps
+// the historical unconditional mask.
+}  // namespace
+
+void publish_hf_mask_reference(const std::uint8_t* src, int width,
+                               int height, int stride) {
+  const double mean =
+      seq_source_activity(src, width, height, stride, 0, 0, width, height);
+  txtsearch::set_hf_mask_reference(mean);
+  seq_rd::set_hf_mask_reference(mean);
+}
+
+namespace {
+
 // Build a uniform layout: split each node along its long axis until the block
 // fits `target` in both dimensions.  A square block first becomes two wide
 // rectangles, which then split into the two square children, so an 8x8 target
@@ -6548,11 +6626,17 @@ bool InterFrameEncoder::seq_driver_measure_leaf(const PartitionNode& node,
   rate += intra_chroma_syntax_bits(
       (emitted.flags & syntax::kFlagIsCfl) != 0, emitted.cctx_type != 0);
   if (emitted.tx_part_count > 0) rate += 2.0;
-  const double lambda =
-      key_tx_rd_lambda(options_, current_qindex_) *
-      rd_driver::env_positive("AV2ENC_RD_KEY_TX_SCALE", 0.25) *
-      rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0) *
-      sb_alloc_scale_;
+  // AV2ENC_RD_DRIVER_RATE_FIT (default off): the rate-dependent tree price
+  // replaces the flat product below (fit = whole price; KS/DL not applied).
+  // The multiplication order of the flat branch is unchanged, so gate-off is
+  // bit-for-bit identical.
+  const double tree_price =
+      driver_rate_fit_enabled()
+          ? driver_rate_fit_price(current_qindex_)
+          : key_tx_rd_lambda(options_, current_qindex_) *
+                rd_driver::env_positive("AV2ENC_RD_KEY_TX_SCALE", 0.25) *
+                rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0);
+  const double lambda = tree_price * sb_alloc_scale_;
   *cost = distortion + lambda * rate;
   ++rd_driver::counters().measured_leaves;
   return true;
@@ -6736,11 +6820,35 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
     double cost = partition::kInfiniteCost;
     bool ok = false;
   };
-  const double lambda =
-      key_tx_rd_lambda(options_, current_qindex_) *
-      rd_driver::env_positive("AV2ENC_RD_KEY_TX_SCALE", 0.25) *
-      rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0) *
+  // AV2ENC_TX_LAMBDA_TEXTURED: the tree prune is where the key lambda actually
+  // acts (the leaf TX search has almost no freedom at this QP -- measured
+  // byte-identical under a 0.5x leaf lambda).  Scaling this site down makes a
+  // textured superblock's split/leaf decision prefer finer reconstruction.
+  // AV2ENC_RD_DRIVER_RATE_FIT (default off): same rate-dependent tree price
+  // as seq_driver_measure_leaf, so split and leaf costs share one objective.
+  const double base_lambda =
+      (driver_rate_fit_enabled()
+           ? driver_rate_fit_price(current_qindex_)
+           : key_tx_rd_lambda(options_, current_qindex_) *
+                 rd_driver::env_positive("AV2ENC_RD_KEY_TX_SCALE", 0.25) *
+                 rd_driver::env_positive("AV2ENC_RD_DRIVER_LAMBDA", 1.0)) *
       sb_alloc_scale_;
+  double sb_tex_scale = 1.0;
+  if (seq_rd::g_tx_lambda_textured_mut() > 0.0 &&
+      seq_rd::hf_mask_reference() > 0.0) {
+    const int cols = qp_sb_cols();
+    const int mi = qp_sb_mi();
+    const int sbx = (cols > 0 ? static_cast<int>(sb_index) % cols : 0) * mi * 4;
+    const int sby = (cols > 0 ? static_cast<int>(sb_index) / cols : 0) * mi * 4;
+    const double sb_act = seq_source_activity(
+        source_.y.data(), static_cast<int>(source_.width),
+        static_cast<int>(source_.height), static_cast<int>(source_.width),
+        sbx + tile_x_, sby + tile_y_, mi * 4, mi * 4);
+    if (sb_act > seq_rd::hf_mask_reference()) {
+      sb_tex_scale = 1.0 - seq_rd::g_tx_lambda_textured_mut();
+    }
+  }
+  const double lambda = base_lambda * sb_tex_scale;
   // Sequential prune: at every node the split children are measured in the
   // reconstruction of the already-chosen preceding children, so a candidate
   // is always priced in the recon it builds.  The NONE trial is restored
@@ -6851,7 +6959,370 @@ bool InterFrameEncoder::seq_driver_decide_sb(std::size_t sb_index,
     return true;
   }
   stats.chosen_cost += chosen.cost;
+  seq_last_sb_cost_ = chosen.cost;
   *out = std::move(chosen.node);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// AV2ENC_PIPE_BUDGET: budget-closed per-superblock allocation
+// (src/pipeline/video/video_pipe_budget.h, docs/k52-budget-pipe.md).
+//
+// The key driver decides every superblock at ONE qindex: the frame's
+// base_q_idx.  At 0.21 bpp that spends the whole budget uniformly, and the
+// measured deficit against the reference encoder is a uniformly ~15% larger
+// luma error (docs/k52-at-25k.md §3.4) that no spectral or allocator-shaped
+// *price* fix repaired.  This walk moves the quantiser per superblock instead,
+// closing one frame-wide byte budget by marginal gain:
+//
+//   within a superblock (own leaf loop)
+//     for q on the grid: expand the reference layout, price every leaf
+//       (seq_driver_measure_leaf) at q, and keep (D(q), R(q), recon(q))
+//     -> one (bytes, distortion) curve per superblock
+//   across superblocks (own decision order)
+//     greedy marginal gain/byte from the coarsest point down to the budget
+//   commit
+//     re-encode each superblock at its allocated q through collect_node()
+//
+// The committed stream needs a per-superblock qindex, which the key frame can
+// only signal through §5.18.7.8 delta-Q; this function runs with
+// QP tools active so `collect_node()` reads `sb_qindex_` at depth 0.
+// ---------------------------------------------------------------------------
+bool InterFrameEncoder::pipe_budget_decide_frame(
+    std::vector<partition::PartitionNode>& base_superblocks,
+    std::string& error) {
+  namespace pb = pipe_budget;
+  if (!keyframe_ || base_superblocks.empty()) return false;
+  const pb::Config& cfg = pb::config();
+  const int sb_cols = partition::sb_cols(geometry_);
+  const int sb_total = sb_cols * partition::sb_rows(geometry_);
+  const int sb_px = partition::sb_size_mi(geometry_) * 4;
+  if (!qp_tools_active() ||
+      sb_qindex_.size() != static_cast<std::size_t>(sb_total) ||
+      sb_target_q_.size() != static_cast<std::size_t>(sb_total)) {
+    error =
+        "AV2ENC_PIPE_BUDGET needs --video-delta-q: the per-superblock qindex "
+        "is signalled by the §5.18.7.8 ramp";
+    return false;
+  }
+
+  // Exact byte cost of one superblock at one qindex: encode the superblock as
+  // its own one-superblock key picture through the normal encoder path and
+  // count the frame OBU.  This is the coder's own stream, so the budget closes
+  // on real bytes.
+  const auto crop_encode_bytes = [&](const PartitionNode& root,
+                                     int q) -> long long {
+    const int sx = root.mi_col * 4 + tile_x_;
+    const int sy = root.mi_row * 4 + tile_y_;
+    const int w = std::min(sb_px, static_cast<int>(source_.width) - sx);
+    const int h = std::min(sb_px, static_cast<int>(source_.height) - sy);
+    if (w <= 0 || h <= 0) return 0;
+    std::vector<std::uint8_t> y(static_cast<std::size_t>(w) *
+                                static_cast<std::size_t>(h));
+    const int cw = (w + 1) / 2;
+    const int ch = (h + 1) / 2;
+    std::vector<std::uint8_t> u(static_cast<std::size_t>(cw) *
+                                static_cast<std::size_t>(ch));
+    std::vector<std::uint8_t> v(u.size());
+    for (int row = 0; row < h; ++row) {
+      std::memcpy(y.data() + static_cast<std::size_t>(row) *
+                                static_cast<std::size_t>(w),
+                  source_.y.data() +
+                      static_cast<std::size_t>(sy + row) *
+                          static_cast<std::size_t>(source_.width) +
+                      static_cast<std::size_t>(sx),
+                  static_cast<std::size_t>(w));
+    }
+    for (int row = 0; row < ch; ++row) {
+      std::memcpy(u.data() + static_cast<std::size_t>(row) *
+                                static_cast<std::size_t>(cw),
+                  source_.u.data() +
+                      static_cast<std::size_t>((sy / 2) + row) *
+                          static_cast<std::size_t>(source_.width / 2) +
+                      static_cast<std::size_t>(sx / 2),
+                  static_cast<std::size_t>(cw));
+      std::memcpy(v.data() + static_cast<std::size_t>(row) *
+                                static_cast<std::size_t>(cw),
+                  source_.v.data() +
+                      static_cast<std::size_t>((sy / 2) + row) *
+                          static_cast<std::size_t>(source_.width / 2) +
+                      static_cast<std::size_t>(sx / 2),
+                  static_cast<std::size_t>(cw));
+    }
+    VideoInputFrame crop;
+    crop.width = static_cast<std::uint32_t>(w);
+    crop.height = static_cast<std::uint32_t>(h);
+    crop.y = y;
+    crop.u = u;
+    crop.v = v;
+    VideoOptions crop_options = options_;
+    crop_options.base_q_idx = static_cast<std::uint8_t>(std::clamp(q, 1, 255));
+    crop_options.enable_delta_q = false;
+    crop_options.enable_aq = false;
+    crop_options.enable_segmentation = false;
+    crop_options.per_segment_q = false;
+    crop_options.enable_uv_delta_q = false;
+    crop_options.cpu_threads = 1;
+    const std::vector<inter::mc::RefFrame> no_refs;
+    const std::array<int, 7> no_distance{};
+    pb::suspend_flag() = true;
+    InterFrameEncoder encoder(crop, no_refs, no_distance, 0, crop_options,
+                              /*trace=*/false, /*keyframe=*/true);
+    std::string probe_error;
+    std::vector<std::uint8_t> payload;
+    std::vector<syntax::BlockSyntax> blocks;
+    std::vector<std::int32_t> levels;
+    const bool probe_ok = encoder.encode(payload, blocks, levels, probe_error);
+    pb::suspend_flag() = false;
+    if (!probe_ok) {
+      if (std::getenv("AV2ENC_PIPE_BUDGET_STATS") != nullptr) {
+        std::fprintf(stderr, "pipe-budget probe encode failed: %s\n",
+                     probe_error.c_str());
+      }
+      return 0;
+    }
+    return static_cast<long long>(payload.size());
+  };
+
+  // Trial surfaces.  The key walk runs with every inter tool off, so the
+  // intra joint-mode grid plus the reconstruction/state are the mutable set.
+  SbSink probe;
+  probe.reset();
+  seed_unit_state(probe);
+  probe.state.decoded[0].reset(mi_cols_, mi_rows_);
+  probe.state.decoded[1].reset(mi_cols_ / 2, mi_rows_ / 2);
+  probe.state.decoded[2].reset(mi_cols_ / 2, mi_rows_ / 2);
+  struct Snap {
+    std::array<std::vector<std::uint8_t>, 3> samples;
+    std::array<int, 3> stride{};
+    std::array<int, 3> width{};
+    std::array<int, 3> height{};
+    std::vector<std::uint8_t> joint;
+    SbSink::State state;
+    std::size_t blocks = 0;
+  };
+  const auto capture = [&]() {
+    Snap snap;
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::size_t p = static_cast<std::size_t>(plane);
+      snap.samples[p] = recon_[p].samples;
+      snap.stride[p] = recon_[p].stride;
+      snap.width[p] = recon_[p].width;
+      snap.height[p] = recon_[p].height;
+    }
+    snap.joint = intra_joint_;
+    snap.state = probe.state;
+    snap.blocks = probe.blocks.size();
+    return snap;
+  };
+  const auto apply = [&](const Snap& snap) {
+    for (int plane = 0; plane < 3; ++plane) {
+      const std::size_t p = static_cast<std::size_t>(plane);
+      recon_[p].samples = snap.samples[p];
+      recon_[p].stride = snap.stride[p];
+      recon_[p].width = snap.width[p];
+      recon_[p].height = snap.height[p];
+    }
+    intra_joint_ = snap.joint;
+    probe.state = snap.state;
+    probe.blocks.resize(snap.blocks);
+  };
+
+  // ---- ONE raster walk, online allocation.  A key leaf predicts from its
+  // coded neighbours, so a superblock can only be measured (and committed) in
+  // the reconstruction its predecessors built.  Measuring all superblocks
+  // first would decide every leaf against an empty frame.  So the walk
+  // measures this superblock's qindex grid, picks its qindex against a running
+  // byte budget, and commits at once.
+  const int q_fine = std::clamp(std::min(cfg.q_lo, cfg.q_hi), 1, 255);
+  std::vector<int> grid;
+  for (int q = std::clamp(std::max(cfg.q_lo, cfg.q_hi), 1, 255); q >= q_fine;
+       q -= cfg.q_step) {
+    grid.push_back(q);
+  }
+  if (grid.empty()) grid.push_back(q_fine);
+  // Budget per superblock: the frame budget spread evenly, then re-spread over
+  // what is actually left so a cheap superblock hands its bytes forward.
+  const double strength = pb::env_number("AV2ENC_PIPE_BUDGET_STRENGTH", 0.0);
+  // The allocation is armed by SCALE (the budget knob), not by an absolute
+  // byte count: AV2ENC_PIPE_BUDGET_SCALE is a thousandths-of-uniform factor,
+  // so the arm is always read against the uniform spend and never needs a
+  // byte target that depends on the content.
+  long long budget = cfg.budget_bytes > 0 ? cfg.budget_bytes : 1;
+  const bool uniform_control = cfg.budget_bytes < 0;
+  // AV2ENC_PIPE_BUDGET_SCALE (thousandths of the uniform spend): 1000 = the
+  // uniform qindex reference itself.  The per-superblock allowance is its
+  // reference size scaled by this factor, plus whatever credit earlier
+  // superblocks left, so the budget binds at EVERY superblock instead of only
+  // after a cheap one has banked bytes.
+  const long long ref_total = 1000;
+  const long long scale =
+      uniform_control
+          ? 1000
+          : std::max<long long>(1, pb::env_int("AV2ENC_PIPE_BUDGET_SCALE",
+                                               1000));
+  long long spent = 0;
+  long long credit = 0;  // bytes earlier superblocks did not need
+  // AV2ENC_PIPE_BUDGET_STRENGTH: scale each superblock's allowance by its own
+  // 1-px source activity relative to the frame mean.  Measured on this picture
+  // (block_feat): 76.1% of our extra luma error against the reference encoder
+  // sits in high-activity blocks, and there our 1-px band error is 1.76x the
+  // reference's against 1.47x in flat blocks -- the high-frequency error is
+  // over-quantised exactly where the source carries detail.  strength 0 is
+  // exactly the uniform-byte rule and is byte-identical to it.
+  std::vector<double> sb_act(base_superblocks.size(), 0.0);
+  double act_mean = 0.0;
+  if (strength != 0.0) {
+    for (std::size_t i = 0; i < base_superblocks.size(); ++i) {
+      const int ax = base_superblocks[i].mi_col * 4 + tile_x_;
+      const int ay = base_superblocks[i].mi_row * 4 + tile_y_;
+      sb_act[i] = seq_source_activity(
+          source_.y.data(), static_cast<int>(source_.width),
+          static_cast<int>(source_.height), static_cast<int>(source_.width),
+          ax, ay, sb_px, sb_px);
+      act_mean += sb_act[i];
+    }
+    act_mean /= static_cast<double>(
+        std::max<std::size_t>(base_superblocks.size(), 1));
+    if (cfg.stats) {
+      std::fprintf(stderr, "pipe-budget activity: mean=%.2f strength=%.2f\n",
+                   act_mean, strength);
+    }
+  }
+  for (std::size_t sb = 0; sb < base_superblocks.size(); ++sb) {
+    // Allowance multiplier from the superblock's 1-px activity.  Clamped to
+    // [1/cap, cap] so one block cannot take the frame, and exactly 1.0 when
+    // the gate is off.
+    double act_mult = 1.0;
+    if (strength != 0.0 && act_mean > 0.0) {
+      const double cap = pb::env_number("AV2ENC_PIPE_BUDGET_ACT_MAX", 2.0);
+      act_mult = std::clamp(
+          std::pow(std::max(sb_act[sb], 1e-6) / act_mean, strength), 1.0 / cap,
+          cap);
+    }
+    // Measure this superblock's curve in the live reconstruction, then
+    // restore it so the winner can be committed once.
+    const Snap entry = capture();
+    std::vector<int> qs;
+    std::vector<long long> bytes;
+    std::vector<double> js;
+    std::vector<PartitionNode> trees;
+    for (int q : grid) {
+      apply(entry);
+      const int saved_q = current_qindex_;
+      const int saved_step = quant_step_;
+      PlaneQuantStep saved_quant[3] = {plane_quant_[0], plane_quant_[1],
+                                       plane_quant_[2]};
+      current_qindex_ = q;
+      frame_plane_quant(q, plane_quant_, quant_step_);
+      seq_last_sb_cost_ = 0.0;
+      PartitionNode chosen;
+      const bool ok =
+          seq_driver_decide_sb(sb, base_superblocks[sb], &chosen, error);
+      current_qindex_ = saved_q;
+      quant_step_ = saved_step;
+      for (int plane = 0; plane < 3; ++plane) {
+        plane_quant_[plane] = saved_quant[plane];
+      }
+      if (!ok) {
+        apply(entry);
+        return false;
+      }
+      const long long b = crop_encode_bytes(base_superblocks[sb], q);
+      if (b <= 0) continue;
+      qs.push_back(q);
+      bytes.push_back(b);
+      js.push_back(seq_last_sb_cost_);
+      trees.push_back(std::move(chosen));
+      if (cfg.stats) {
+        std::fprintf(stderr, "pipe-budget sb=%zu q=%d bytes=%lld J=%.6e\n", sb,
+                     q, b, seq_last_sb_cost_);
+      }
+    }
+    apply(entry);
+    // Pick: the finest qindex that keeps the running spend inside the share of
+    // the budget this superblock is allowed (proportional to what is left).
+    // Allocation rule (budget-closed, online).  Each superblock's own size at
+    // the reference qindex `q_ref` is its share of the frame total, so the
+    // allocation starts from exactly the uniform-qindex spend.  A superblock
+    // may then spend what EARLIER superblocks left over (their credit), and it
+    // takes the affordable point with the lowest J, i.e. the finest qindex it
+    // can pay for.  The total can never exceed the uniform total, so the arm
+    // is always read at or below the control's bytes.
+    int chosen_q = static_cast<int>(options_.base_q_idx);
+    std::size_t chosen_k = 0;
+    if (uniform_control || qs.empty()) {
+      chosen_q = std::clamp(chosen_q, q_fine,
+                            *std::max_element(grid.begin(), grid.end()));
+    } else {
+      // Reference size: this superblock's point closest to base_q_idx.
+      std::size_t ref_k = 0;
+      int ref_gap = 1 << 30;
+      for (std::size_t k = 0; k < qs.size(); ++k) {
+        const int gap = std::abs(qs[k] - static_cast<int>(options_.base_q_idx));
+        if (gap < ref_gap) { ref_gap = gap; ref_k = k; }
+      }
+      const long long ref = bytes[ref_k];
+      // Allowance for this superblock.  The frame budget is a proportion of
+      // the REFERENCE total (the uniform-qindex spend), so the walk scales the
+      // same way: this superblock may spend its reference size times the
+      // frame's budget/referece ratio, plus whatever credit earlier
+      // superblocks left.  That makes the budget bind at every superblock
+      // instead of only after a cheap one has banked bytes.
+      const long long allowed = std::max<long long>(
+          0, static_cast<long long>(
+                 (static_cast<double>(ref) * static_cast<double>(scale) /
+                  static_cast<double>(ref_total)) * act_mult) +
+                 credit);
+      std::size_t best = qs.size();
+      for (std::size_t k = 0; k < qs.size(); ++k) {
+        if (bytes[k] > allowed) continue;
+        // qs descend, so later k is finer; keep the finest that fits.
+        if (best == qs.size() || bytes[k] > bytes[best]) best = k;
+      }
+      if (best == qs.size()) best = ref_k;  // nothing fits: stay at reference
+      chosen_k = best;
+      chosen_q = qs[best];
+      spent += bytes[best];
+      credit += ref - bytes[best];
+      if (cfg.stats) {
+        std::fprintf(stderr,
+                     "pipe-budget alloc sb=%zu ref=%lld allowed=%lld "
+                     "chosen=%lld credit=%lld q=%d\n",
+                     sb, ref, allowed, bytes[best], credit, chosen_q);
+      }
+    }
+    // Commit the tree the sweep actually chose at the chosen qindex (the
+    // sweep's decision must be the one that reaches the stream).
+    if (!uniform_control && chosen_k < trees.size()) {
+      base_superblocks[sb] = std::move(trees[chosen_k]);
+    }
+    sb_qindex_[sb] = chosen_q;
+    sb_target_q_[sb] = chosen_q;
+    current_qindex_ = chosen_q;
+    frame_plane_quant(chosen_q, plane_quant_, quant_step_);
+    sb_sinks_.resize(base_superblocks.size());
+    sb_sinks_[sb].reset();
+    seed_unit_state(sb_sinks_[sb]);
+    sb_sinks_[sb].state.current_qindex = chosen_q;
+    sb_sinks_[sb].state.quant_step = quant_step_;
+    for (int plane = 0; plane < 3; ++plane) {
+      sb_sinks_[sb].state.plane_quant[plane] = plane_quant_[plane];
+    }
+    if (!collect_node(sb_sinks_[sb], base_superblocks[sb], error)) {
+      return false;
+    }
+    if (cfg.stats) {
+      std::fprintf(stderr, "pipe-budget commit sb=%zu q=%d spent=%lld/%lld\n",
+                   sb, chosen_q, spent, budget);
+    }
+  }
+  if (cfg.stats) {
+    std::fprintf(stderr, "pipe-budget: spent=%lld budget=%lld\n", spent,
+                 budget);
+    std::fflush(stderr);
+  }
+  merge_sinks();
   return true;
 }
 

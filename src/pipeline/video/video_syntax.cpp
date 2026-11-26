@@ -456,6 +456,29 @@ int Writer::cost_fine_tag_for(const std::uint16_t* p, int coarse) const {
   return kFineOtherResidual;
 }
 
+// AV2ENC_EOB_DUMP: one JSON line per TXB that codes an EOB.  Diagnosis only;
+// called from write_eob() and writes nothing when the gate is unset.
+void Writer::record_eob_txb(const EobRecord& record) {
+  if (!eob_dump_active_) return;
+  std::lock_guard<std::mutex> lock(g_census_mutex);
+  std::ofstream out(eob_dump_path_, std::ios::app);
+  if (!out) return;
+  out.setf(std::ios::fixed);
+  out.precision(4);
+  out << "{\"frame\":" << plan_.census_frame
+      << ",\"txb\":" << record.txb_index
+      << ",\"plane\":" << record.plane
+      << ",\"eob\":" << record.eob
+      << ",\"eob_pt\":" << record.eob_pt
+      << ",\"cdf_n\":" << record.cdf_n
+      << ",\"multisize\":" << record.multisize
+      << ",\"extra_syms\":" << record.extra_symbols
+      << ",\"raw_extra\":" << record.raw_extra_bits
+      << ",\"escape_bits\":" << record.escape_bits
+      << ",\"bits\":" << record.priced_bits << "}\n";
+  ++eob_dump_written_;
+}
+
 bool Writer::append_census(std::size_t payload_bytes) {
   if (!census_active_) return true;
   std::lock_guard<std::mutex> lock(g_census_mutex);

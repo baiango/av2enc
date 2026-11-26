@@ -7,6 +7,8 @@ namespace detail {
 
 bool Writer::write_eob(int eob, int plane, int coded_w, int coded_h, bool is_inter) {
   RawScope raw_scope(this, kFineEob);
+  const double eob_bits_before =
+      eob_dump_active_ ? cost_meter_.fine_bits[kFineEob] : 0.0;
   int eob_pt = 1;
   if (eob == 2) {
     eob_pt = 2;
@@ -78,6 +80,22 @@ bool Writer::write_eob(int eob, int plane, int coded_w, int coded_h, bool is_int
     for (int i = eob_pt - 4; i >= 0; --i) {
       if (!raw_bit(((extra >> i) & 1) != 0)) return false;
     }
+  }
+  // AV2ENC_EOB_DUMP: record the TXB at the granularity the 'eob' census bucket
+  // is actually charged at (see the header).  Diagnosis only.
+  if (eob_dump_active_) {
+    EobRecord rec;
+    rec.txb_index = static_cast<int>(eob_dump_written_);
+    rec.plane = plane;
+    rec.eob = eob;
+    rec.eob_pt = eob_pt;
+    rec.cdf_n = cdf_n;
+    rec.multisize = multisize;
+    rec.extra_symbols = eob_pt >= 3 ? 1 : 0;
+    rec.raw_extra_bits = eob_pt >= 3 ? std::max(0, eob_pt - 4) + 1 : 0;
+    rec.escape_bits = (symbol == cdf_n - 1) ? escape_bits : 0;
+    rec.priced_bits = cost_meter_.fine_bits[kFineEob] - eob_bits_before;
+    record_eob_txb(rec);
   }
   return true;
 }

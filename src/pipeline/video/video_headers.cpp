@@ -15,6 +15,7 @@
 #include "codec/inter/tip/tip_signalling.h"
 #include "pipeline/grain/film_grain_syntax.h"
 #include "pipeline/video/post/loop_filters.h"
+#include "pipeline/video/post/deblock_grid.h"
 #include "pipeline/video/video_interp_filter.h"
 
 #include <algorithm>
@@ -538,7 +539,14 @@ std::size_t write_sequence_header(BitWriter& writer, const VideoConfig& c) {
   if (!c.cdef_on_skip_txfm_always_on) {
     writer.put_bit(c.cdef_on_skip_txfm_disabled);
   }
-  writer.put_bits(0U, 2U); // df_par_bits_minus_2
+  // df_par_bits_minus_2: AV2ENC_DEBLOCK_DF_DELTA (default 0 = byte-identical)
+  // widens the dfParBits domain only far enough for the requested deltas; the
+  // frame row below signals nothing else when the gate is off.
+  {
+    int df_delta[4] = {0, 0, 0, 0};
+    if (c.enable_deblock) post::deblock_df_delta_from_env(df_delta);
+    writer.put_bits(static_cast<unsigned>(post::deblock_df_par_bits_minus_2(df_delta)), 2U);
+  }
 
   // §5.4.2 sequence_tile_config().  --video-tile-group-compact moves the
   // single-tile grid out of the 60 frame headers: seq_tile_info_present_flag = 1
@@ -918,19 +926,51 @@ std::size_t write_frame_header_syntax(BitWriter& writer, const VideoConfig& c,
     writer.put_bit(h.allow_df_sub_pu);
   }
   if (c.enable_deblock) {
-    // §5.18.7.9 deblocking_filter_params(): every present plane enabled, no
-    // df_delta_q.  df_par_bits_minus_2 is 0 in the sequence header, so the
-    // dfParBits = 2 domain only matters if a delta is ever signalled.  A
-    // monochrome stream codes no apply_deblocking_filter[2..3] and no chroma
-    // df_delta_q_present bit.
+    // §5.18.7.9 deblocking_filter_params(): every present plane enabled.
+    // AV2ENC_DEBLOCK_DF_DELTA (default off) additionally signals per-entry
+    // df_delta_q; df_par_bits_minus_2 in the sequence header is widened to
+    // cover exactly those values (0 when the gate is off, so the historical
+    // row and every pin stay byte-identical).  A monochrome stream codes no
+    // apply_deblocking_filter[2..3] and no chroma df_delta_q_present bit.
+    int df_delta[4] = {0, 0, 0, 0};
+    bool present[4] = {false, false, false, false};
+    int n_present = 0;
+    post::deblock_df_delta_from_env(df_delta);
+    const int df_par_minus_2 = post::deblock_df_par_bits_minus_2(df_delta);
+    for (int i = 0; i < 4; ++i) {
+      present[i] = df_delta[i] != 0;
+      if (present[i]) ++n_present;
+    }
+    (void)n_present;        // consumed by the bit-exact assert below
+    (void)df_par_minus_2;   // ... which NDEBUG compiles out
     if (fmt::has_chroma(c.chroma)) {
-      const bool apply[4] = {true, true, true, true};
-      const bool present[4] = {false, false, false, false};
+      // AV2ENC_DEBLOCK_APPLY (default all-on): per-pass enable flags of the
+      // same row; a disabled plane must not carry a df_delta_q (writer
+      // rejects present on an enabled-only plane).
+      bool apply[4] = {true, true, true, true};
+      post::deblock_apply_from_env(apply);
+      int n_enabled = 0;
+      for (int i = 0; i < 4; ++i) {
+        if (!apply[i]) present[i] = false;
+        if (present[i]) { /* counted below */ }
+        if (apply[i]) ++n_enabled;
+      }
+      n_present = 0;
+      for (int i = 0; i < 4; ++i) if (present[i]) ++n_present;
+      (void)n_enabled;
       std::string deblock_error;
       const std::size_t deblock_bits = post::write_video_deblock_params(
-          writer, apply, present, deblock_error);
+          writer, apply, present, df_delta, df_par_minus_2, deblock_error);
       assert(deblock_error.empty());
-      assert(deblock_bits == 8U);  // 4 apply flags + 4 df_delta_q_present
+      // apply flags for all four planes (chroma pair only when a luma pass is
+      // on, which the helper guarantees) + one present bit per enabled plane
+      // + dfParBits per present plane.
+      const std::size_t apply_bits =
+          (apply[0] || apply[1]) ? 4U : 2U;
+      (void)apply_bits;      // consumed by the assert (NDEBUG strips it)
+      assert(deblock_bits ==
+             apply_bits + static_cast<std::size_t>(n_enabled) +
+             static_cast<std::size_t>(n_present) * (df_par_minus_2 + 2));
       (void)deblock_bits;
     } else {
       writer.put_bit(true);   // apply_deblocking_filter[0]

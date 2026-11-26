@@ -37,6 +37,89 @@
 
 namespace av2enc::video::post {
 
+// AV2ENC_DEBLOCK_DF_DELTA (default off): the §5.18.7.9 per-entry deblock
+// filter-level deltas (df_delta_q[0..3] = Y pass 0, Y pass 1, U, V).  This is
+// the only spec-signalled knob on the §7.17 filter's *strength*: the level the
+// adaptive selector runs at becomes qc + DF_DELTA_SCALE(8) * delta, so +-1
+// moves the level by 8.  Accepts one integer (all four entries) or four
+// comma/space-separated integers; values are clamped to the dfParBits domain
+// the sequence header will signal.  Unset, empty or all-zero writes the
+// historical row (present=false everywhere) and is byte-identical to today.
+inline void deblock_df_delta_from_env(int delta[4]) {
+  for (int i = 0; i < 4; ++i) delta[i] = 0;
+  const char* v = std::getenv("AV2ENC_DEBLOCK_DF_DELTA");
+  if (v == nullptr || *v == '\0') return;
+  int parsed[4] = {0, 0, 0, 0};
+  int n = 0;
+  const char* p = v;
+  while (n < 4) {
+    char* end = nullptr;
+    const long x = std::strtol(p, &end, 10);
+    if (end == p) break;
+    parsed[n++] = static_cast<int>(x);
+    p = end;
+    while (*p == ',' || *p == ' ') ++p;
+    if (*p == '\0') break;
+  }
+  if (n == 0) return;
+  if (n == 1) {
+    for (int i = 1; i < 4; ++i) parsed[i] = parsed[0];
+  }
+  for (int i = 0; i < 4; ++i) {
+    delta[i] = parsed[i] < -15 ? -15 : (parsed[i] > 15 ? 15 : parsed[i]);
+  }
+}
+
+// AV2ENC_DEBLOCK_APPLY (default all-on = byte-identical): the §5.18.7.9
+// apply_deblocking_filter[0..3] row (Y pass 0, Y pass 1, U, V).  Accepts one
+// integer or four comma-separated 0/1 values.  At least one luma pass is
+// forced on: with both luma flags 0 the syntax drops the chroma flags
+// entirely (writer: `if (have_chroma)`), so "luma off + chroma on" is not
+// expressible and the re-enable keeps encoder and decoder on the same row.
+inline void deblock_apply_from_env(bool apply[4]) {
+  apply[0] = apply[1] = apply[2] = apply[3] = true;
+  const char* v = std::getenv("AV2ENC_DEBLOCK_APPLY");
+  if (v == nullptr || *v == '\0') return;
+  int parsed[4] = {1, 1, 1, 1};
+  int n = 0;
+  const char* p = v;
+  while (n < 4) {
+    char* end = nullptr;
+    const long x = std::strtol(p, &end, 10);
+    if (end == p) break;
+    parsed[n++] = static_cast<int>(x);
+    p = end;
+    while (*p == ',' || *p == ' ') ++p;
+    if (*p == '\0') break;
+  }
+  if (n == 0) return;
+  if (n == 1) {
+    for (int i = 1; i < 4; ++i) parsed[i] = parsed[0];
+  }
+  for (int i = 0; i < 4; ++i) apply[i] = parsed[i] != 0;
+  if (!apply[0] && !apply[1]) {
+    apply[0] = true;
+    apply[1] = true;
+  }
+}
+
+// Minimal df_par_bits_minus_2 in [0, 3] (§5.4.10) whose dfParBits domain
+// [-bias, bias-1], bias = 1 << (par_bits-1), contains every requested delta;
+// 0 when every delta is zero (the historical sequence header value).
+inline int deblock_df_par_bits_minus_2(const int delta[4]) {
+  int lo = 0;
+  int hi = 0;
+  for (int i = 0; i < 4; ++i) {
+    lo = delta[i] < lo ? delta[i] : lo;
+    hi = delta[i] > hi ? delta[i] : hi;
+  }
+  for (int minus2 = 0; minus2 <= 3; ++minus2) {
+    const int bias = 1 << (minus2 + 1);  // par_bits = minus2 + 2
+    if (lo >= -bias && hi <= bias - 1) return minus2;
+  }
+  return 3;
+}
+
 struct VideoDeblockGrid {
   int mi_cols = 0;
   int mi_rows = 0;

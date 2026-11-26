@@ -100,6 +100,14 @@ bool InterFrameEncoder::deblock(std::string& error) {
     // deblocker filters the §7.13.3.15 sub-PU edges.  The grid already
     // carries SubPuSize/SubPuColBase/SubPuRowBase for every leaf.
     grid.options.allow_df_sub_pu = options_.enable_df_sub_pu;
+    // AV2ENC_DEBLOCK_DF_DELTA: the encoder's own §7.17 pass must apply the
+    // same per-entry level deltas the frame header signals, or its
+    // reconstruction diverges from the decoder's.  No-op (all zero) when the
+    // gate is unset.
+    post::deblock_df_delta_from_env(grid.options.df_delta_q);
+    // AV2ENC_DEBLOCK_APPLY: same per-pass flags the frame row signals, so
+    // the encoder's recon matches the decoder's on every plane.
+    post::deblock_apply_from_env(grid.options.apply_deblocking_filter);
     // §7.17.6: chroma filter strength uses the effective UV AC delta
     // (DeltaQU/VAc + BaseUVAcDeltaQ).  Omitting it desynchronises the
     // decoder's chroma reconstruction even though the tile bytes are

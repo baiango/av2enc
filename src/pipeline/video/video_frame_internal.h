@@ -33,6 +33,7 @@
 #include "pipeline/video/video_part_diag.h"
 #include "pipeline/video/video_tail_floor.h"
 #include "pipeline/video/video_joint_plan.h"
+#include "pipeline/video/video_pipe_budget.h"
 #include "pipeline/video/video_decision_rate.h"
 #include "codec/partition/tree/partition.h"
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
@@ -1539,6 +1540,32 @@ constexpr double kLeafRdLambdaRefStep = 98.0;  // qlookup(104) / 8
 inline double qp_luma_step(int qindex) {
   const int q = std::clamp(qindex, 0, 255);
   return static_cast<double>(rc::kQlookupQ0To255[q]) / 8.0;
+}
+
+// AV2ENC_RD_DRIVER_RATE_FIT (default off): rate-dependent driver tree price.
+// docs/rd-key-partition-floor.md 0.4 identifies the flat kKeyTxLambdaFit
+// (exponent 0 => one SSE-per-bit price at every qindex) as the root cause of
+// the key driver's 4x4 over-expansion at low rate and prescribes the fix it
+// never measured: "the price must be rate-dependent (~2.0 at qindex 82, ~2048
+// at qindex 184)".  This gate implements exactly those two anchors:
+//   price(q) = 2.0 * (step(q) / step(82))^e,  e = ln(1024) / ln(step(184)/step(82))
+// so price(82) = 2.0 and price(184) = 2048.  When on, the fit IS the whole
+// tree price: AV2ENC_RD_KEY_TX_SCALE and AV2ENC_RD_DRIVER_LAMBDA (the flat
+// price's own knobs) are not applied.  Unset or 0 reproduces the flat product
+// bit-for-bit, so every pin stays byte-identical.
+inline bool driver_rate_fit_enabled() {
+  static const bool value = [] {
+    const char* v = std::getenv("AV2ENC_RD_DRIVER_RATE_FIT");
+    return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0;
+  }();
+  return value;
+}
+
+inline double driver_rate_fit_price(int qindex) {
+  const double step82 = qp_luma_step(82);
+  const double step184 = qp_luma_step(184);
+  const double e = std::log(2048.0 / 2.0) / std::log(step184 / step82);
+  return 2.0 * std::pow(qp_luma_step(qindex) / step82, e);
 }
 
 inline double leaf_rd_lambda(int qindex, const VideoOptions& options) {
@@ -3542,6 +3569,15 @@ class InterFrameEncoder {
     bool seq_driver_decide_sb(std::size_t sb_index,
                             const PartitionNode& reference,
                             PartitionNode* out, std::string& error);
+    // AV2ENC_PIPE_BUDGET (docs/k52-budget-pipe.md): the budget-closed
+    // per-superblock allocation walk.  Its own frame loop (one superblock at a
+    // time), its own leaf loop (every qindex on the grid over the
+    // superblock's own expanded tree) and its own decision order (greedy
+    // marginal gain per byte over one frame budget).  Commits through
+    // collect_node() like every other sequential walk; default off.
+    bool pipe_budget_decide_frame(
+        std::vector<partition::PartitionNode>& base_superblocks,
+        std::string& error);
 
   // AV2ENC_RD_TAIL_FLOOR state, live only during one armed tail picture's
   // sequential superblock walk.  `active` arms the collect_node() hook,
@@ -3553,6 +3589,11 @@ class InterFrameEncoder {
     const PartitionNode* tail_floor_sb_root_ = nullptr;
     std::vector<double> tail_floor_leaf_bits_;
     std::vector<char> tail_floor_leaf_bits_ok_;
+
+  // The J of the superblock `seq_driver_decide_sb` decided last.  The
+  // process-wide counter is reset by nested probe encodes, so the budget walk
+  // reads this instead (docs/k52-budget-pipe.md).
+    double seq_last_sb_cost_ = 0.0;
 
   // AV2ENC_PART_DIAG state, live only during one armed picture's sequential
   // walk.  `active` arms both the collect_node() hook and the per-leaf

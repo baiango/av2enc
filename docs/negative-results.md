@@ -662,6 +662,23 @@ deterministic `4a364cb2…`).
 | CONFIRMED | Use the `--fast-decode` carrier for a lone key, or reach the ext-partition / DIP tools through it | `--fast-decode` encodes 6.5x the bytes at the same QP (68,443 B vs 23,552 at QP 190) and lands K 45.00 at 25 kB, collapsing the curve. `--video-gops 1` **is** byte-identical for a lone key (`a5136473…` both ways) and unlocks `--video-ext-partitions` / `--video-min-block 4` / `--video-dip`, but all three measure 43.9-45.2 K | Keep `--nightly-b` for the still. The gops-1 trick is only useful if a fast-decode-only tool ever measures positive |
 | CONFIRMED | Expect `AV2ENC_RD_DRIVER_ACT` (the §7.4 share gate's nearest existing control) to be a lever | Byte-identical at every value 2..256 and at `MIN=8`/`12` on this picture — the sub-16 leaves are already all above any threshold. It is a no-op here, not evidence against the proposed share gate | Do not count these gates as "measured dead levers" for the rate-adaptive floor design |
 
+## Deblock / CDEF damping / perceptual leaf terms at 25 kB (`docs/k52-budget-pipe.md` §17-§25)
+
+Measured 2026-11-26 on `src720_1f.y4m`, lone key, QP186, mask sum 25,081 B
+stack. Every stream `validate_dav2d` OK.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| **FIRST POSITIVE** | Treat the §7.17 filter as having no strength knob | `df_delta_q` (the only spec-signalled strength field) was never signalled before. New env gate `AV2ENC_DEBLOCK_DF_DELTA`: dose curve peaks at **−2** (47.90 → 48.01 → 48.07 → **48.10** → 48.06 → 48.01 at −3/−4) and the gain is **all luma** (luma-only reproduces it exactly) | `AV2ENC_DEBLOCK_DF_DELTA=-2,-2,-2,-2` (+0.02 over luma-only) |
+| **BEST THIS SESSION** | Tune CDEF with the shipped `--video-cdef-damping 3` | Damping is the biggest filter lever at 25 kB: 3 → 48.01, 4 → 48.26, **5 → 48.36/48.37**, 6 → 48.33. It cuts Butteraugli 13.12 → 12.48 while coding *fewer* bytes | `--video-cdef-damping 5` on top of the deblock Δ → **K 48.37 @ 25,090 B** |
+| CONFIRMED | Expect more `--video-cdef-strength` to help once damping is 5 | 2/4 strengths tie raw K and cost +4/+40 B; strictly dominated | keep 1 strength |
+| CONFIRMED | Swap in the perceptual CDEF ranker (`AV2ENC_PERCEPTUAL_FILTER=veto`) at 25 kB | Raw +0.02 K for +26 B, but shrinking it to matched bytes collapses to 47.71 (only 29 leaves separate the arms and BA jumps 12.48 → 14.11) | keep SSE ranking |
+| CONFIRMED | Assume `AV2ENC_PIPE_BA` (BA-weighted leaf cost) is a lever on a lone key | `ba_on` requires `!keyframe_` — the term is **structurally inert** on a single key frame, same for the `PIPE_PERC`/`EFF_PERC` pipe front-end | the key path's perceptual D is `EFF_PERC_KEY_CSF` instead |
+| CONFIRMED | Re-sweep the key CSF gain (`EFF_PERC_KEY_CSF`) | Already at its peak at the shipped 1.5: 1.0 → 48.33 at matched bytes, 2.0 → 48.05, 2.5 → 48.07, 0/0.3/0.6 → ≤47.50. Both sides strictly dominated. `EFF_PERC_CSF2=0` is byte-identical | keep 1.5 |
+| CONFIRMED | Expect the HF / EDGE leaf-distortion terms to help even without a P chain | `AV2ENC_RD_DRIVER_HF` 1 → 47.49-47.66 (BA 14.2-14.7 for flat JOD); `AV2ENC_RD_DRIVER_EDGE` 1 best 47.69 at 24,911 B (0.68 below the anchor while 179 B cheaper, monotone the wrong way); EDGE 5 destroys the picture (BA 18.4) | both default off; the `rd-engine0` §7 clip verdict is the term's fault, not the chaining's |
+| CONFIRMED | Look for driver-λ / tree-λ headroom near the winner | λ×tree-λ grid: 6 of 8 points are **strictly dominated** (more bytes AND less K); λ304 is −1.44 K for 155 B | λ256 / tree-λ 0.10 is an interior optimum |
+| CONFIRMED | Reach for CCSO knobs to improve this stream | `--video-ccso-rd`, `--video-ccso-refit 2`, `--video-ccso-bands 3` are **byte-identical** — CCSO is off in the `--nightly-b` aggregate, so the axis does not exist here | n/a |
+
 ## Flat-area 1-px checkerboard on the 720p still at 25 kB
 
 Measured 2026-11-25 on `src720_1f.y4m`, lone key, `AV2ENC_RD_DRIVER_MIN=16
