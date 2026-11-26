@@ -217,15 +217,6 @@ expensive on the leaves that actually code a residual**, with a one-sided
 residual-versus-skip decision made with this model is biased toward *not*
 coding the residual.
 
-**Adaptivity was tested and does not solve it.** `coeff_exact`, the writer's
-own write-time -log2(p) under the real adaptive contexts, carries the same bias
-as the analytic surrogate (-7.86 vs -9.00 bits at QP198), so the error is not
-"static model vs adaptive model". The cause is a **double-counted position
-term**: `0.5 * eob` charged per coded coefficient on top of the 8.0-bit per-part
-overhead that already covers the significance coding. Setting the position term
-to 0 leaves mean absolute bias 3.0 bits (from 16.0) and saves 1.25 % of the
-bytes at +0.05 dB on 24 frames.
-
 **Correction (measured same day): the bias does *not* reach intra.** The
 guess above was that `estimate_tx_bits` / the Laplacian model prices intra
 coefficients too, so the bias would transfer.  Tested: `src720.png` at QP212
@@ -257,65 +248,32 @@ It converts "we are 0.147 JOD behind" into "how much of that is mispricing",
 which is answerable by measurement — and the measurement now says most of the
 observable model error is in coefficients.
 
-## Partition.lean — is the 16x16 floor better than 4x4?
+## Cause.lean — can the *cause* be proved?
 
-**Measured** (`src720.png`, 1280x720, matched bytes, CVVDP):
+**No, not positively.** A discrepancy proves the model is wrong; it cannot prove
+which mechanism produced it. "The numbers fit mechanism X, therefore X caused
+them" is abduction — any flexible hypothesis fits three points.
 
-| rate | min-block 16 | min-block 4 | diff |
-|---|---:|---:|---:|
-| 20,000 B | 6.9391 | 6.9139 | **-0.025** |
-| 30,000 B | 7.3777 | 7.3653 | **-0.012** |
-| 40,000 B | 7.7673 | 7.7482 | **-0.019** |
+**Proved: elimination.** `no_affine_bias_fits` shows that the additive family
+`price = overhead + magnitude + position·eob`, whose bias against the coder is
+affine in `eob`, **cannot reproduce the three measurements at any constants**:
+the secant slopes disagree (`456·4401 ≠ 1406·1619`). So the defect is not a
+tuning constant — the family is misspecified, and further constant-fitting
+cannot succeed by construction. (Both early "fixes" in this session were exactly
+that, and both left residual error.)
 
-So yes: the floor measures better at low, mid and high rate. Per-QP the 4x4 arm
-also costs 2-3 % more bytes at the same QP, so the equal-QP comparison is not
-the question; the matched-rate rows above are.
+With the two measured eliminations this gives:
 
-**Proved** (`unrestricted_is_at_least_as_cheap`): allowing 4x4 *enlarges* the
-candidate set, since a 16x16 leaf is still a legal tree when 4x4 leaves are
-allowed and pays the same split-flag syntax. At any fixed lambda the cheapest
-`D + lambda * R` over the larger set is no larger than over the smaller one. So
-at every operating point the 4x4-allowed encoder should be at least as cheap —
-**the measured loss is therefore not a property of small blocks, it is evidence
-that the encoder does not achieve the minimum over its own candidate set**
-(`measured_loss_is_a_defect`).
+| candidate cause | status |
+|---|---|
+| static model; adaptive contexts would fix it | **ruled out** (adaptive has the same bias: −7.86 vs −9.00 @QP198) |
+| a wrong constant in the additive family | **ruled out by proof** (`no_affine_bias_fits`) |
+| 4x4 partitions intrinsically worse | **ruled out** (`Partition.lean`) |
+| residual cost is non-additive over scan positions (context state / TX shape / significance-map structure) | **surviving hypothesis** — supported by elimination, not measured directly |
 
-That is the same class of defect already verified twice on 2026-11-26: a
-coefficient position term charged twice, which prices leaves inconsistently with
-what they cost and biases the tree. The floor is a *workaround*, not a law —
-and the theorem says there is headroom left on the table that a correct search
-with 4x4 would collect.
-
-Scope: a statement about cost, not content. It does not say how much 4x4 is
-worth, only that an exact search cannot lose by having it.
-
-## PricingWrong.lean — is the pricing actually wrong? Yes, provably, with a lower bound
-
-**Argument 1 — direct contradiction.** If pricing were exact, price = true cost
-for every leaf, hence equal in total. Measured they differ, so at least one leaf
-is mispriced, and the difference is a *lower bound* on the total absolute
-mispricing (cancellation can only reduce an absolute sum):
-
-    sumSigned l ≤ sumAbsErr l          (sum_size_le_total_error)
-    0 < sumAbsErr l → ∃ x ∈ l, x.1 ≠ x.2   (mispriced_exists)
-    G ≤ sumSigned l → G ≤ sumAbsErr l      (total_error_at_least)
-
-Instantiating at QP198 with the measured residual leaves (n = 245, model
-`coeff_exact`, signed gap -7.86 bits per leaf):
-
-    Σ(true − price) = 1,926 bits   ⇒   Σ|price − true| ≥ 1,926 bits
-
-on a *single* 24-frame run. That is not an estimate or a fit: it is the coder's
-own output contradicting the model that chose what to code.
-
-**Argument 2 — from a coding loss.** `Partition.lean` proves exact pricing
-cannot measure worse when the candidate set strictly grows; the 4x4 arm measures
-0.012-0.025 JOD worse at matched bytes. So pricing is not exact, or the search
-never reaches its own minimum. That measurement cannot separate the two — which
-is why argument 1 (which is per-leaf and needs no candidate comparison) is the
-one to quote.
-
-**Not claimed:** that the mispricing costs quality in proportion to its size. A
-large error that cancels between the candidates being *compared* costs nothing;
-`pricing_gap_bound` is the statement that survives, and the measurements say the
-error is one-sided, which is exactly the case where it does not cancel.
+**What would establish a cause positively:** a predicted-delta intervention —
+change one term, predict the bias movement, measure that it moves by exactly
+that. The `0.5 → 0` position change did move it by the predicted `−0.31·eob`
+(16.0 → 3.0 bits mean absolute), which is causal evidence that the double-counted
+position term was *a* cause. It was not the whole cause: the surviving −3.5..+4.6
+bit spread is precisely what elimination 2 says no additive form can absorb.

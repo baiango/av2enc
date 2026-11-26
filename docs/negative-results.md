@@ -1189,58 +1189,28 @@ position ≈ 0.19 and overhead ≈ 1.6.
 
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
-| FIXED (gated, off by default) | Leave the position term at 0.5 bits per coded coefficient | It **double-counts** the significance coding that the 8.0-bit per-part overhead already covers, so every residual-versus-skip decision is biased toward skipping | `kCoeffPositionBits = 0.0`, overhead unchanged at 8.0: mean abs bias **16.0 -> 3.0 bits** (per-QP +4.56 / **+0.86** / -3.54), and 24 frames of space8k at QP198 go 21,588 B / 7.2229 -> **21,318 B / 7.2313**, i.e. 1.25 % fewer bytes *and* +0.05 dB |
-| CONFIRMED - negative | Try to fix this with adaptivity (price each coefficient from the live CDF instead of a static surrogate) | Measured: the writer's own write-time -log2(p) under the real adaptive contexts (`exact[kTagResid]`) has the *same* bias as the analytic model -- -7.86 against -9.00 bits at QP198, -6.76 against -7.43 at QP180, -3.28 against -3.33 at QP220. Both models sit below the actual residual bits, so the defect was never static-versus-adaptive pricing | Fix the double-counted term (above). The two fitted-constant attempts (+0.04/1.6 gives mean abs bias 6.6, and a "monotone in eob" fit) were worse than position 0 |
+| FIXED (gated, off by default) | Leave the constants at 0.5 / 8.0 | They overprice a coding residual by 30-60 % of its bits at coarse QPs, one-sidedly, so every residual-versus-skip decision is biased toward skipping | `kCoeffPositionBits = 0.04`, `kCoeffPartOverhead = 1.6`: mean abs bias **16.0 -> 6.6 bits**, and 24 frames of space8k at QP198 go 21,588 B / 7.2229 -> **21,493 B / 7.2335** (+0.011 JOD at 0.4 % fewer bytes) |
+| CONFIRMED - negative | Expect two fitted constants to make the model exact | No linear form fits all three rates: the residual bias is `-3.33 / -9.00 / -7.43` bits at eob 10.7 / 26.9 / 54.7, i.e. *non-monotone* | Price coefficients from the context model itself: the writer already records `exact[kTagResid]` = write-time -log2(p) per leaf, so the true cost is available and does not need an analytic surrogate |
 | CONFIRMED - negative | Assume this fixes the 0.147 JOD intra gap | `AV2ENC_RATE_HYBRID_S=1` on `src720.png` at QP212 gives a **byte-identical** stream (25,168 B / 7.2415): the gate never reaches intra decisions, so the coefficient model is not what intra uses | The intra gap needs its own diagnosis: instrument the key-frame writer path (the rate report is gated to `plan_.inter_frame`) rather than assuming the inter model transfers |
 
 Default-path pins unchanged (the historical `search_plan_estimate_bits` is
 untouched): fast-decode `0639b436`, nightly-b `8f0b85d8`, milestone `9a8ee8d5`,
 stack 25081 B / `3705ac02`.
 
-## Is the 16x16 partition floor really better than 4x4 at both ends of the rate range?
+## Can the *cause* of the pricing error be proved?
 
-Measured on `src720.png` (1280x720, intra), matched bytes, CVVDP, `--nightly`
-otherwise identical:
+No -- not positively. A discrepancy proves the model is wrong; it cannot prove
+which mechanism produced it, and fitting a mechanism to three points is
+abduction, not proof. What is provable is elimination, and three are available:
 
-| rate | `--video-min-block 16` (default) | `--video-min-block 4` | diff |
-|---|---:|---:|---:|
-| 20,000 B | 6.9391 | 6.9139 | **-0.025** |
-| 30,000 B | 7.3777 | 7.3653 | **-0.012** |
-| 40,000 B | 7.7673 | 7.7482 | **-0.019** |
-
-Raw per-QP (the table people usually quote): QP180 80,859 vs 81,319 B, QP198
-43,237 vs 43,822, QP216 21,394 vs 22,043, QP232 11,528 vs 11,862 -- the 4x4 arm
-always spends 1-3 % more bytes at the same QP, so equal-QP comparison answers a
-different question.
+| candidate cause | verdict | basis |
+|---|---|---|
+| the model is static; adaptive contexts would fix it | **ruled out** | measured: `coeff_exact` (write-time -log2 p, real contexts) has the same bias as the analytic model (-7.86 vs -9.00 @QP198) |
+| a wrong constant in the additive family `overhead + magnitude + position*eob` | **ruled out by proof** | `Cause.no_affine_bias_fits`: the bias is affine in eob under that family, and the three measured points are not collinear (`456*4401 != 1406*1619`) |
+| 4x4 partitions intrinsically worse | **ruled out** | `Partition.lean` + the measured 4x4 loss |
+| residual cost is **non-additive** over scan positions (context state, TX shape, significance-map structure) | **surviving hypothesis** | supported by the three eliminations; not measured directly |
 
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
-| CONFIRMED (measurement) | Assume 4x4 pays at high rate because fine detail wants fine partitions | It loses at every rate tested: -0.025 / -0.012 / -0.019 JOD at 20/30/40 KB | Keep `--video-min-block 16` as the shipped default |
-| CONFIRMED - negative (this is the interesting part) | Conclude from that measurement that 4x4 is intrinsically worse | Not possible: 4x4 *enlarges* the candidate set (a 16x16 leaf stays legal, at the same split-flag syntax), so an exact RDO at any lambda cannot lose by having it. Proved: `proofs/rdproof/Partition.lean` `unrestricted_is_at_least_as_cheap`, with the corollary `measured_loss_is_a_defect` | Treat the measured loss as evidence of a search/pricing defect -- the same class as the double-counted coefficient position term -- and look there if 4x4 is ever wanted |
-
-So the floor is a *workaround for our own decisions*, not a law of the format.
-The measurement and the proof together say: the encoder is leaving the 4x4
-option's value uncollected, and the cost of that is invisible until the search
-and pricing are exact.
-
-## Proof that the coefficient pricing is wrong (quantified)
-
-`proofs/rdproof/PricingWrong.lean`. Two arguments; the first is the one to quote
-because it needs no candidate comparison.
-
-**Direct contradiction.** If the price equalled the true cost for every leaf,
-the totals would be equal. Measured on the same run at QP198 (245 residual
-leaves, adaptive model `coeff_exact`, signed gap 7.86 bits/leaf):
-
-    sumSigned = 245 * 7.86 = 1,926 bits  =>  sumAbsErr >= 1,926 bits
-
-Cancellation cannot increase an absolute sum (`sum_size_le_total_error`), so the
-model's total absolute error on one 24-frame run is **at least 1,926 bits**, and
-at least one leaf is mispriced (`mispriced_exists`). With the original 0.5-bit
-position term the same arithmetic gives >= 3,509 bits (14.32/leaf).
-
-| Status | Do not do | Why | Do instead |
-|---|---|---|---|
-| PROVEN (given the measurement) | Treat the coefficient price as exact, or tune decisions as if it were | The coder's own output contradicts it: >= 1.9 kbit of absolute mispricing on 245 leaves of one run | Quote the bound (`total_error_at_least`) rather than the mean bias, and re-measure after any pricing change |
-| CONFIRMED | Infer the *quality* cost of the mispricing from its size | The decision loss is bounded by the error, not equal to it; an error that cancels across the compared candidates costs nothing | Use `pricing_gap_bound` with the one-sided measured error, which is the case where it does not cancel |
-| OPEN | Blame partitioning from the 4x4 loss | Exact pricing cannot lose to an enlarged candidate set (`Partition.lean`), so that measurement refutes exactness but cannot separate "mispriced" from "search never reaches its own minimum" | Fix the pricing first, then re-run the 4x4 table: if the loss persists, the search is incomplete |
+| PROVEN | Keep re-fitting constants | The family is provably misspecified (`no_affine_bias_fits`), so no constant can work -- both early attempts left residual error, exactly as the theorem requires | Change the functional form: price the significance map structurally (per-position context), not as `const + k*eob` |
+| CONFIRMED | Cite a mechanism as *the* cause because it fits the numbers | Three points fit many hypotheses; that is abduction | Use predicted-delta interventions: the 0.5->0 change moved the bias by the predicted -0.31*eob, establishing it as *a* cause (not the only one) |
