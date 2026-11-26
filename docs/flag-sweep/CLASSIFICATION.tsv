@@ -11,7 +11,7 @@ name	surface	verdict	evidence
 --cpu-used	option	EFFECTIVE	explicit-table(still, 4)
 --crf	option	INERT	explicit-table(--rc crf, 32)
 --effort	option	EFFECTIVE	explicit-table(still, 10)
---effort-plan	switch	REJECTED	hand-batch
+--effort-plan	switch	INERT	resolve3(still)
 --fast-decode	switch	EFFECTIVE	per-mode(video+still)
 --frames	option	INERT	resolve(other)
 --gpu-plan	option	REJECTED	argsweep(2 values)
@@ -27,7 +27,7 @@ name	surface	verdict	evidence
 --metadata-timecode	switch	EFFECTIVE	flip(nightly)
 --metadata-user-data	switch	EFFECTIVE	flip(nightly)
 --nightly	switch	EFFECTIVE	per-mode(video+still)
---nightly-b	switch	REJECTED	hand-batch
+--nightly-b	switch	INERT	resolve3(plain video)
 --no-cfl	switch	EFFECTIVE	still+table/still
 --no-deblock	switch	EFFECTIVE	still+table/still
 --oppoint	option	REJECTED	argsweep(2 values)
@@ -38,22 +38,22 @@ name	surface	verdict	evidence
 --spatial-layers	option	REJECTED	argsweep(2 values)
 --still	switch	INERT	still+table/still
 --still-ccso	switch	EFFECTIVE	still+table/still
---still-ccso-bands	switch	REJECTED	plain-rejudge
+--still-ccso-bands	switch	EFFECTIVE	resolve3(still)
 --still-ccso-edge	switch	EFFECTIVE	still+table/still
 --still-cctx	switch	EFFECTIVE	still+table/still
 --still-cdef	switch	EFFECTIVE	still+table/still
 --still-cdef-on-skip-txfm	switch	EFFECTIVE	hand-batch
---still-cdef-strengths	switch	REJECTED	plain-rejudge
+--still-cdef-strengths	switch	EFFECTIVE	resolve3(still)
 --still-cfl-ds	option	EFFECTIVE	resolve(still, value 1)
 --still-cfl-explicit	switch	EFFECTIVE	still+table/still
 --still-chroma-lr	switch	EFFECTIVE	still+table/still
 --still-content-interpretation	switch	EFFECTIVE	still+table/still
 --still-dc	switch	INERT	still+table/still
 --still-dc-ac-delta-q	switch	EFFECTIVE	still+table/still
---still-ddt	switch	REJECTED	still+table/still
+--still-ddt	switch	INERT	resolve3(still)
 --still-deblock	switch	INERT	still+table/still
 --still-delta-q	switch	EFFECTIVE	still+table/still
---still-delta-q-res	switch	REJECTED	plain-rejudge
+--still-delta-q-res	switch	EFFECTIVE	resolve3(still)
 --still-depth	option	INERT	resolve(still, value 1)
 --still-dip	switch	EFFECTIVE	still+table/still
 --still-ext-partitions	switch	EFFECTIVE	still+table/still
@@ -63,7 +63,7 @@ name	surface	verdict	evidence
 --still-grain	switch	EFFECTIVE	still+table/still
 --still-grain-adaptive	switch	EFFECTIVE	hand-batch
 --still-ibc	switch	EFFECTIVE	still+table/still
---still-ibc-search	option	REJECTED	argsweep(2 values)
+--still-ibc-search	option	EFFECTIVE	resolve3(still)
 --still-ibp	switch	EFFECTIVE	still+table/still
 --still-idtx	switch	EFFECTIVE	still+table/still
 --still-ist	switch	EFFECTIVE	still+table/still
@@ -74,15 +74,15 @@ name	surface	verdict	evidence
 --still-pc-wiener	switch	EFFECTIVE	still+table/still
 --still-per-segment-q	switch	EFFECTIVE	still+table/still
 --still-qm	switch	EFFECTIVE	still+table/still
---still-qm-level	switch	REJECTED	plain-rejudge
+--still-qm-level	switch	EFFECTIVE	resolve3(still)
 --still-rdo-intra	switch	EFFECTIVE	still+table/still
 --still-rdo-scale	switch	REJECTED	plain-rejudge
 --still-rdoq	switch	EFFECTIVE	still+table/still
 --still-rdoq-scale	switch	REJECTED	plain-rejudge
 --still-sb128	switch	EFFECTIVE	still+table/still
 --still-sb256	switch	EFFECTIVE	still+table/still
---still-sdp	switch	REJECTED	still+table/still
---still-seg-delta	switch	REJECTED	plain-rejudge
+--still-sdp	switch	INERT	resolve3(still)
+--still-seg-delta	switch	EFFECTIVE	resolve3(still)
 --still-segmentation	switch	EFFECTIVE	still+table/still
 --still-single	switch	INERT	still+table/still
 --still-sub8	switch	INERT	still+table/still
@@ -109,7 +109,7 @@ name	surface	verdict	evidence
 --video-bawp	switch	EFFECTIVE	per-mode(video+still)
 --video-bawp-carrier	switch	EFFECTIVE	per-mode(video+still)
 --video-brt	switch	EFFECTIVE	flip(nightly)
---video-bru	switch	REJECTED	plain-rejudge
+--video-bru	switch	INERT	resolve3(bare)
 --video-ccso	switch	EFFECTIVE	per-mode(video+still)
 --video-ccso-bands	option	EFFECTIVE	argsweep(2 values)
 --video-ccso-header-rd	switch	EFFECTIVE	per-mode(video+still)
@@ -138,7 +138,7 @@ name	surface	verdict	evidence
 --video-deblock	switch	EFFECTIVE	per-mode(video+still)
 --video-decoder-model	switch	EFFECTIVE	comp3
 --video-delta-q	switch	EFFECTIVE	comp3
---video-delta-q-res	option	REJECTED	argsweep(2 values)
+--video-delta-q-res	option	EFFECTIVE	resolve3(delta-q)
 --video-df-sub-pu	switch	EFFECTIVE	flip(nightly)
 --video-dip	switch	EFFECTIVE	flip(nightly)
 --video-drift-refresh	switch	INERT	per-mode(video+still)
@@ -163,7 +163,7 @@ name	surface	verdict	evidence
 --video-ibc	switch	EFFECTIVE	comp3
 --video-ibp	switch	EFFECTIVE	flip(nightly)
 --video-idtx	switch	EFFECTIVE	flip(nightly)
---video-idtx-1d	switch	REJECTED	comp5/still
+--video-idtx-1d	switch	INERT	resolve3(bare)
 --video-imp-mask	switch	EFFECTIVE	hand-batch
 --video-implicit-ref-map	switch	EFFECTIVE	comp3
 --video-inter-residual	switch	EFFECTIVE	per-mode(video+still)
@@ -194,7 +194,7 @@ name	surface	verdict	evidence
 --video-opfl	switch	EFFECTIVE	hand-batch
 --video-palette	switch	EFFECTIVE	comp3
 --video-partition-rd	switch	EFFECTIVE	per-mode(video+still)
---video-partition-rd-depth	option	REJECTED	argsweep(2 values)
+--video-partition-rd-depth	option	EFFECTIVE	resolve3(video)
 --video-partition-rd-lambda	option	EFFECTIVE	argsweep(2 values)
 --video-pb-aspect-2	switch	EFFECTIVE	flip(nightly)
 --video-pc-wiener	switch	EFFECTIVE	flip(nightly)
@@ -205,7 +205,7 @@ name	surface	verdict	evidence
 --video-rd-driver	switch	EFFECTIVE	flip(nightly)
 --video-rd-preset	option	EFFECTIVE	explicit-table(quality)
 --video-rdoq	switch	INERT	per-mode(video+still)
---video-rdoq-scale	switch	REJECTED	plain-rejudge
+--video-rdoq-scale	switch	EFFECTIVE	resolve3(inter-residual)
 --video-recon	option	INERT	per-mode(args)
 --video-reduce-pb-aspect	switch	EFFECTIVE	flip(nightly)
 --video-ref-mvs	switch	EFFECTIVE	comp3
@@ -220,12 +220,12 @@ name	surface	verdict	evidence
 --video-scc-force	switch	EFFECTIVE	comp3 (+companion)
 --video-sdp	switch	EFFECTIVE	comp3
 --video-sef	switch	EFFECTIVE	comp3
---video-seg-delta	option	REJECTED	argsweep(2 values)
+--video-seg-delta	option	EFFECTIVE	resolve3(per-segment-q)
 --video-seg-globalmv	switch	EFFECTIVE	comp3
 --video-seg-skip	switch	EFFECTIVE	comp3
 --video-seg-temporal	switch	EFFECTIVE	comp3
 --video-segmentation	switch	EFFECTIVE	comp3
---video-segments	option	REJECTED	argsweep(2 values)
+--video-segments	option	INERT	resolve3(video)
 --video-seq-seg-info	switch	EFFECTIVE	comp3 (+companion)
 --video-seq-seg-info-frozen	switch	EFFECTIVE	comp3 (+companion)
 --video-short-refresh	switch	EFFECTIVE	comp3
@@ -252,11 +252,11 @@ name	surface	verdict	evidence
 --video-tx-lambda	option	EFFECTIVE	argsweep(2 values)
 --video-tx-search	switch	EFFECTIVE	per-mode(video+still)
 --video-user-qm	switch	EFFECTIVE	comp5
---video-uv-delta-q	option	REJECTED	argsweep(2 values)
+--video-uv-delta-q	option	EFFECTIVE	resolve3(video)
 --video-uv-qp-offset	option	EFFECTIVE	argsweep(2 values)
 --video-warp	switch	EFFECTIVE	comp3
 --video-wiener	switch	EFFECTIVE	flip(nightly)
---video-y-dc-delta-q	option	REJECTED	argsweep(2 values)
+--video-y-dc-delta-q	option	EFFECTIVE	resolve3(video)
 --vram-cap	option	REJECTED	argsweep(2 values)
 ALPHA_CUDA_VERBOSE	env	INERT	env(=1)
 ALPHA_PRINT_GOLDENS	env	INERT	env(=1)

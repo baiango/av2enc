@@ -1,0 +1,64 @@
+--b-frames	REJECTED	av2enc: error: --svc-layers: spatial layer x1 is smaller than the layer 
+--effort-plan	REJECTED	av2enc: multiple input files specified
+--gpu-plan	REJECTED	av2enc: --gpu-plan is a host-planning dry run; do not combine it with --
+--nightly-b	REJECTED	av2enc: multiple input files specified
+--oppoint	REJECTED	av2enc: error: --svc-layers: spatial layer x1 is smaller than the layer 
+--recon	REJECTED	av2enc: error: --recon is wired for the --bit-depth 10 and --chroma form
+--spatial-layers	REJECTED	av2enc: error: --svc-layers: spatial layer x1 is smaller than the layer 
+--still-ccso-bands	EFFECTIVE	base still value 1 (4208 B)
+--still-cdef-strengths	EFFECTIVE	base still value 1 (4201 B)
+--still-ddt	REJECTED	av2enc: multiple input files specified
+--still-delta-q-res	EFFECTIVE	base still value 1 (4203 B)
+--still-gpu	REJECTED	av2enc: multiple input files specified
+--still-ibc-search	EFFECTIVE	base still value 1 (4199 B)
+--still-ist-scale	REJECTED	av2enc: --still-ist-scale requires --still or --still-gpu
+--still-qm-level	EFFECTIVE	base still value 1 (2193 B)
+--still-rdo-scale	REJECTED	av2enc: --still-rdo-scale requires --still or --still-gpu
+--still-rdoq-scale	REJECTED	av2enc: --still-rdoq-scale requires --still or --still-gpu
+--still-sdp	REJECTED	av2enc: multiple input files specified
+--still-seg-delta	EFFECTIVE	base still value 1 (4197 B)
+--still-tcq-scale	REJECTED	av2enc: --still-tcq-scale requires --still or --still-gpu
+--still-tx-type-scale	REJECTED	av2enc: --still-tx-type-scale requires --still or --still-gpu
+--svc-inter-layer	REJECTED	av2enc: --svc-inter-layer is not a conforming AV2 v1.0.0 feature: §6.8.2
+--video-bru	REJECTED	av2enc: multiple input files specified
+--video-delta-q-res	REJECTED	av2enc: --video-delta-q-res requires --video-delta-q or --video-aq
+--video-gpu	REJECTED	av2enc: multiple input files specified
+--video-idtx-1d	REJECTED	av2enc: multiple input files specified
+--video-leading	REJECTED	av2enc: --svc-layers cannot be combined with a frame-type mode
+--video-lossless-b	REJECTED	av2enc: multiple input files specified
+--video-num-ref-frames	REJECTED	av2enc: --svc-layers codes one reference and one temporal layer per spat
+--video-partition-rd-depth	EFFECTIVE	base v12 value 1 (7472 B)
+--video-rdoq-scale	REJECTED	av2enc: --video-rdoq needs --video-inter-residual: the default video cha
+--video-seg-delta	REJECTED	av2enc: --video-seg-delta requires --video-per-segment-q or --video-delt
+--video-segments	REJECTED	av2enc: error: --svc-layers: spatial layer x1 is smaller than the layer 
+--video-tlayer-anchor-residual	REJECTED	av2enc: multiple input files specified
+--video-tlayer-drop	REJECTED	av2enc: --video-tlayer-drop must be a non-negative integer
+--video-tlayer-qp-offsets	REJECTED	av2enc: --video-tlayer-qp-offsets expects four comma-separated integers 
+--video-tlayer-refresh-budget	REJECTED	av2enc: --video-tlayer-anchor-residual needs the chained --video-tlayers
+--video-tlayer-refresh-threshold	REJECTED	av2enc: --video-tlayer-anchor-residual needs the chained --video-tlayers
+--video-uv-delta-q	REJECTED	av2enc: error: --svc-layers: spatial layer x1 is smaller than the layer 
+--video-y-dc-delta-q	REJECTED	av2enc: error: --svc-layers: spatial layer x1 is smaller than the layer 
+--vram-cap	REJECTED	av2enc: note: --vram-cap has no effect in this CPU-only build
+AV2ENC_FRAME_QP_PLAN	REJECTED	av2enc: multiple input files specified
+AV2ENC_PERCEPTUAL_FILTER	REJECTED	av2enc: multiple input files specified
+--video-bru                    INERT      (18845 B / base 18845 B)
+--video-idtx-1d                INERT      (18845 B / base 18845 B)
+--still-ddt                    INERT      (4198 B / base 4198 B)
+--still-sdp                    INERT      (4198 B / base 4198 B)
+--nightly-b                    INERT      (18845 B / base 18845 B)
+--effort-plan                  INERT      (4216 B / base 4216 B)
+--gpu-plan                     REJECTED av2enc: missing value after '--gpu-plan'
+--recon                        BASE-FAILED av2enc: error: --bit-depth/--chroma request 10-bit 4:2:
+--video-delta-q-res            EFFECTIVE  (18524 B / base 18574 B)
+--video-rdoq-scale             EFFECTIVE  (18266 B / base 19583 B)
+--video-seg-delta              EFFECTIVE  (18667 B / base 17579 B)
+--video-tlayer-drop            REJECTED av2enc: --video-tlayer-drop requires --video-tlayers
+--video-tlayer-qp-offsets      REJECTED av2enc: --video-tlayer-qp-offsets needs the chained --video-tl
+--video-num-ref-frames         REJECTED av2enc: --video-num-ref-frames must be an integer in [4, 8]
+--video-leading                REJECTED av2enc: error: --video-leading: leading + regular frames excee
+--video-segments               INERT      (18845 B / base 18845 B)
+--video-uv-delta-q             EFFECTIVE  (18874 B / base 18845 B)
+--video-y-dc-delta-q           EFFECTIVE  (19890 B / base 18845 B)
+--video-tlayer-anchor-residual REJECTED av2enc: --video-tlayer-anchor-residual needs the chained --vid
+--still-ist-scale              REJECTED av2enc: --still-ist-scale requires --still-ist
+--still-rdo-scale              REJECTED av2enc: --still-rdo-scale requires --still-rdo-intra

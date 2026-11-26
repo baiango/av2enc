@@ -223,3 +223,37 @@ Still rejected, each now with the encoder's exact reason:
 ### Totals after this pass
 
 **524 rows -- 215 EFFECTIVE, 265 INERT, 1 OWN-WRITER-OK, 43 REJECTED.**
+
+## Domain parsing from the error text (`resolve3.txt`)
+
+A pass that reads the option's own message and takes the value from the domain
+it states (a range `[lo, hi]`, an enumeration, a required companion, a mode)
+resolved 19 more: **12 EFFECTIVE, 7 INERT**.
+
+| option | mode | verdict |
+|---|---|---|
+| `--still-ccso-bands`, `--still-cdef-strengths`, `--still-delta-q-res`, `--still-ibc-search`, `--still-qm-level`, `--still-seg-delta` | `--still` | **EFFECTIVE** |
+| `--video-partition-rd-depth` | video | **EFFECTIVE** |
+| `--video-delta-q-res` | `--video-delta-q` | **EFFECTIVE** 18,524 B vs 18,574 B |
+| `--video-rdoq-scale` | `--video-inter-residual` | **EFFECTIVE** 18,266 B vs 19,583 B |
+| `--video-seg-delta` | `--video-per-segment-q` | **EFFECTIVE** 18,667 B vs 17,579 B |
+| `--video-uv-delta-q` / `--video-y-dc-delta-q` | video | **EFFECTIVE** 18,874 / 19,890 B |
+| `--video-bru`, `--video-idtx-1d`, `--video-segments` | video (bare) | INERT |
+| `--still-ddt`, `--still-sdp` | `--still` | INERT |
+| `--nightly-b`, `--effort-plan` | own mode | INERT |
+
+`--video-bru` and `--video-idtx-1d` being INERT is informative: the earlier
+"not decoder-gated / the pinned dav2d does not parse them" messages are
+*warnings* under the pinned validator, not refusals -- the switches execute and
+do not change this stream.
+
+### Totals after this pass
+
+**524 rows -- 227 EFFECTIVE, 272 INERT, 1 OWN-WRITER-OK, 24 REJECTED.**
+
+The 24 that remain reject for a stated structural reason, e.g.
+`--svc-inter-layer` ("not a conforming AV2 v1.0.0 feature"), the SVC layer
+selectors (`spatial layer x1 is smaller than x0` -- my 2-layer geometry is
+invalid), `--recon` (needs a 10-bit core), `--vram-cap` ("no effect in this
+CPU-only build"), and the `--video-tlayer-*` family (needs the chained
+`--video-tlayers` plan).
