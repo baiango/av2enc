@@ -17,6 +17,11 @@ is the product and must produce a **byte-identical** stream (the parity gate use
 `cmp`, not a tolerance). No encoder code from AVM, SVT-AV1/AV2 or clave;
 `avmdec` and `dav2d` are black-box validators only.
 
+> **Want better quality?** If you care more about output quality than about a
+> from-scratch, spec-only encoder, I also maintain a **Vulkan port of AVM** at
+> [`baiango/avm-vulkan`](https://github.com/baiango/avm-vulkan). It is a
+> separate project: no AVM code lives in this repo and none of it is used here.
+
 ## Objectives
 
 - **CPU:** maximize the composite **K** at **480×240 @ 30 fps, 100 kbps**.
