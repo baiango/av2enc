@@ -320,3 +320,38 @@ before comparing (968 B vs 3,310 B).
 ### Final totals
 
 **524 rows -- 235 EFFECTIVE, 277 INERT, 1 OWN-WRITER-OK, 10 OUT-OF-SCOPE, 1 REJECTED.**
+
+## The chained tlayers plan located, and the last row (`final7`)
+
+The four `--video-tlayer-*` rows marked OUT-OF-SCOPE were not a dead end: the
+gate is `tlayers_chain_enabled()` (`options.h:549`) --
+
+```cpp
+if (options.video_tlayers_chain) return true;
+const char* value = std::getenv("AV2ENC_TLAYERS_CHAIN");
+return value != nullptr && value[0] != '\0' && value[0] != '0';
+```
+
+-- and the chained form needs `--video-tlayers != 0` **and** `--video-gops > 1`.
+Armed (`AV2ENC_TLAYERS_CHAIN=1 --video-tlayers 4 --video-gops 2`, 13,669 B):
+
+| option | verdict |
+|---|---|
+| `--video-tlayer-anchor-residual` | INERT (13,669 B = base) |
+| `--video-tlayer-refresh-budget 1000` | INERT |
+| `--video-tlayer-refresh-threshold 1` | INERT |
+| `--video-tlayer-qp-offsets 0,0,0,0` | INERT on `--video-tlayers 8 --video-gops 2` (25,096 B = base) |
+
+`--video-lossless-b`: the `-o` path is honoured (79,344 B written, "4 output
+frame(s), base_q_idx 0"). It is a **mode enabler**, not a tune: `--qp 0` without
+the flag is refused, so there is no like-for-like baseline to compare against.
+Recorded as OWN-WRITER-OK beside `--lossless`.
+
+### Final totals -- no row left without a verdict
+
+**524 rows -- 235 EFFECTIVE, 281 INERT, 2 OWN-WRITER-OK, 6 OUT-OF-SCOPE, 0 REJECTED.**
+
+The six OUT-OF-SCOPE rows are environment limits only: `--video-gpu`,
+`--still-gpu`, `--vram-cap` (CUDA-only build), `--gpu-plan` (a dry run that
+cannot be combined with an encode), `--recon` (needs a 10-bit core this build
+refuses), `--svc-inter-layer` (not a conforming AV2 v1.0.0 feature).

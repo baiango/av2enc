@@ -176,7 +176,7 @@ name	surface	verdict	evidence
 --video-leaf-rd	switch	EFFECTIVE	per-mode(video+still)
 --video-long-term	switch	EFFECTIVE	comp3
 --video-lossless	switch	EFFECTIVE	comp5
---video-lossless-b	switch	REJECTED	comp5/still
+--video-lossless-b	switch	OWN-WRITER-OK	final7(79,344 B at -o; --qp 0 without the flag is refused, so no like-for-like baseline)
 --video-lossless-intra-period	option	INERT	per-mode(args)
 --video-max-depth	option	INERT	per-mode(args)
 --video-me-range	option	INERT	per-mode(args)
@@ -241,11 +241,11 @@ name	surface	verdict	evidence
 --video-tip	switch	EFFECTIVE	comp3
 --video-tip-block-ref	switch	EFFECTIVE	hand-batch
 --video-tip-no-hole-fill	switch	EFFECTIVE	still+table
---video-tlayer-anchor-residual	switch	OUT-OF-SCOPE	needs the env-gated chained tlayers plan
+--video-tlayer-anchor-residual	switch	INERT	final7(chained, tlayers 4 gops 2) 13,669 B = base
 --video-tlayer-drop	option	EFFECTIVE	resolve4(tlayers 4: 5,756 vs 8,306 B)
---video-tlayer-qp-offsets	option	OUT-OF-SCOPE	needs the env-gated chained tlayers plan
---video-tlayer-refresh-budget	option	OUT-OF-SCOPE	needs the env-gated chained tlayers plan
---video-tlayer-refresh-threshold	option	OUT-OF-SCOPE	needs the env-gated chained tlayers plan
+--video-tlayer-qp-offsets	option	INERT	final7(chained, tlayers 8 gops 2) 25,096 B = base
+--video-tlayer-refresh-budget	option	INERT	final7(chained carrier) 13,669 B = base
+--video-tlayer-refresh-threshold	option	INERT	final7(chained carrier) 13,669 B = base
 --video-tlayers	option	EFFECTIVE	still+table(value 4)
 --video-trace	switch	INERT	per-mode(video+still)
 --video-tx-context-rate	switch	EFFECTIVE	flip(nightly)
