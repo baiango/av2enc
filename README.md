@@ -31,30 +31,48 @@ is the product and must produce a **byte-identical** stream (the parity gate use
 
 | config | kbps | JOD | BA | SS2 | K @100 |
 |---|---:|---:|---:|---:|---:|
-| `--fast-decode` QP106 (pin) | 100.0 | 9.733 | 3.42 | 80.84 | 82.2 |
-| **`--video-rd-preset best`** QP112 (joint plan, opt-in research) | 100.0 | 9.883 | 1.99 | 86.45 | **87.19** |
-| **`--nightly-b`** QP111 (chained B + compound + TIP + CWP depth + exact rate + joint plan, key offset −37, opt-in research) | 100.0 | 9.885 | 1.84 | 86.38 | **88.21** |
+| `--fast-decode` QP105 (matched 100 kbps) | 100.4 | 9.736 | 3.02 | 80.94 | **82.79** |
+| `--fast-decode` QP106 (pin point) | 98.8 | 9.750 | 3.40 | 81.04 | 82.30 |
+| **`--video-rd-preset best`** QP109 (joint plan, opt-in research) | 100.3 | 9.892 | 1.88 | 86.78 | **87.61** |
+| **`--nightly-b --video-gops 7`** QP108 (chained B + compound + TIP + CWP depth + exact rate + joint plan, key offset −37, opt-in research) | 100.8 | 9.908 | 1.69 | 87.77 | **88.43** |
 | AVM `e6f99d3` QP124 | 99.3 | 9.862 | 1.29 | 90.38 | **90.2** |
 | SVT-AV1 p0 CRF36.5 | 100.0 | 9.828 | 1.55 | 88.89 | **88.8** |
 | rav1e 0.8.1 speed 2 | 100.1 | 9.717 | 2.71 | 81.67 | 83.7 |
 
-`best` now carries the **joint plan solve**: a KEEP at **87.19** (+0.68
-bracket / +0.92 fit over the 86.51/86.30 non-joint best), but a **research
-gate** — the serial raster walk costs ~12 min per 60-frame encode, so
+All three av2enc rows are a fresh re-measurement on the current tree
+(`build-release`, 2026-11-27, single-threaded encodes scored with
+`tools/oracle.py` + `avmdec` at 100 kbps; the AVM/SVT/rav1e rows are the
+recorded numbers and were not re-run).  Every preset now spends fewer bits at a
+given QP, so the matched-rate QP moved up the ladder:
+
+| preset | ladder | matched K @100 | recorded | Δ |
+|---|---|---:|---:|---:|
+| `--fast-decode` | QP105–107 | **82.79** | 82.155 | +0.63 |
+| `--video-rd-preset best` | QP109–113 | **87.61** | 87.196 | +0.42 |
+| `--nightly-b --video-gops 7` | QP108–112 | **88.43** | 88.207 | +0.23 |
+
+The gain is rate, not reconstruction: `best` QP112 now scores 87.198 on 24,078 B
+where the pin recorded 87.196 on 25,007 B, and `--fast-decode` QP106 lands at
+24,701 B / 98.8 kbps instead of 100.03 kbps.  `best` QP109 decodes clean under
+`dav2d-macos` (PSNR-Y 47.279, matching the oracle); `--nightly-b` QP108 still
+hits the pinned decoder's §7.21.6 drain defect (17/60) and is `avmdec`-only, as
+below.  The fixed pins moved with all this — see **Pins**.
+
+`best` carries the **joint plan solve**: a KEEP at **87.61**, but a
+**research gate** — the serial raster walk costs ~12 min per 60-frame encode, so
 `--fast-decode` remains the shipped fast path.  `AV2ENC_RD_JOINT_P=0` restores
-the 86.33 lead stack (a LEAD, not a KEEP: +0.097 over the flat aggregate,
-inside the adjacent-QP ripple).  `--nightly-b` is **88.207** (+2.45 over flat,
-+0.286 over the 87.284 exact-rate arm) and also a 12-min research gate;
-research-only because its 60-frame stream is `avmdec`-exact while the pinned
-`dav2d` has a §7.21.6 drain defect (17/60).  AVERAGE compound, the TIP-output
-composition on the dead-end leaves, the CWP NEAR_NEARMV depth pair, the exact
-compound-rate probe and the joint solve are on by default in `--nightly-b`
-(the depth arm needs the TIP field guard); `AV2ENC_RD_JOINT_P=0` reproduces the
-87.284 exact-rate arm, `AV2ENC_COMPOUND_EXACT_RATE=0` the 87.023 depth arm,
-`--video-compound-depth-off` the 86.805 TIP arm, `AV2ENC_TIP_LEAF=0` with the
-depth off the 86.61 compound arm, and `--video-compound-off` the 85.47
-single-prediction arm. The compound NEWMV modes are exact but +0.054 and stay
-off.
+the lead stack (`README` recorded 86.33: +0.097 over the flat aggregate, inside
+the adjacent-QP ripple).  `--nightly-b` is **88.43** and also a 12-min research
+gate; research-only because its 60-frame stream is `avmdec`-exact while the
+pinned `dav2d` has a §7.21.6 drain defect (17/60).  AVERAGE compound, the
+TIP-output composition on the dead-end leaves, the CWP NEAR_NEARMV depth pair,
+the exact compound-rate probe and the joint solve are on by default in
+`--nightly-b` (the depth arm needs the TIP field guard).  The control arms were
+recorded against the old pins and were **not** re-run here: `AV2ENC_RD_JOINT_P=0`
+87.284 exact rate, `AV2ENC_COMPOUND_EXACT_RATE=0` 87.023 depth, `--video-compound-depth-off`
+86.805 TIP, `AV2ENC_TIP_LEAF=0` with the depth off 86.61 compound, and
+`--video-compound-off` 85.47 single prediction. The compound NEWMV modes are
+exact but +0.054 and stay off.
 
 **720p (1440×720/60, ~293 kbps):** av2enc **45.6**, AVM **55.8**, SVT **56.6**,
 rav1e **53.0**. The 720p gap is content-dependent; see
@@ -90,17 +108,17 @@ The commands below use the pinned local fixtures under `testdata/`, which are
 gitignored and must be generated first (`docs/testdata-provenance.md`).
 
 ```sh
-# rate-matched 240p point
+# rate-matched 240p point (QP106 is the pin; QP105 lands on 100 kbps)
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/fd.ivf \
   --video --frames 60 --qp 106 --cpu-threads 8 --fast-decode
 
-# best measured flat point (joint plan KEEP, 87.19; ~12 min)
+# best measured flat point (joint plan KEEP, 87.61 at ~100 kbps; ~12 min)
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/best.ivf \
-  --video --frames 60 --qp 112 --cpu-threads 8 --video-rd-preset best
+  --video --frames 60 --qp 109 --cpu-threads 8 --video-rd-preset best
 
-# chained B research path (88.207; avmdec-validated, ~9 min)
+# chained B research path (88.43 at ~100 kbps; avmdec-validated, ~9 min)
 build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
-  --video --frames 60 --qp 119 --cpu-threads 8 --video-gops 7 --nightly-b
+  --video --frames 60 --qp 108 --cpu-threads 8 --video-gops 7 --nightly-b
 ```
 
 ### Presets
@@ -110,8 +128,8 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | *(default)* | historical key-only/basic decisions, byte-pinned |
 | `--video-rd-preset quality` | measured still/keyframe preset |
 | **`--fast-decode`** | measured CPU RD aggregate (was `--nightly`; the old name is an alias) |
-| **`--video-rd-preset best`** | flat best stack (**87.19** joint plan KEEP, ~12 min): EFF_PERC, head/tail TX, driver, key −39, drift 1.5/3250 + joint solve; `AV2ENC_RD_JOINT_P=0` → 86.33 LEAD |
-| **`--nightly-b`** | chained single-key B + compound + TIP + CWP depth + exact rate + joint plan, opt-in research (**88.207**, ~9 min; `AV2ENC_RD_JOINT_P=0` → 87.284, `AV2ENC_COMPOUND_EXACT_RATE=0` → 87.023, `--video-compound-depth-off` → 86.805, `AV2ENC_TIP_LEAF=0` with depth off → 86.61, `--video-compound-off` → 85.47) |
+| **`--video-rd-preset best`** | flat best stack (**87.61** joint plan KEEP at QP109/100.3 kbps, ~12 min): EFF_PERC, head/tail TX, driver, key −39, drift 1.5/3250 + joint solve; `AV2ENC_RD_JOINT_P=0` → 86.33 LEAD |
+| **`--nightly-b`** | chained single-key B + compound + TIP + CWP depth + exact rate + joint plan, opt-in research (**88.43** at QP108/gops 7/100.8 kbps, ~9 min; controls recorded at the old pin: `AV2ENC_RD_JOINT_P=0` → 87.284, `AV2ENC_COMPOUND_EXACT_RATE=0` → 87.023, `--video-compound-depth-off` → 86.805, `AV2ENC_TIP_LEAF=0` with depth off → 86.61, `--video-compound-off` → 85.47) |
 
 ### Pins
 
@@ -119,10 +137,12 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 |---|---:|---|
 | default QP189 | 25,009 | `a1d0dba1259b20a4b628d4cd1e14c33c` |
 | quality QP190 | 25,141 | `3984677b9b665952984b07b7cf75c6ea` |
-| fast-decode QP106 | 25,008 | `0639b43630abb454f7be5ac494d2efb4` |
-| fast-decode QP110 | 23,690 | `1b99127a4cd1d386fa5600fb63c57a83` |
+| fast-decode QP106 | 24,701 | `54f402bd949795a4706d53586062e931` |
+| fast-decode QP110 | 23,503 | `f584173a59edeb693ad6c22a37eda0a8` |
 | 720p QP217 (key −57, leaf 250, ext partitions) | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
-| `--video-rd-preset best` joint QP112 | 25,007 | `9a36aeb7c02733342e4ec5db300e4d6d` |
+| `--video-rd-preset best` joint QP109 | 25,063 | `8eff2d6354107fe65ace11edc899630f` |
+| `--video-rd-preset best` joint QP112 | 24,078 | `5636ed66cc3df33900d07701c4bb13d7` |
+| `--nightly-b` 60 f joint (QP108, gops 7) | 25,196 | `c82a314fb76e5114c681d199ea988435` |
 | `--nightly-b` 16 f joint (QP116, gops 2) | 17,222 | `2a7fbe710542a89c3a9d2c93fab94101` |
 | `--nightly-b` 60 f joint (QP118, gops 7) | 22,840 | `9c7d37ecbc358684e09d464cfd2e661b` |
 | `--nightly-b` 60 f joint (QP119, gops 7) | 22,576 | `4b622b15a0715820114765e17259868f` |
@@ -131,6 +151,18 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | joint-off control: `--nightly-b` 60 f exact (QP121) | 23,066 | `72e04413362910d48d69c46b504fb9ed` |
 | basic 64×64 / 640×360 | — | `c9294fa4…` / `0d90c958…` |
 | still 64×64 / 640×360 | — | `2b31e378…` / `8ffbe059…` |
+
+Every av2enc pin in this table that was re-run on 2026-11-27 (`build-release`,
+`--cpu-threads 1`, deterministic across runs) came back **smaller** than
+recorded: `--fast-decode` QP106 25,008 B `0639b436…` → 24,701 B `54f402bd…` and
+QP110 23,690 B `1b99127a…` → 23,503 B `f584173a…`; `best` joint QP112 25,007 B
+`9a36aeb7…` → 24,078 B `5636ed66…`; `--nightly-b` 60 f gops 7 QP108 is new at
+25,196 B `c82a314f…`.  The encoder moved under the old pins over ~98 commits
+since they were recorded (24 files under `src/pipeline/video/` changed) and no
+commit re-recorded them.  Rows not listed as re-run above are recorded history
+and were **not** measured today — in particular `--nightly-b` 16 f (QP116), 60 f
+QP118/QP119, and the three joint-off controls are almost certainly stale for the
+same reason.
 
 ```sh
 tools/validate_dav2d.sh /tmp/fd.ivf testdata/nasa_480x240_30fps_60f.y4m
