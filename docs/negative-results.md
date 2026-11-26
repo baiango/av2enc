@@ -1039,3 +1039,10 @@ Caveats, recorded so the number is not over-read: this is an oracle-style bound
 (the freed bytes are not re-spent; at the measured ~0.071 JOD per 1,000 B that
 would add ~0.04 more), and it assumes a real SEF costs ~5 B, which the pinned
 decoder must accept.
+
+**Primitive check (2026-11-26):** `--video-sef` on a 2-frame input emits a
+5-byte SEF record and `dav2d-macos -q --strict 1` decodes it to the expected 2
+outputs, so the 5 B assumption behind the table above is measured, not guessed.
+The SEF machinery (`src/codec/inter/sef/`) and the pinned-decoder compatibility
+check already exist; what does not exist is a path that decides *per frame* to
+emit one instead of coding a duplicate.
