@@ -239,18 +239,18 @@ measured dead ends.
 ## Build provenance
 
 Token usage recorded by OpenCode for the work on this checkout — all top-level
-sessions and their subagents — as of **2026-11-24**:
+sessions and their subagents — as of **2026-11-27**:
 
 | Counter | Tokens |
 |---|---:|
-| Fresh input | 351,990,144 |
-| Output | 49,825,141 |
-| Reasoning | 59,749,303 |
-| **Input + output + reasoning** | **~461.6 M** |
-| Cached context reads | 33,525,690,715 |
-| **Including cache reads** | **~33.53 B** |
+| Fresh input | 377,209,911 |
+| Output | 52,494,744 |
+| Reasoning | 61,671,204 |
+| **Input + output + reasoning** | **~491.4 M** |
+| Cached context reads | 36,068,676,635 |
+| **Including cache reads** | **~36.56 B** |
 
-1010 sessions (375 top-level + 635 subagents) across the four OpenCode project
+1024 sessions (388 top-level + 636 subagents) across the four OpenCode project
 ids that touch the checkout (the parent workspace, the shared work root that
 owns the lane worktrees, the repo root and the publish clone). Cache reads are
 billed at a fraction of fresh input and dominate because every subagent re-reads
