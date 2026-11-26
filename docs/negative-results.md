@@ -1196,3 +1196,29 @@ position ≈ 0.19 and overhead ≈ 1.6.
 Default-path pins unchanged (the historical `search_plan_estimate_bits` is
 untouched): fast-decode `0639b436`, nightly-b `8f0b85d8`, milestone `9a8ee8d5`,
 stack 25081 B / `3705ac02`.
+
+## Is the 16x16 partition floor really better than 4x4 at both ends of the rate range?
+
+Measured on `src720.png` (1280x720, intra), matched bytes, CVVDP, `--nightly`
+otherwise identical:
+
+| rate | `--video-min-block 16` (default) | `--video-min-block 4` | diff |
+|---|---:|---:|---:|
+| 20,000 B | 6.9391 | 6.9139 | **-0.025** |
+| 30,000 B | 7.3777 | 7.3653 | **-0.012** |
+| 40,000 B | 7.7673 | 7.7482 | **-0.019** |
+
+Raw per-QP (the table people usually quote): QP180 80,859 vs 81,319 B, QP198
+43,237 vs 43,822, QP216 21,394 vs 22,043, QP232 11,528 vs 11,862 -- the 4x4 arm
+always spends 1-3 % more bytes at the same QP, so equal-QP comparison answers a
+different question.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED (measurement) | Assume 4x4 pays at high rate because fine detail wants fine partitions | It loses at every rate tested: -0.025 / -0.012 / -0.019 JOD at 20/30/40 KB | Keep `--video-min-block 16` as the shipped default |
+| CONFIRMED - negative (this is the interesting part) | Conclude from that measurement that 4x4 is intrinsically worse | Not possible: 4x4 *enlarges* the candidate set (a 16x16 leaf stays legal, at the same split-flag syntax), so an exact RDO at any lambda cannot lose by having it. Proved: `proofs/rdproof/Partition.lean` `unrestricted_is_at_least_as_cheap`, with the corollary `measured_loss_is_a_defect` | Treat the measured loss as evidence of a search/pricing defect -- the same class as the double-counted coefficient position term -- and look there if 4x4 is ever wanted |
+
+So the floor is a *workaround for our own decisions*, not a law of the format.
+The measurement and the proof together say: the encoder is leaving the 4x4
+option's value uncollected, and the cost of that is invisible until the search
+and pricing are exact.

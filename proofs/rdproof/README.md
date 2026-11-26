@@ -256,3 +256,35 @@ the coefficient model exact, and nothing about which tool SVT has that we lack.
 It converts "we are 0.147 JOD behind" into "how much of that is mispricing",
 which is answerable by measurement — and the measurement now says most of the
 observable model error is in coefficients.
+
+## Partition.lean — is the 16x16 floor better than 4x4?
+
+**Measured** (`src720.png`, 1280x720, matched bytes, CVVDP):
+
+| rate | min-block 16 | min-block 4 | diff |
+|---|---:|---:|---:|
+| 20,000 B | 6.9391 | 6.9139 | **-0.025** |
+| 30,000 B | 7.3777 | 7.3653 | **-0.012** |
+| 40,000 B | 7.7673 | 7.7482 | **-0.019** |
+
+So yes: the floor measures better at low, mid and high rate. Per-QP the 4x4 arm
+also costs 2-3 % more bytes at the same QP, so the equal-QP comparison is not
+the question; the matched-rate rows above are.
+
+**Proved** (`unrestricted_is_at_least_as_cheap`): allowing 4x4 *enlarges* the
+candidate set, since a 16x16 leaf is still a legal tree when 4x4 leaves are
+allowed and pays the same split-flag syntax. At any fixed lambda the cheapest
+`D + lambda * R` over the larger set is no larger than over the smaller one. So
+at every operating point the 4x4-allowed encoder should be at least as cheap —
+**the measured loss is therefore not a property of small blocks, it is evidence
+that the encoder does not achieve the minimum over its own candidate set**
+(`measured_loss_is_a_defect`).
+
+That is the same class of defect already verified twice on 2026-11-26: a
+coefficient position term charged twice, which prices leaves inconsistently with
+what they cost and biases the tree. The floor is a *workaround*, not a law —
+and the theorem says there is headroom left on the table that a correct search
+with 4x4 would collect.
+
+Scope: a statement about cost, not content. It does not say how much 4x4 is
+worth, only that an exact search cannot lose by having it.
