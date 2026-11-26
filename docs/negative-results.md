@@ -1615,3 +1615,26 @@ subset" is not merely untested, it is unreachable without code changes.
 | Status | Do not do | Why | Do instead |
 |---|---|---|---|
 | CONFIRMED (defect) | Compare numbers produced from different source files | Two files named `src720_1f.y4m` differ in 90 % of samples; a comparison across them is meaningless | Pin the source path per experiment and print it with every result, as `tools/pipeline_best.sh` does |
+
+## SEF on the hierarchical-B chain: invalid, and my own check said otherwise
+
+The `AV2ENC_SEF_DUPLICATES` path was ported to the B chain
+(`video_frame_sequence.cpp`) and measured. **It cannot produce a valid stream:**
+
+```
+avmdec: Display order hint of an output picture is not unique in the same layer
+```
+
+`avmdec` rejects the stream, and the decode leaves a **2-frame (3.1 MB) partial
+file**; the script's `|| echo FAILED` did not stop the pipeline, so
+`quality.py` scored those 2 frames and printed **cvvdp 8.4228 / 8.5882** --
+numbers that look like excellent results and mean nothing.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED - negative | Use SEF duplicates with `--nightly-b` | In a reordered chain a re-shown picture's explicit hint collides with a picture that is not yet output, so the stream is rejected. It works on the low-delay P chain only because decode order equals display order | Keep SEF for the P chain (60/60 validated, +0.273 JOD). The B-path code is reverted |
+| CONFIRMED (process) | Let a decode failure fall through to scoring | A failed `avmdec` left a 2-frame partial y4m and the pipeline scored it, producing a plausible-looking excellent number. Third instance today of "the check passed but measured nothing" | `set -e`-style guarding, delete outputs before decode, and assert the frame count equals the expected count before scoring |
+
+Also noted: the B-path block had been picked up by an unrelated `git add -A`, so
+experimental code can land under a commit message that does not mention it. Worth
+checking `git show --stat` before committing mixed work.

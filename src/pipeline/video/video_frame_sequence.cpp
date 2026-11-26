@@ -1,4 +1,3 @@
-#include "codec/inter/sef/sef.h"
 #include "pipeline/video/video_frame_internal.h"
 
 namespace av2enc::video {
@@ -999,59 +998,6 @@ bool encode_temporal_sequence(std::span<const VideoInputFrame> frames,
     if (options.trace && options.implicit_ref_map && !pf.is_key) {
       trace_implicit_map("tl", static_cast<std::size_t>(display), num_refs,
                          map_slots);
-    }
-
-    // `AV2ENC_SEF_DUPLICATES=<dB>` for the hierarchical-B chain: when the
-    // source picture is within <dB> of its primary reference's reconstruction
-    // -- a pulldown duplicate or a frozen picture -- emit a 5-byte
-    // show-existing-frame OBU instead of coding this picture.  The explicit
-    // order hint (§5.18.2 mixedOutput) makes the SEF occupy this display
-    // position.  A SEF refreshes no slot and this path returns before any
-    // refresh bookkeeping, so encoder and decoder keep the same slot state and
-    // later pictures predict from exactly what the decoder holds.
-    if (const char* sef_db_env = std::getenv("AV2ENC_SEF_DUPLICATES");
-        sef_db_env != nullptr && !pf.is_key && num_refs > 0 &&
-        !options.film_grain) {
-      const double sef_threshold = std::atof(sef_db_env);
-      const int sef_slot = map_slots[0];
-      const int sef_ref_display = ref_displays[0];
-      if (sef_slot >= 0 && sef_ref_display >= 0 &&
-          !plane_by_display[static_cast<std::size_t>(sef_ref_display)][0]
-               .samples.empty()) {
-        const double ref_psnr = reference_luma_psnr(
-            plane_by_display[static_cast<std::size_t>(sef_ref_display)][0],
-            frames[static_cast<std::size_t>(display)],
-            static_cast<int>(width), static_cast<int>(height));
-        if (ref_psnr >= sef_threshold) {
-          inter::sef::SefParams sef_params;
-          sef_params.num_ref_frames =
-              static_cast<std::uint8_t>(config.num_ref_frames);
-          sef_params.order_hint_bits =
-              static_cast<std::uint8_t>(pc.order_hint_bits);
-          sef_params.film_grain_params_present = false;
-          inter::sef::SefHeader sef_header;
-          sef_header.kind = inter::sef::SefKind::kRegular;
-          sef_header.frame_to_show_map_idx =
-              static_cast<std::uint8_t>(sef_slot);
-          sef_header.derive_sef_order_hint = false;
-          sef_header.sef_order_hint =
-              static_cast<std::uint32_t>(pf.display_order_hint);
-          result.units.push_back(
-              inter::sef::make_sef_temporal_unit(sef_params, sef_header));
-          result.frame_bytes.push_back(
-              static_cast<std::uint32_t>(result.units.back().size()));
-          result.tile_bytes.push_back(0);
-          result.inter_blocks.push_back(0);
-          result.intra_blocks.push_back(0);
-          // The decoded picture at this display position is the reference's.
-          plane_by_display[static_cast<std::size_t>(display)] =
-              plane_by_display[static_cast<std::size_t>(sef_ref_display)];
-          recon_by_display[static_cast<std::size_t>(display)] =
-              recon_by_display[static_cast<std::size_t>(sef_ref_display)];
-          ++result.sef_duplicate_frames;
-          continue;
-        }
-      }
     }
 
     std::vector<inter::mc::RefFrame> references;
