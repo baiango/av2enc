@@ -1405,3 +1405,62 @@ picture costs **~29–31 kB, 1.17–1.24× the 25 kB budget**.
 perceptual and coefficient-price lever reachable on a lone key at this rate has
 now been measured to a convex optimum or a dominance result; the +1.63 K gap is
 a rate gap, not an unmeasured knob.
+
+## 27. Deblock internal audit: per-plane strength trace, and the chroma-level question
+
+Directed work: improve the deblock filter itself. Two things came out of it — a
+diagnostic and a (reverted) false lead. Both are recorded because the
+diagnostic is what any future deblock work should start from.
+
+### 27.1 Per-plane strength trace (`AV2ENC_TRACE_DEBLOCK`, one frame, QP186)
+
+| plane | edges | filtered | mean `curr_q` | mean `q_thr` | mean width |
+|---|---:|---:|---:|---:|---:|
+| Y | 114,700 | 36,440 (31.8 %) | 10.00 | 3.18 | 1.06 |
+| U | 28,550 | 11,062 (38.7 %) | 5.00 | 1.94 | 0.96 |
+| V | 28,550 | 11,062 (38.7 %) | 5.00 | 1.94 | 1.67 |
+
+Frame total: **171,800 edges considered, 58,564 filtered (34.1 %), mean width
+1.16**. The deblock is a *narrow, selective* filter here — two thirds of edges
+are rejected by `q_thr`/`side`, and the surviving ones average barely more than
+one sample of correction. Chroma's `q_thr` (1.94) is ~40 % of luma's, because
+`--video-uv-qp-offset -23` puts chroma at qindex 163 while luma sits at 186.
+
+### 27.2 Raising the chroma level above the luma −2 peak: negative
+
+The trace suggested chroma was the weaker half, so the chroma entries of
+`df_delta_q` were raised on top of the luma −2 peak (each step = +8 levels).
+`validate_dav2d OK` on all:
+
+| `df_delta_q` | bytes | BA | SS2 | K |
+|---|---:|---:|---:|---:|
+| `−2,−2,0,0` (luma only) | 25,089 | 12.505 | −9.569 | 48.36 |
+| `−2,−2,1,1` | 25,090 | 12.505 | −9.569 | 48.35 |
+| `−2,−2,2,2` | 25,092 | 12.478 | −9.613 | 48.35 |
+| `−2,−2,4,4` | 25,093 | 12.488 | −9.692 | 48.33 |
+| **`−2,−2,−2,−2` (anchor)** | **25,090** | **12.475** | **−9.528** | **48.37** |
+
+**Negative.** Strengthening chroma (1/2/4 steps) *does* buy marginal BA
+(12.505 → 12.478) but costs SS2 monotonically (−9.569 → −9.692) and bytes, so
+every arm lands 0.01–0.04 below the anchor. The chroma deblock's weak-looking
+`q_thr` is correct for the finer chroma quantisation, not a defect.
+
+### 27.3 A reverted false lead (recorded so it is not re-attempted)
+
+I first believed the grid's `delta_q_u_ac`/`base_uv_ac_delta_q` fields
+(`init_video_deblock_grid` zeroes them) were a live bug, because the sequence
+header codes `base_uv_ac_delta_q = −23`. Adding the fill changed **nothing**:
+stream, encoder recon and decoder output were all byte-identical. The reason is
+that the correct handling already exists a few lines below in
+`video_frame_filters.cpp` — `base_uv_ac_delta_q` from `seq_delta_q`, and
+`delta_q_u_ac = resolved.u_ac − base` — precisely to avoid double-counting the
+base, which `docs/negative-results.md` already records as a fixed bug
+("--video-uv-qp-offset -8 → encoder deblocks at -16"). My block was a redundant
+duplicate that the later one overwrote.
+
+**Consequence for future work:** the encoder-side deblock is already
+decoder-exact on every plane (recon vs decoded output: 0 differing bytes out of
+1,382,406), so there is no correctness headroom left in the deblock itself. Any
+further gain has to come from *choosing* filter levels, and both signalled
+choices (`df_delta_q` per plane, `apply` per pass) are now measured at their
+optimum: luma −2, chroma −2, all passes on.
