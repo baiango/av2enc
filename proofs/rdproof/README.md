@@ -83,3 +83,38 @@ No `sorryAx`: every theorem is complete.
 * `e` (rate-model error) is an input, not a result. If it is large, the bound is
   loose and honest: it says the pipeline is at most that far off, which on the
   measured 720p streams is where the real headroom lives.
+
+## Oracle ceiling on a 60-frame stream: the gap is in the P chain
+
+Measured 2026-11-26 with `tools/oracle.py` on `testdata/space8k_1440x720_60f.y4m`
+(60 frames, 1440x720), QP ladder 196/200/204/208, matched at **294.5 kbps**.
+
+Base **K = 44.886**. Source-segment replacement ceilings (make that range
+perfect, rate-free upper bound):
+
+| segment | K | dK |
+|---|---:|---:|
+| key f0 | 46.697 | +1.81 |
+| f0-32 | 63.164 | **+18.28** |
+| f33-43 | 50.401 | +5.52 |
+| f44-59 | 52.062 | +7.18 |
+
+**This bounds the "how far from optimal" question in metric units, and the
+answer is: far, but only on the P chain.** The key is within ~1.8 JOD of its
+ceiling; the inter path is ~18 JOD from it.
+
+That reframes the Lean work honestly. `pipeline_gap_bound` is correct, but its
+value depends entirely on `LB`, and the oracle shows the distance is large
+enough that a tight bound is not what is needed: the P-first frames are ~18 JOD
+from a rate-free ceiling, so the actionable work is inter coding, not proving
+that the *key-side* decisions are within epsilon of optimal.
+
+It also explains why ARNR, TPL, lookahead and the content-derived key split all
+measured <= 0 on 12-24 frame extracts: those extracts are key-dominated
+(75 % of bits in the key), so they measure the key, which is the part that is
+already near its ceiling. Any future lever measurement on this encoder should
+use a stream long enough for P frames to carry the bits, and should report which
+segment the oracle attributes the deficit to.
+
+Caveat: segment rows are pooling bounds, not encodable streams; they upper-bound
+what any decision change in that range could recover, they do not promise it.
