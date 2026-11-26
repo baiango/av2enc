@@ -1309,3 +1309,32 @@ decoded pixels. The pipeline measures what it claims to.
 |---|---|---|---|
 | CERTIFIED (JPEG only) | Call this "the best possible JPEG" | The family is libjpeg-turbo's quality axis -- a 1-D slice of quantisation-table space -- plus subsampling and packing. Arbitrary quant tables and trellis coefficient optimisation (mozjpeg/jpegli) are outside it | Quote it as "best over the 570-point libjpeg-turbo grid", which is exhaustive and reproducible |
 | CONFIRMED | Use this to bound AV2 | JPEG's finite family is what makes the claim provable; AV2's space is astronomical, so the same exhaustive certificate cannot exist there | For AV2 report a certified lower bound (`best_K >= 7.29`) and never an upper one |
+
+## AVM on src720.png at ~25 KB (first measurement of this PNG)
+
+`~/work/avm_latest/build/avmenc --codec=av2 --passes=1 --end-usage=q --qp=N
+--cpu-used=2 --limit=1`, decoded with `avmdec`, scored with `tools/quality.py`
+(same protocol as every other row).
+
+| encoder | bytes | cvvdp | PSNR-Y |
+|---|---:|---:|---:|
+| JPEG (certified max over libjpeg grid) | 22,885 | 6.4604 | — |
+| av2enc shipped `--nightly` | 25,168 | 7.2415 | 24.668 |
+| av2enc stack (best still arm) | 25,081 | 7.2935 | 24.996 |
+| SVT-AV1 const-QP | ~25,000 | 7.4405 | 25.612 |
+| **AVM (cpu-used=2, qp170)** | **24,875** | **7.6873** | **26.007** |
+
+**AVM dominates our best still arm in both coordinates**: 293 B fewer and
+**+0.394 JOD** (and +1.01 dB PSNR-Y). Against the shipped preset it is +0.446;
+against SVT it is +0.247. Since AVM is at a *lower* rate, the gap at exactly
+matched bytes is slightly larger than quoted.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Compare AV2 encoders by QP | AVM qp200 gives 5,142 B where av2enc QP212 gives 25,168 B -- a factor of 5 in rate for nominally "similar" QP. Only matched bytes means anything | Bisect QP per encoder to the byte budget, as here |
+| CONFIRMED | Attribute this gap to our implementation being buggy | AVM's coding may use syntax and tools we do not implement, so per `Refute.lean`'s condition (i) this is a **tool-set** comparison; it refutes nothing about our implementation, and (per `SpecOptimal`) a tool-set gap is not certifiable | Use it as the headroom target: 0.394 JOD at this budget is what a stronger AV2 encoder extracts, and the proofs say where our own losses are (search/pricing), which is a different axis |
+| N/A | Cite the stored `bench/avm_baseline/qp200_720p_60f.json` (9.3623) for this still | Different clip, different resolution, 60 frames, retired streams | Use this measurement |
+
+Speed: `--cpu-used=0` at qp200 gave 5,154 B in 996 s against `--cpu-used=2`'s
+5,142 B in 217 s -- 12 bytes apart at 4.6x the time, so the speed setting is not
+a confound for size at this operating point.
