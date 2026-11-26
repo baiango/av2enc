@@ -74,9 +74,12 @@ recorded against the old pins and were **not** re-run here: `AV2ENC_RD_JOINT_P=0
 `--video-compound-off` 85.47 single prediction. The compound NEWMV modes are
 exact but +0.054 and stay off.
 
-**720p (1440×720/60, ~293 kbps):** av2enc **45.6**, AVM **55.8**, SVT **56.6**,
-rav1e **53.0**. The 720p gap is content-dependent; see
-`bench/space8k_720p/README.md`.
+**720p (1440×720/60, ~293 kbps, native-detail `space8k` clip):** av2enc
+**45.63** — re-measured 2026-11-27 on `build-release` (QP214–218 ladder on the
+pin recipe, interpolated to 293 kbps; QP217 is 36,543 B / 292.3 kbps / JOD 7.328
+/ BA 29.61 / SS2 −10.11 / K 45.59, `dav2d`-clean; the recorded 45.61 holds to
++0.02), AVM **55.8**, SVT **56.6**, rav1e **53.0** (recorded, not re-run). The
+720p gap is content-dependent; see `bench/space8k_720p/README.md`.
 
 **720p still (1280×720, one frame, 25 kB budget):** av2enc **K 47.59**
 interpolated to 25,000 B (`--nightly-b --video-gdf --video-uv-qp-offset -23`
@@ -149,7 +152,7 @@ build-release/av2enc testdata/nasa_480x240_30fps_60f.y4m -o /tmp/b.ivf \
 | quality QP190 | 25,141 | `3984677b9b665952984b07b7cf75c6ea` |
 | fast-decode QP106 | 24,701 | `54f402bd949795a4706d53586062e931` |
 | fast-decode QP110 | 23,503 | `f584173a59edeb693ad6c22a37eda0a8` |
-| 720p QP217 (key −57, leaf 250, ext partitions) | 36,572 | `c4ba28138d8f6569d5e08721a66d755c` |
+| 720p QP217 (key −57, leaf 250, ext partitions) | 36,543 | `a3329cbf18fbe07a6994e4e88011805f` |
 | `--video-rd-preset best` joint QP109 | 25,063 | `8eff2d6354107fe65ace11edc899630f` |
 | `--video-rd-preset best` joint QP112 | 24,078 | `5636ed66cc3df33900d07701c4bb13d7` |
 | `--nightly-b` 60 f joint (QP108, gops 7) | 25,196 | `c82a314fb76e5114c681d199ea988435` |
@@ -167,7 +170,9 @@ Every av2enc pin in this table that was re-run on 2026-11-27 (`build-release`,
 recorded: `--fast-decode` QP106 25,008 B `0639b436…` → 24,701 B `54f402bd…` and
 QP110 23,690 B `1b99127a…` → 23,503 B `f584173a…`; `best` joint QP112 25,007 B
 `9a36aeb7…` → 24,078 B `5636ed66…`; `--nightly-b` 60 f gops 7 QP108 is new at
-25,196 B `c82a314f…`.  The encoder moved under the old pins over ~98 commits
+25,196 B `c82a314f…`.  The 720p QP217 pin moved far less: 36,572 B
+`c4ba2813…` → 36,543 B `a3329cbf…` (−29 B; K 45.61 → 45.59 at the point,
+45.63 at 293 kbps).  The encoder moved under the old pins over ~98 commits
 since they were recorded (24 files under `src/pipeline/video/` changed) and no
 commit re-recorded them.  Rows not listed as re-run above are recorded history
 and were **not** measured today — in particular `--nightly-b` 16 f (QP116), 60 f
