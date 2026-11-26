@@ -1,0 +1,42 @@
+carrier v60: 13750 B
+carrier bf: 8117 B
+AV2ENC_COMPOUND_NEWMV_RADIUS     inert on both carriers
+AV2ENC_COMPOUND_PAIR_LIMIT       inert on both carriers
+AV2ENC_COMPOUND_RATE             inert on both carriers
+AV2ENC_DEBLOCK_APPLY             FLIPS v600.5
+AV2ENC_DECISION_DUMP             inert on both carriers
+AV2ENC_DZ_DUMP                   inert on both carriers
+AV2ENC_EFF_PERC_CSF              FLIPS v600.5 v604.0 bf0.5 bf4.0
+AV2ENC_EFF_PERC_KEY_CSF          FLIPS v600.5 v604.0
+AV2ENC_EFF_PERC_RATE             FLIPS v600.5
+AV2ENC_EFF_PERC_SCALE            FLIPS v600.5 v604.0 bf0.5 bf4.0
+AV2ENC_EFF_PERC_TOP              FLIPS v600.5 v604.0 bf0.5 bf4.0
+AV2ENC_INTRA_COEFF_PRICE         inert on both carriers
+AV2ENC_JOINT_TRACE               inert on both carriers
+AV2ENC_LEAFBITS                  inert on both carriers
+AV2ENC_PART_DIAG_EDGE            inert on both carriers
+AV2ENC_PART_DIAG_MAX             inert on both carriers
+AV2ENC_P_DRIFT                   FLIPS v600.5 v604.0
+AV2ENC_RATE_HYBRID_DEBUG         inert on both carriers
+AV2ENC_RATE_HYBRID_S_COEFF       inert on both carriers
+AV2ENC_RATE_INTERVAL_TRACE       inert on both carriers
+AV2ENC_RDO_NO_PART               inert on both carriers
+AV2ENC_RD_ENGINE                 inert on both carriers
+AV2ENC_RD_JOINT_P_STATS          inert on both carriers
+AV2ENC_RD_KEY_TX_D               inert on both carriers
+AV2ENC_RD_KEY_TX_SCALE           inert on both carriers
+AV2ENC_RD_MODE_BITS_DIR          FLIPS v600.5
+AV2ENC_RD_TAIL_FLOOR_FIRST       inert on both carriers
+AV2ENC_RD_TAIL_FLOOR_LAMBDA      inert on both carriers
+AV2ENC_RD_UVLEVEL_TOPN           inert on both carriers
+AV2ENC_SKIP_DRIFT_FADE_T         inert on both carriers
+AV2ENC_SKIP_DRIFT_NZMV           inert on both carriers
+AV2ENC_STILL_FORCE_UV            inert on both carriers
+AV2ENC_STILL_LEAF32              inert on both carriers
+AV2ENC_STILL_LUMA_DC             inert on both carriers
+AV2ENC_STILL_NO_EDGE             inert on both carriers
+AV2ENC_STILL_TXTYPE_TRACE        inert on both carriers
+AV2ENC_STILL_UV_FULL             inert on both carriers
+AV2ENC_TPL_STATS                 inert on both carriers
+AV2ENC_TRACE_CCSO                inert on both carriers
+AV2ENC_TRACE_TILE_FLUSH          inert on both carriers

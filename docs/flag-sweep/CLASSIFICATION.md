@@ -420,3 +420,45 @@ other family in this sweep: the read site existed, the coverage list did not.
 ### Totals
 
 **558 rows -- 243 EFFECTIVE, 309 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE.**
+
+## The INERT set re-tested on other carriers (`inert-sample.txt`)
+
+A random sample of 40 of the 309 INERT rows was re-run at 0.5 and 4.0 on two
+carrier families the earlier sweeps did not use:
+
+- **v60** -- 60 frames, `--nightly`, `AV2ENC_EFF_PERC=1` (13,750 B);
+- **bf**  -- `--frames 4 --b-frames 2`, `AV2ENC_EFF_PERC=1` (8,117 B).
+
+**8 of the 40 flipped to EFFECTIVE:**
+
+```
+AV2ENC_DEBLOCK_APPLY      v60 @0.5
+AV2ENC_EFF_PERC_CSF       v60 and bf, both values
+AV2ENC_EFF_PERC_KEY_CSF   v60, both values
+AV2ENC_EFF_PERC_RATE      v60 @0.5
+AV2ENC_EFF_PERC_SCALE     v60 and bf, both values
+AV2ENC_EFF_PERC_TOP       v60 and bf, both values
+AV2ENC_P_DRIFT            v60, both values
+AV2ENC_RD_MODE_BITS_DIR   v60 @0.5
+```
+
+So a fifth of a random sample of "inert" gates were live on a carrier the sweep
+had not tried -- the same failure mode as every family before it. The INERT
+label in this table therefore means **"did not change the streams it was given"**,
+not "cannot change any stream". The 8 above are corrected to EFFECTIVE.
+
+### Totals
+
+**558 rows -- 251 EFFECTIVE, 301 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE.**
+
+## Scope decision for the last three rows
+
+| row | decision |
+|---|---|
+| `--video-gpu` | **environment-blocked**: "requires a CUDA build; this is a CPU-only reference build". No CUDA toolchain or GPU is present in this workspace, and macOS is explicitly not an encoder target per `AGENTS.md` -- so it cannot be executed here by construction. |
+| `--still-gpu` | same message, same reason. |
+| `--svc-inter-layer` | **spec-refused**: "--svc-inter-layer is not a conforming AV2 v1.0.0 feature: §6.8.2 requires lcr_dependent_xlayers_flag". No configuration can make it encode. |
+
+The first two need a decision from the operator (build on a CUDA host, or accept
+them as out of scope for a CPU reference build); the third is settled by the
+format itself.
