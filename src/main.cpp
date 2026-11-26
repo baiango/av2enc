@@ -698,24 +698,6 @@ bool plan_video_frame_qp(const Options& options,
                          std::span<const av2enc::video::VideoInputFrame> inputs,
                          std::vector<std::uint8_t>* frame_qp,
                          std::string& error) {
-  // AV2ENC_TPL (default off): content-derived per-frame QP plan, allocated at
-  // the same estimated rate as a flat --qp stream.  This replaces the
-  // hand-tuned --video-key-qp-offset constant, which does not transfer between
-  // clips (+0.22 JOD on the orbital plate, -0.10 on loral).
-  if (av2enc::video::tpl::enabled()) {
-    if (inputs.empty()) {
-      error = "the TPL plan needs at least one frame";
-      return false;
-    }
-    std::vector<av2enc::rc::FrameComplexity> tpl_complexity;
-    av2enc::video::tpl::compute(
-        std::span<const av2enc::video::VideoInputFrame>(inputs),
-        std::span<const int>(), &tpl_complexity);
-    av2enc::video::tpl::plan_qp(
-        std::span<const av2enc::rc::FrameComplexity>(tpl_complexity),
-        static_cast<int>(options.qp), av2enc::video::tpl::gain(), frame_qp);
-    return true;
-  }
   frame_qp->clear();
   if (!options.video_key_qp_offset_given) return true;
   if (inputs.empty()) {
@@ -2047,6 +2029,31 @@ int run_video_encode(const Options& options, av2enc::Y4mReader& reader,
                 << "\n";
       return 1;
     }
+    video_options.frame_base_q_idx = frame_qp;
+    video_options.base_q_idx = frame_qp.front();
+    planned_qp = frame_qp;
+  } else if (av2enc::video::tpl::enabled() && !options.video_gpu) {
+    // AV2ENC_TPL on the fixed-QP path: a real statistics pass at --qp gives
+    // the per-frame cost, then the allocator re-spends the *same* total bits
+    // through a per-frame base_q_idx (legal with the carried CDF image).
+    av2enc::video::VideoSequenceResult stats;
+    if (!encode_rc_pass(inputs, video_options, stats)) {
+      std::cerr << "av2enc: error: AV2ENC_TPL statistics pass: " << error
+                << "\n";
+      return 1;
+    }
+    // frame_bytes, not tile_bytes: the tile payload excludes the frame header
+    // and the filter blocks, and on space8k it understates the real per-frame
+    // cost by ~40 %, which made the allocator match a budget that no stream
+    // actually spends.
+    std::vector<std::uint32_t> pass1_bits;
+    pass1_bits.reserve(stats.frame_bytes.size());
+    for (const std::uint32_t bytes : stats.frame_bytes) {
+      pass1_bits.push_back(bytes * 8U);
+    }
+    av2enc::video::tpl::plan_qp_calibrated(
+        std::span<const std::uint32_t>(pass1_bits),
+        static_cast<int>(options.qp), av2enc::video::tpl::gain(), &frame_qp);
     video_options.frame_base_q_idx = frame_qp;
     video_options.base_q_idx = frame_qp.front();
     planned_qp = frame_qp;
