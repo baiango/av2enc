@@ -183,3 +183,43 @@ they are help-scraper fragments, never options.
 
 0 duplicate names. The 59 rejections are carried as such, not converted into
 inert verdicts by inference.
+
+## Explicit invocation table (`explicit-table.txt`)
+
+Each remaining rejected option was given the mode and value its own error
+message names, and judged against a baseline built the same way minus the
+option:
+
+| option | invocation | verdict |
+|---|---|---|
+| `--bitrate` | `--rc vbr --bitrate 120` | **EFFECTIVE** 6,177 B |
+| `--crf` | `--rc crf --crf 32` | INERT |
+| `--rc` | `--rc crf` (no `--qp`) | **EFFECTIVE** 36,484 B vs 105,537 B |
+| `--effort` | `--still --effort 10` | **EFFECTIVE** 4,216 B |
+| `--cpu-used` | `--still --cpu-used 4` | **EFFECTIVE** 4,206 B |
+| `--video-aq-clamp` | `--video-aq` | **EFFECTIVE** 20,005 B |
+| `--video-aq-bias` / `--video-aq-strength` | `--video-aq` | INERT |
+| `--video-cdef-damping` | `4` (domain [3,6]) | INERT |
+| `--video-cdef-search` | `full` | **EFFECTIVE** 18,206 B |
+| `--video-tier` | `high` | **EFFECTIVE** |
+| `--video-mv-precision` | `quarter` | **EFFECTIVE** 18,840 B |
+| `--video-rd-preset` | `quality` | **EFFECTIVE** 23,526 B |
+| `--video-olk` | 4 input frames | **EFFECTIVE** 11,451 B |
+| `--video-ras` | 3 input frames | **EFFECTIVE** 7,029 B |
+| `--video-switch` | 2 input frames | **EFFECTIVE** 5,477 B |
+
+16 more judged: **12 EFFECTIVE, 4 INERT**.
+
+Still rejected, each now with the encoder's exact reason:
+
+- `--svc-inter-layer` -- "**not a conforming AV2 v1.0.0 feature** §6.8.2";
+- `--video-bru`, `--video-idtx-1d` -- "**not decoder-gated: the pinned dav2d does
+  not parse** them" (a validation-target limit, not a switch defect);
+- `--b-frames`, `--oppoint`, `--spatial-layers` -- need a multi-layer SVC or a
+  GOP shape I did not get working on this clip;
+- the `--still-*` scale/band options and the remaining `--video-tlayer-*`,
+  `--video-*-delta-q` options -- not yet given a working invocation.
+
+### Totals after this pass
+
+**524 rows -- 215 EFFECTIVE, 265 INERT, 1 OWN-WRITER-OK, 43 REJECTED.**

@@ -4,13 +4,13 @@ name	surface	verdict	evidence
 --avg-cdf	switch	EFFECTIVE	per-mode(video+still)
 --b-frames	option	REJECTED	argsweep(2 values)
 --bit-depth	option	INERT	per-mode(args)
---bitrate	option	REJECTED	argsweep(2 values)
+--bitrate	option	EFFECTIVE	explicit-table(--rc vbr)
 --cdf-continuity	switch	INERT	per-mode(video+still)
 --chroma	option	INERT	resolve(other)
 --cpu-threads	option	INERT	resolve(other, value 1)
---cpu-used	option	REJECTED	argsweep(2 values)
---crf	option	REJECTED	argsweep(2 values)
---effort	option	REJECTED	argsweep(2 values)
+--cpu-used	option	EFFECTIVE	explicit-table(still, 4)
+--crf	option	INERT	explicit-table(--rc crf, 32)
+--effort	option	EFFECTIVE	explicit-table(still, 10)
 --effort-plan	switch	REJECTED	hand-batch
 --fast-decode	switch	EFFECTIVE	per-mode(video+still)
 --frames	option	INERT	resolve(other)
@@ -33,7 +33,7 @@ name	surface	verdict	evidence
 --oppoint	option	REJECTED	argsweep(2 values)
 --p-frames	option	INERT	per-mode(args)
 --qp	option	EFFECTIVE	argsweep(2 values)
---rc	option	REJECTED	argsweep(2 values)
+--rc	option	EFFECTIVE	explicit-table(crf, no --qp)
 --recon	option	REJECTED	argsweep(2 values)
 --spatial-layers	option	REJECTED	argsweep(2 values)
 --still	switch	INERT	still+table/still
@@ -103,9 +103,9 @@ name	surface	verdict	evidence
 --video	switch	INERT	per-mode(video+still)
 --video-adaptive-mvd	switch	EFFECTIVE	comp3
 --video-aq	switch	EFFECTIVE	comp3
---video-aq-bias	option	REJECTED	argsweep(2 values)
---video-aq-clamp	option	REJECTED	argsweep(2 values)
---video-aq-strength	option	REJECTED	argsweep(2 values)
+--video-aq-bias	option	INERT	explicit-table(--video-aq)
+--video-aq-clamp	option	EFFECTIVE	explicit-table(--video-aq)
+--video-aq-strength	option	INERT	explicit-table(--video-aq)
 --video-bawp	switch	EFFECTIVE	per-mode(video+still)
 --video-bawp-carrier	switch	EFFECTIVE	per-mode(video+still)
 --video-brt	switch	EFFECTIVE	flip(nightly)
@@ -119,10 +119,10 @@ name	surface	verdict	evidence
 --video-ccso-unit-bits	option	EFFECTIVE	per-mode(args)
 --video-cctx	switch	EFFECTIVE	flip(nightly)
 --video-cdef	switch	EFFECTIVE	per-mode(video+still)
---video-cdef-damping	option	REJECTED	argsweep(2 values)
+--video-cdef-damping	option	INERT	explicit-table(4)
 --video-cdef-rd	switch	EFFECTIVE	per-mode(video+still)
 --video-cdef-rd-lambda	option	EFFECTIVE	resolve(video, value 1)
---video-cdef-search	option	REJECTED	argsweep(2 values)
+--video-cdef-search	option	EFFECTIVE	explicit-table(full)
 --video-cdef-strength	option	EFFECTIVE	per-mode(args)
 --video-cdf-per-frame-qp	switch	EFFECTIVE	flip(nightly)
 --video-cfl	switch	EFFECTIVE	flip(nightly)
@@ -186,11 +186,11 @@ name	surface	verdict	evidence
 --video-morph	switch	EFFECTIVE	comp3
 --video-mrl	switch	EFFECTIVE	flip(nightly)
 --video-multi-sequence	switch	EFFECTIVE	comp3
---video-mv-precision	switch	REJECTED	plain-rejudge
+--video-mv-precision	switch	EFFECTIVE	explicit-table(quarter)
 --video-mv-traj	switch	EFFECTIVE	comp3
 --video-mvd-sign-derive	switch	EFFECTIVE	hand-batch
 --video-num-ref-frames	option	REJECTED	argsweep(2 values)
---video-olk	switch	REJECTED	plain-rejudge
+--video-olk	switch	EFFECTIVE	explicit-table(4 frames)
 --video-opfl	switch	EFFECTIVE	hand-batch
 --video-palette	switch	EFFECTIVE	comp3
 --video-partition-rd	switch	EFFECTIVE	per-mode(video+still)
@@ -201,9 +201,9 @@ name	surface	verdict	evidence
 --video-per-segment-q	switch	EFFECTIVE	comp3
 --video-qm	switch	EFFECTIVE	hand-batch
 --video-qp-lambda	switch	INERT	per-mode(video+still)
---video-ras	switch	REJECTED	plain-rejudge
+--video-ras	switch	EFFECTIVE	explicit-table(3 frames)
 --video-rd-driver	switch	EFFECTIVE	flip(nightly)
---video-rd-preset	option	REJECTED	argsweep(2 values)
+--video-rd-preset	option	EFFECTIVE	explicit-table(quality)
 --video-rdoq	switch	INERT	per-mode(video+still)
 --video-rdoq-scale	switch	REJECTED	plain-rejudge
 --video-recon	option	INERT	per-mode(args)
@@ -231,10 +231,10 @@ name	surface	verdict	evidence
 --video-short-refresh	switch	EFFECTIVE	comp3
 --video-skip-collapse	switch	EFFECTIVE	flip(nightly)
 --video-subpel-eighth	switch	EFFECTIVE	per-mode(video+still)
---video-switch	switch	REJECTED	plain-rejudge
+--video-switch	switch	EFFECTIVE	explicit-table(2 frames)
 --video-tail-tx	switch	EFFECTIVE	comp3 (+companion)
 --video-tcq	switch	EFFECTIVE	comp3
---video-tier	switch	REJECTED	plain-rejudge
+--video-tier	switch	EFFECTIVE	explicit-table(high)
 --video-tile-flush-min	switch	EFFECTIVE	per-mode(video+still)
 --video-tile-group-compact	switch	EFFECTIVE	per-mode(video+still)
 --video-timing	switch	EFFECTIVE	comp3

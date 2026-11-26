@@ -1,0 +1,37 @@
+base plain12  OK 18845 B de0fe01b
+base v3       OK 6746 B 08e9061f
+base still    OK 4198 B 5798ed59
+base svc      OK 18876 B ca9a0750
+base vbr      FAILED: av2enc: --rc vbr requires --bitrate <kbps>
+base crf      OK 36484 B d9054ba8
+base aq       OK 19489 B 3c34b31c
+base bf       FAILED: av2enc: --video-gops only applies to the --b-frame
+--bitrate                EFFECTIVE  vbr (6177 B)
+--crf                    INERT      crf (36484 B)
+--rc                     REJECTED  plain12 :: av2enc: --rc crf owns the quantizer; drop --qp or use --rc cqp/--rc vb
+--oppoint                REJECTED  svc :: av2enc: select at most one of --oppoint, --alllayers or --spatial-laye
+--effort                 EFFECTIVE  still (4216 B)
+--cpu-used               EFFECTIVE  still (4206 B)
+--b-frames               REJECTED  v3 :: av2enc: error: --b-frames --video-gops 1 codes 1 closed GOP(s): pass e
+--spatial-layers         REJECTED  svc :: av2enc: select at most one of --oppoint, --alllayers or --spatial-laye
+--svc-inter-layer        REJECTED  svc :: av2enc: --svc-inter-layer is not a conforming AV2 v1.0.0 feature: §6.8
+--video-aq-bias          INERT      aq (19489 B)
+--video-aq-clamp         EFFECTIVE  aq (20005 B)
+--video-aq-strength      INERT      aq (19489 B)
+--video-bru              REJECTED  plain12 :: av2enc: --video-bru is not decoder-gated: the pinned dav2d does not pa
+--video-idtx-1d          REJECTED  plain12 :: av2enc: --video-idtx-1d is rejected: the one-axis V/H_DCT, V/H_ADST an
+--video-olk              REJECTED  plain12 :: av2enc: error: --video-olk requires exactly 4 input frames (CLK, OLK, 
+--video-ras              REJECTED  plain12 :: av2enc: error: --video-ras requires exactly 3 input frames (CLK, SWITC
+--video-switch           REJECTED  plain12 :: av2enc: error: --video-switch requires exactly 2 input frames (CLK, SW
+--video-cdef-damping     INERT      plain12 (18845 B)
+--video-cdef-search      EFFECTIVE  plain12 (18206 B)
+--video-tier             EFFECTIVE  plain12 (18845 B)
+--video-mv-precision     EFFECTIVE  plain12 (18840 B)
+--video-rd-preset        EFFECTIVE  plain12 (23526 B)
+--rc               EFFECTIVE  (36484 B vs base 105537 B)
+--oppoint          REJECTED av2enc: error: --svc-layers: operating point index 1 is outside 0.
+--spatial-layers   REJECTED av2enc: error: --svc-layers: --spatial-layers exceeds the configur
+--b-frames         REJECTED av2enc: error: --b-frames --video-gops 1 codes 1 closed GOP(s): pa
+--video-olk        EFFECTIVE  (11451 B vs base 8022 B)
+--video-ras        EFFECTIVE  (7029 B vs base 6746 B)
+--video-switch     EFFECTIVE  (5477 B vs base 5475 B)
