@@ -205,3 +205,23 @@ varying the value".
 So the `=1` limitation is real but narrow: it applies to scalar gates, of which
 the sweep has now value-swept the two that matter on this clip
 (`TX_HF_MASK_DIV=4` and `TX_LAMBDA_TEXTURED=0.2` both EFFECTIVE).
+
+## The 13 "scraper artefacts" are real options with mangled names (correction)
+
+Earlier I recorded 13 rejected names as options that "do not exist". That was
+wrong: my help scraper appended `)`, `;` or `.` to real flags. Cleaning the names
+and invoking them on the plain baseline:
+
+| cleaned flag | result |
+|---|---|
+| `--video-drl-reorder-always` | **EFFECTIVE** (18,845 B) |
+| `--video-tx-search` | **EFFECTIVE** (18,862 B) |
+| `--video-force-single` | INERT (identical stream) |
+| `--adaptive-cdf` | needs `--avg-cdf` (companion) |
+| `--video-rdoq` | needs `--video-inter-residual` (companion) |
+| `--video-tlayers` | takes a **value** -- it is an argument option, not a boolean |
+| `--still`, `--still-gpu` | incompatible with `--video` (mode conflict, correctly rejected) |
+
+So the coverage count is corrected: 2 more flags judged effective, 1 judged inert,
+2 reclassified as companion-gated, 1 reclassified as value-taking, and 2 as
+mode-conflicting. None were phantom.
