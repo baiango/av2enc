@@ -806,6 +806,31 @@ as gated dead code.
 | CONFIRMED (latent) | Assume the intra mode re-score is priced consistently with the TX search | It is not (table above) | Fix it in the same commit that makes `AV2ENC_RD_PREDICTOR` reachable; until then it cannot influence any stream |
 | CONFIRMED | Assume a lambda inconsistency found by reading code is live | This one is behind a default-off gate *and* unreachable on `--nightly`; both `AV2ENC_RD_PREDICTOR=0` and `=4` give the same stream | Prove reachability by byte-diff before spending encode time on a "fix" |
 
+### The f0-32 segment on a 60-frame stream: diagnosis and what actually moves it
+
+`tools/oracle.py` on `space8k_1440x720_60f` at 294.5 kbps puts **+18.28 JOD of
+rate-free ceiling** on f0-32 versus only **+1.81** on the key. That is a large
+number and it is easy to misread as recoverable headroom. The per-frame bit
+distribution says otherwise:
+
+| | share of stream | per frame |
+|---|---:|---:|
+| key f0 | 38.2 % (12,850 B) | — |
+| P x59 | **61.8 %** | 353 B |
+| .. 12 near-duplicate frames (pulldown) | — | < 1,000 bits |
+| .. 27 real-content frames | 49 % | **608 B** for 1440x720 |
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Read the +18.28 segment ceiling as recoverable headroom | It is a **rate-free** bound: those frames are perfect at zero cost. At 608 B per 1440x720 picture the P frames are far from perfect by arithmetic, not by misdecision | Bound recoverable gain by the cross-encoder gap (~1.26 JOD vs SVT p0), not by the ceiling |
+| CONFIRMED | Re-fund the P chain / move bits from the key | The P chain already carries **61.8 %** of the bits and the key is only +1.8 JOD from its ceiling; there is nothing to move | Fix inter coding efficiency at very low rate |
+| CONFIRMED (positive, small) | Assume the probe-chroma lever only helps key-dominated streams | Re-measured on the 60-frame P-dominated stream at matched bytes: `AV2ENC_PART_PROBE_CHROMA=8` gives **7.1602 vs 7.1331 cvvdp = +0.027 JOD**. Same sign as on the short extracts, but only **2.1 %** of the cross-encoder gap | Keep it (it is free and gated) but do not expect it to close f0-32 |
+
+**Method note that cost real time today:** every lever measured on 12-24 frame
+extracts was key-dominated (75 % of bits in the key), so those runs measured the
+key, which is the part already near its ceiling. Measure inter levers on a
+60-frame stream and attribute with the oracle's per-segment rows.
+
 ### Probe price (`--video-partition-rd-lambda`): a tie, not a lever
 
 The probe's syntax-bit price was calibrated at 240p / 100 kbps (`2.75e-6`), so
