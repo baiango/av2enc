@@ -87,3 +87,51 @@ is enabled:
 So it is a **modifier**, not a broken switch: it retunes lambdas that only some
 features consume, and on a `--nightly` 240p 12-frame clip at QP150/100 no
 decision flipped. No bug to fix.
+
+## Joint-solve control: it changes nothing, and neither does its gate
+
+`--nightly` and `--nightly-b` both run `set_gate("AV2ENC_RD_JOINT_P", "1")`
+(nightly.cpp:89-92 and 485-489), and `set_gate` only sets when the variable is
+*unset*, so an explicit value wins.
+
+Three runs, same clip (nasa 240p, 12 frames, QP150, `--nightly`):
+
+| setting | bytes | md5 |
+|---|---:|---|
+| unset (nightly sets 1) | 9,973 | 2f4f4b39bb202e813337fa1d6c050339 |
+| `AV2ENC_RD_JOINT_P=0` | 9,973 | 2f4f4b39bb202e813337fa1d6c050339 |
+| `AV2ENC_RD_JOINT_P=1` | 9,973 | 2f4f4b39bb202e813337fa1d6c050339 |
+
+**Byte-identical in all three.** The gate is wired (27 references, including
+`InterFrameEncoder::joint_p_decide_sb`), so this is not dead code -- but on the
+plain `--nightly` path the joint solve never fires.
+
+The enabling condition explains it (video_frame_decision.cpp:850-860):
+
+```cpp
+bool joint_p = !keyframe_ && !joint_plan_off_ && joint_plan::armed(...) &&
+               !options_.enable_sdp && !options_.force_single_block &&
+               !palette_enabled_ && !ibc_enabled_ && !qp_tools_active() &&
+               !options_.enable_tcq && !options_.tip_block_ref &&
+               (tile_w_ <= 0 || tile_w_ >= width) &&
+               (tile_h_ <= 0 || tile_h_ >= height) &&
+               pipe_probe_ready_;
+```
+
+At least one of those is false on this path -- `pipe_probe_ready_` and
+`qp_tools_active()` are the obvious candidates. So `AV2ENC_RD_JOINT_P=1`, which
+`--nightly` sets and whose own comment credits it with "+0.68 K bracket /
++0.92 fit at 100 kbps", is **silently inert** in the default configuration.
+
+## Joint-off control for the INERT switches: zero were masked
+
+The 30 previously-INERT boolean switches were re-run with
+`AV2ENC_RD_JOINT_P=0` against a matching joint-off baseline:
+
+```
+UNMASKED=0  INERT-JOINTOFF=30  REJECTED=0
+```
+
+So the joint solve is **not** what made them inert -- they are inert for other
+reasons (already-on defaults, unexercised features, or values equal to the
+default). The masking hypothesis is refuted by measurement.
