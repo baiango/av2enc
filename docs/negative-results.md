@@ -1386,3 +1386,30 @@ at QP212 (baseline 25,168 B / 7.2415), same protocol as every other row:
 
 This is the honest reading of "make a better tool like AVM": the cheap configuration
 layer is now exhausted and worth 0.012 JOD; the rest has to be built.
+
+### `--video-sdp` is unreachable under `--nightly` (and fails with a misleading file)
+
+Following up the untested row above. `--video-sdp` is rejected by both of the
+compatibility rules that `--nightly` trips:
+
+```
+--video-partition-rd does not compose with --video-sdp (the SDP tree has a
+  separate cost model)
+--video-sdp does not compose with --video-intra-full yet
+```
+
+`--nightly` sets **both** `video_partition_rd` and `video_intra_full`, and only
+the first has a negative flag (`--video-partition-rd-off`). There is no
+`--video-intra-full-off`, so SDP cannot be reached in the shipped configuration
+at all -- only from a hand-built flag set that omits `--nightly`.
+
+**Control that fell out of the attempt:** `--nightly --video-partition-rd-off`
+alone gives 20,439 B / **6.9156** at QP212, against the shipped 25,168 B /
+7.2415. So turning the partition probe off costs about 0.33 JOD at matched
+bytes -- consistent with the earlier "+0.54 JOD for probe on" measurement, and a
+warning against reading the sdp experiment on that base.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED (defect) | Report an encode as failed but leave a file behind | `--video-sdp` errors out and still writes a **32-byte IVF header**. Anything that globs for `*.ivf` will pick it up and score garbage | Delete the output on the error path, as `tools/pipeline_best.sh` does; never treat a 32-byte stream as a result |
+| CONFIRMED | Assume SDP is just "another switch" | It composes with neither partition-RD nor intra-full, and one of those has no negative flag -- it is unreachable from `--nightly` | Measure it from a hand-built flag set, or add `--video-intra-full-off` first |
