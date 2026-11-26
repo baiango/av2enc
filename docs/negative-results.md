@@ -1927,3 +1927,44 @@ the same QP):
 The pins must be re-baselined with quality confirmation at matched bytes before
 this is called a win on inter content; the still measurement above is the only
 quality evidence so far.
+
+## RDOQ fix: pins re-baselined WITH quality evidence (improvement confirmed)
+
+The pinned streams changed because RDOQ now fires where it previously could not.
+Quality was measured at matched bytes before accepting that, on the pin source
+(`~/Downloads/av2enc-src720/src720_1f.y4m`):
+
+**Stack arm** — new curve brackets the old rate:
+
+| arm | bytes | cvvdp |
+|---|---:|---:|
+| new QP186 (pinned) | 24,532 | 7.3100 |
+| new QP184 | 26,548 | 7.4147 |
+| **new interpolated @ 25,081 B** | 25,081 | **7.3385** |
+| old @ 25,081 B | 25,081 | 7.3202 |
+
+**+0.0183 JOD at matched bytes**, PSNR-Y also up (24.110 -> 24.469) while the
+pinned point carries 549 fewer bytes. This is a genuine improvement, not a
+quality trade.
+
+**nightly-b pin** scored for the record (no old quality value existed):
+24,695 B / cvvdp **7.3211** / PSNR-Y 24.484.
+
+**Still with the intra RDOQ path active** (`AV2ENC_RD_KEY_TX=1`, QP212):
+24,560 B / 7.2105 against the baseline curve's 7.2083 at the same bytes,
+**+0.0022 JOD**; and `--video-rdoq` vs `--video-rdoq-off` now produce different
+streams (9b1b935d vs 9f4b02d4) where they were identical in every prior
+configuration.
+
+New pin values (re-baselined):
+
+| pin | old | new |
+|---|---|---|
+| fast-decode | 0639b436 | **54f402bd** |
+| nightly-b | 8f0b85d8 | **f374a246** |
+| milestone | 9a8ee8d5 | **32a6e4c4** |
+| stack arm | 25,081 B / 3705ac02 | **24,532 B / 255a77ad** |
+
+Open: intra RDOQ only engages with `AV2ENC_RD_KEY_TX=1`, an off-by-default stage.
+Making that stage default would change every intra stream and needs its own
+matched-bytes sweep.
