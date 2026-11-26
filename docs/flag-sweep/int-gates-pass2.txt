@@ -1,0 +1,39 @@
+arming each family and checking the arm itself changes the stream:
+   arnr        9973 B -> armed 9979 B  (arm moves the stream)
+   part_diag   9973 B -> armed 9973 B  (arm is itself inert)
+   tail_floor  9973 B -> armed 9973 B  (arm is itself inert)
+   p_drift     9973 B -> armed 9973 B  (arm is itself inert)
+   tpl         9973 B -> armed 6085 B  (arm moves the stream)
+   seqtree     9973 B -> armed 9973 B  (arm is itself inert)
+   joint       9973 B -> armed 10074 B  (arm moves the stream)
+
+judged with the family armed (7 and 64):
+   AV2ENC_ARNR_SEARCH             7:INERT  64:INERT
+   AV2ENC_ARNR_STRENGTH           7:EFFECTIVE  64:EFFECTIVE
+   AV2ENC_ARNR_THRESH             7:EFFECTIVE  64:EFFECTIVE
+   AV2ENC_PART_DIAG_FIRST         7:INERT  64:INERT
+   AV2ENC_PART_DIAG_LAST          7:INERT  64:INERT
+   AV2ENC_PART_DIAG_MIN           7:INERT  64:INERT
+   AV2ENC_RD_TAIL_FLOOR_DEPTH     7:INERT  64:INERT
+   AV2ENC_RD_TAIL_FLOOR_FIRST     7:INERT  64:INERT
+   AV2ENC_RD_TAIL_FLOOR_LAST      7:INERT  64:INERT
+   AV2ENC_RD_TAIL_FLOOR_MIN       7:INERT  64:INERT
+   AV2ENC_P_DRIFT_FIRST           7:INERT  64:INERT
+   AV2ENC_P_DRIFT_LAST            7:INERT  64:INERT
+   AV2ENC_P_DRIFT_K               7:INERT  64:INERT
+   AV2ENC_TPL_GAIN                7:EFFECTIVE  64:EFFECTIVE
+   AV2ENC_TPL_PROPAGATE           7:INERT  64:INERT
+   AV2ENC_TPL_SEARCH              7:INERT  64:INERT
+   AV2ENC_TPL_SHIFT               7:EFFECTIVE  64:EFFECTIVE
+   AV2ENC_RD_SEQTREE_DEPTH        7:INERT  64:INERT
+   AV2ENC_RD_SEQTREE_ROUNDS       7:INERT  64:INERT
+   AV2ENC_RD_SEQTREE_SCREEN       7:INERT  64:INERT
+   AV2ENC_RD_SEQTREE_TOPK         7:INERT  64:INERT
+   AV2ENC_RD_JOINT_P_DEPTH        7:INERT  64:INERT
+   AV2ENC_RD_JOINT_P_FIRST        7:EFFECTIVE  64:EFFECTIVE
+   AV2ENC_RD_JOINT_P_LAST         7:EFFECTIVE  64:INERT
+   AV2ENC_RD_JOINT_P_TARGET       7:INERT  64:EFFECTIVE
+   AV2ENC_RD_JOINT_BATCH          7:EFFECTIVE  64:EFFECTIVE
+   AV2ENC_RD_JOINT_BATCH_CHAIN    7:INERT  64:INERT
+   AV2ENC_RD_JOINT_BATCH_ROUNDS   7:INERT  64:INERT
+   AV2ENC_RD_JOINT_BATCH_SEED     7:INERT  64:INERT

@@ -68,3 +68,20 @@ value otherwise. Names that only ever produced a rejection are listed with the
 companion they name; names that cannot be executed at all are listed as such
 (`--video-gpu` on this CPU-only build, `--effort-plan` which writes no stream,
 `--video-tlayer-anchor-residual` which needs the env-gated chained plan).
+
+## Integer gates, derived from call sites
+
+The earlier integer sweep used a **name regex** (`DIV|SCALE|_MIN|_TOP|...`). That
+was the wrong instrument: re-deriving from `env_int("AV2ENC_...")` call sites
+gives **34 gates, none of which appeared in the name-derived list** (see
+`int-gates-pass1.txt`). All 34 were then swept at 7 and 64:
+
+| carrier | result |
+|---|---|
+| armed pipe-budget carrier | 3 EFFECTIVE: `PIPE_BUDGET_Q_HI`, `Q_STEP`, `SCALE` |
+| nightly + each family armed (`int-gates-pass2.txt`) | `ARNR_STRENGTH`, `ARNR_THRESH` (with `AV2ENC_ARNR=2`); `TPL_GAIN`, `TPL_SHIFT` (with `AV2ENC_TPL=1`); `RD_JOINT_P_FIRST`, `RD_JOINT_P_LAST`, `RD_JOINT_P_TARGET`, `RD_JOINT_BATCH` (with `EFF_PERC=1` + `RD_JOINT_P=1`) |
+
+**11 of 34 are EFFECTIVE** at two non-default integer values. The rest belong
+to families whose own on-switch is itself inert on this clip
+(`PART_DIAG`, `RD_TAIL_FLOOR`, `P_DRIFT`, `RD_SEQTREE`), so their gates are
+**unjudged on this content**, not shown dead.
