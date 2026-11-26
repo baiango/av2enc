@@ -331,3 +331,29 @@ block needs `qp_tools_active()` **and** populated `sb_qindex_`. Seven carriers
 stream byte-identical, so the 5 `PIPE_BUDGET_*` scalar gates stay **unjudged,
 not dead**. The previous pass named `PIPE_BUDGET_SCALE` as the arming knob; that
 was the wrong gauge.
+
+## Pipe budget: armed, and every gate is live (see PIPE-BUDGET.md)
+
+The "unjudged, not dead" verdict is now replaced by measurement. The chain is:
+`AV2ENC_PIPE_BUDGET` (off when unset -- `parse_off(NULL)` is true), **plus**
+`AV2ENC_RD_DRIVER` (also off when unset, it arms the sequential key driver),
+**plus** a qp-tools mode (`--video-delta-q` or `--video-aq`) so `sb_qindex_` is
+populated.
+
+Armed (`--video-delta-q`, `AV2ENC_RD_DRIVER=1`): 17,907 -> **18,257 B** with
+`AV2ENC_PIPE_BUDGET=1`.
+
+| gate | verdict |
+|---|---|
+| `PIPE_BUDGET_STRENGTH` | EFFECTIVE at 0.5 and 4.0 |
+| `PIPE_BUDGET_LUMA` / `CHROMA` / `GAMMA` / `ACT_MAX` | EFFECTIVE once the budget binds (SCALE 500) |
+| `RD_DRIVER_ACT` | EFFECTIVE |
+| `RD_DRIVER_SBALLOC_MAX` | EFFECTIVE at 0.5 |
+| `RD_ENGINE_CAL_BR`, `RD_ENGINE_CAL_TXB` | EFFECTIVE |
+
+`PIPE_BUDGET_BYTES` is not the gauge (16,000/12,000/8,000 all inert): the
+allowance is `AV2ENC_PIPE_BUDGET_SCALE` thousandths, which binds at 500
+(18,111 B), 2000 (18,267 B) and 3000 (18,273 B).
+
+So the nine gates carried as inert/unjudged are all live. The only silent no-op
+found in the whole sweep remains `AV2ENC_RD_JOINT_P`.
