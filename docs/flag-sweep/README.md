@@ -45,3 +45,43 @@ argument was displaced, followed by a `git add -A`.
 They are removed here. Lesson recorded: sweep in the temp directory (or pass an
 explicit `-o` and assert the output path), and stage explicit paths rather than
 `git add -A`, since encoder runs drop artefacts in the CWD.
+
+## Corrected plain-baseline re-judgment (the first attempt was invalid)
+
+The first re-judgment (`31 effective / 111 rejected`, briefly committed) was
+**not trustworthy**: its per-flag tag came out empty, so six parallel runs wrote
+to the same `p_.ivf` and the resulting collisions were counted as rejections.
+Spot checks contradicted it -- `--video-sdp` and `--video-long-term` both encode
+successfully on a plain baseline.
+
+Re-run with unique tags (`plain2/result.txt`, now committed as
+`plain-rejudge.txt`): **31 EFFECTIVE / 0 INERT / 111 REJECTED** -- the same counts,
+but with real reasons:
+
+| reason | count |
+|---|---:|
+| `requires --FLAG or --FLAG` (a companion the flag names) | 46 |
+| `missing value after '--FLAG'` (an argument option my scraper put in the boolean list) | 11 |
+| `unknown option '--FLAG)'` / `'--FLAG);'` (scraper noise, not real options) | 14 |
+| `requires a positive number` | 5 |
+| other pair/companion requirements | 6 |
+| remaining (mode/range limits, e.g. `--video-tip` needs 3..8 frames) | 29 |
+
+So none of the 111 is a silent disable: they are companion-gated (satisfiable
+only by a different invocation), argument options misclassified by the help
+scraper, or flags whose feature does not apply to a 12-frame 240p video run.
+
+## Coverage summary (whole surface)
+
+| surface | judged | result |
+|---|---|---|
+| boolean CLI switches | 207 | 35 effective / 30 inert / 142 rejected |
+| argument-taking CLI options | 65 | 13 effective / 24 inert / 93 rejected |
+| env gates at `=1` | 232 | 24 effective / 205 inert / 2 failed |
+| numeric env gates (value sweep) | 2 | both effective at the right value |
+| nightly-rejected flags, plain baseline | 142 | 31 effective / 111 rejected, now classified |
+
+**Silent disables found: none.** `--video-qp-lambda` was the only candidate and is
+retracted with evidence: it reaches `qp_lambda_scale`, moves `leaf_rd_lambda`
+118.4509 -> 115.6791, and changes the stream once `--video-tx-search` consumes it
+(88,606 -> 88,633 B). It is a modifier with opt-in consumers, not a dead switch.

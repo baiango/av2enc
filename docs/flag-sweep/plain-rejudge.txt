@@ -1,853 +1,145 @@
 plain baseline 18845 B md5 de0fe01b07ee302cd29bbf3b2f8d7236
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --metadata-frame-hash
-PLAIN-REJECTED --adaptive-cdf;
-PLAIN-REJECTED --lossless
-PLAIN-REJECTED --alllayers
-PLAIN-REJECTED --effort-plan
-PLAIN-REJECTED --lossless-fsc
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-ccso
-PLAIN-REJECTED --nightly-b
-PLAIN-REJECTED --still-ccso-bands
-PLAIN-REJECTED --no-deblock
-PLAIN-REJECTED --still-ccso-edge
-PLAIN-REJECTED --no-cfl
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-cdef-strengths
-PLAIN-REJECTED --still-cdef-on-skip-txfm
-PLAIN-REJECTED --still-cfl-explicit
-PLAIN-REJECTED --still-cdef
-PLAIN-REJECTED --still-cctx
-PLAIN-REJECTED --still-chroma-lr
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-content-interpretation
-PLAIN-REJECTED --still-full-intra
-PLAIN-REJECTED --still-dc
-PLAIN-REJECTED --still-dc-ac-delta-q
-PLAIN-REJECTED --still-deblock
-PLAIN-REJECTED --still-ddt
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-gdf
-PLAIN-REJECTED --still-ibp
-PLAIN-REJECTED --still-delta-q
-PLAIN-REJECTED --still-ext-partitions
-PLAIN-REJECTED --still-dip
-PLAIN-REJECTED --still-delta-q-res
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-ist
-PLAIN-REJECTED --still-ibc
-PLAIN-REJECTED --still-gpu)
-PLAIN-REJECTED --still-grain-adaptive
-PLAIN-REJECTED --still-grain
-PLAIN-REJECTED --still-idtx
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-pc-wiener
-PLAIN-REJECTED --still-ist-scale
-PLAIN-REJECTED --still-palette
-PLAIN-REJECTED --still-mrl
-PLAIN-REJECTED --still-mhccp
-PLAIN-REJECTED --still-rdoq
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-per-segment-q
-PLAIN-REJECTED --still-rdo-scale
-PLAIN-REJECTED --still-qm
-PLAIN-REJECTED --still-qm-level
-PLAIN-REJECTED --still-rdo-intra
-PLAIN-REJECTED --still-rdoq-scale
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-sdp
-PLAIN-REJECTED --still-sb128
-PLAIN-REJECTED --still-seg-delta
-PLAIN-REJECTED --still-sub8
-PLAIN-REJECTED --still-sb256
-PLAIN-REJECTED --still-segmentation
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-tx-type
-PLAIN-REJECTED --still-tcq-scale
-PLAIN-REJECTED --still-single
-PLAIN-REJECTED --still-tcq
-PLAIN-REJECTED --still-tx-partition
-PLAIN-REJECTED --still-uv-full
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --still-tx-type-scale
-PLAIN-REJECTED --still;
-PLAIN-REJECTED --video):
-PLAIN-REJECTED --svc-inter-layer
-PLAIN-REJECTED --still-user-qm
-PLAIN-REJECTED --still-wiener
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-bawp):
-PLAIN-REJECTED --video-ccso-bands
-PLAIN-REJECTED --video-bru
-PLAIN-REJECTED --video-compound
+PLAIN-REJECTED --alllayers :: av2enc: --svc-* requires --svc-layers x0=WxH[,x1=WxH,...]
+PLAIN-REJECTED --adaptive-cdf; :: av2enc: unknown option '--adaptive-cdf;'
+PLAIN-REJECTED --metadata-frame-hash :: av2enc: error: --metadata-frame-hash is wired into the still/basic writers only;
+PLAIN-REJECTED --effort-plan :: av2enc: --effort/--cpu-used is calibrated for --still only; there is no measured
+PLAIN-REJECTED --lossless :: av2enc: --video cannot be combined with --still, --still-gpu or --lossless
+PLAIN-REJECTED --lossless-fsc :: av2enc: --lossless-fsc requires --lossless or --video-lossless
+PLAIN-REJECTED --no-deblock :: av2enc: --no-deblock requires --still or --still-gpu
+PLAIN-REJECTED --nightly-b :: av2enc: --video-edge-inter is measured on the low-delay P chain; drop the B-fram
+PLAIN-REJECTED --still-ccso-bands :: av2enc: missing value after '--still-ccso-bands'
+PLAIN-REJECTED --still-ccso :: av2enc: --still-ccso requires --still or --still-gpu
+PLAIN-REJECTED --no-cfl :: av2enc: --no-cfl requires --still or --still-gpu
+PLAIN-REJECTED --still-ccso-edge :: av2enc: --still-ccso-edge requires --still or --still-gpu
+PLAIN-REJECTED --still-cctx :: av2enc: --still-cctx requires --still or --still-gpu
+PLAIN-REJECTED --still-cfl-explicit :: av2enc: --still-cfl-explicit requires --still or --still-gpu
+PLAIN-REJECTED --still-cdef :: av2enc: --still-cdef requires --still or --still-gpu
+PLAIN-REJECTED --still-cdef-on-skip-txfm :: av2enc: --still-cdef-on-skip-txfm requires --still or --still-gpu
+PLAIN-REJECTED --still-chroma-lr :: av2enc: --still-chroma-lr requires --still or --still-gpu
+PLAIN-REJECTED --still-cdef-strengths :: av2enc: missing value after '--still-cdef-strengths'
+PLAIN-REJECTED --still-dc :: av2enc: --still-dc requires --still or --still-gpu
+PLAIN-REJECTED --still-content-interpretation :: av2enc: --still-content-interpretation requires --still or --still-gpu
+PLAIN-REJECTED --still-dc-ac-delta-q :: av2enc: --still-dc-ac-delta-q requires --still or --still-gpu
+PLAIN-REJECTED --still-deblock :: av2enc: --still-deblock requires --still or --still-gpu
+PLAIN-REJECTED --still-ddt :: av2enc: --still-ddt requires --still or --still-gpu
+PLAIN-REJECTED --still-full-intra :: av2enc: --still-full-intra requires --still or --still-gpu
+PLAIN-REJECTED --still-delta-q :: av2enc: --still-delta-q requires --still or --still-gpu
+PLAIN-REJECTED --still-gdf :: av2enc: --still-gdf requires --still or --still-gpu
+PLAIN-REJECTED --still-delta-q-res :: av2enc: missing value after '--still-delta-q-res'
+PLAIN-REJECTED --still-dip :: av2enc: --still-dip requires --still or --still-gpu
+PLAIN-REJECTED --still-ext-partitions :: av2enc: --still-ext-partitions requires --still or --still-gpu
+PLAIN-REJECTED --still-ibp :: av2enc: --still-ibp requires --still or --still-gpu
+PLAIN-REJECTED --still-grain :: av2enc: --still-grain requires --still or --still-gpu
+PLAIN-REJECTED --still-gpu) :: av2enc: unknown option '--still-gpu)'
+PLAIN-REJECTED --still-grain-adaptive :: av2enc: --still-grain-adaptive requires --still or --still-gpu
+PLAIN-REJECTED --still-ibc :: av2enc: --still-ibc requires --still or --still-gpu
+PLAIN-REJECTED --still-idtx :: av2enc: --still-idtx requires --still or --still-gpu
+PLAIN-REJECTED --still-ist :: av2enc: --still-ist requires --still or --still-gpu
+PLAIN-REJECTED --still-mrl :: av2enc: --still-mrl requires --still or --still-gpu
+PLAIN-REJECTED --still-ist-scale :: av2enc: --still-ist-scale requires a positive number
+PLAIN-REJECTED --still-mhccp :: av2enc: --still-mhccp requires --still or --still-gpu
+PLAIN-REJECTED --still-pc-wiener :: av2enc: --still-pc-wiener requires --still or --still-gpu
+PLAIN-REJECTED --still-palette :: av2enc: --still-palette requires --still or --still-gpu
+PLAIN-REJECTED --still-rdoq :: av2enc: --still-rdoq requires --still or --still-gpu
+PLAIN-REJECTED --still-rdo-intra :: av2enc: --still-rdo-intra requires --still or --still-gpu
+PLAIN-REJECTED --still-per-segment-q :: av2enc: --still-per-segment-q requires --still or --still-gpu
+PLAIN-REJECTED --still-qm :: av2enc: --still-qm requires --still or --still-gpu
+PLAIN-REJECTED --still-qm-level :: av2enc: missing value after '--still-qm-level'
+PLAIN-REJECTED --still-rdo-scale :: av2enc: --still-rdo-scale requires a positive number
+PLAIN-REJECTED --still-rdoq-scale :: av2enc: --still-rdoq-scale requires a positive number
+PLAIN-REJECTED --still-sb128 :: av2enc: --still-sb128 requires --still or --still-gpu
+PLAIN-REJECTED --still-seg-delta :: av2enc: missing value after '--still-seg-delta'
+PLAIN-REJECTED --still-sdp :: av2enc: --still-sdp requires --still or --still-gpu
+PLAIN-REJECTED --still-segmentation :: av2enc: --still-segmentation requires --still or --still-gpu
+PLAIN-REJECTED --still-sb256 :: av2enc: --still-sb256 requires --still or --still-gpu
+PLAIN-REJECTED --still-sub8 :: av2enc: --still-sub8 requires --still or --still-gpu
+PLAIN-REJECTED --still-tcq-scale :: av2enc: --still-tcq-scale requires a positive number
+PLAIN-REJECTED --still-tcq :: av2enc: --still-tcq requires --still or --still-gpu
+PLAIN-REJECTED --still-single :: av2enc: --still-single requires --still or --still-gpu
+PLAIN-REJECTED --still-tx-type :: av2enc: --still-tx-type requires --still or --still-gpu
+PLAIN-REJECTED --still-tx-partition :: av2enc: --still-tx-partition requires --still or --still-gpu
+PLAIN-REJECTED --still-uv-full :: av2enc: --still-uv-full requires --still or --still-gpu
+PLAIN-REJECTED --still-wiener :: av2enc: --still-wiener requires --still or --still-gpu
+PLAIN-REJECTED --still-tx-type-scale :: av2enc: --still-tx-type-scale requires a positive number
+PLAIN-REJECTED --still; :: av2enc: unknown option '--still;'
+PLAIN-REJECTED --still-user-qm :: av2enc: --still-user-qm requires --still or --still-gpu
+PLAIN-REJECTED --svc-inter-layer :: av2enc: --svc-inter-layer is not a conforming AV2 v1.0.0 feature: §6.8.2 require
+PLAIN-REJECTED --video): :: av2enc: unknown option '--video):'
+PLAIN-REJECTED --video-bawp): :: av2enc: unknown option '--video-bawp):'
+PLAIN-REJECTED --video-bru :: av2enc: --video-bru is not decoder-gated: the pinned dav2d does not parse enable
+PLAIN-REJECTED --video-ccso-bands :: av2enc: missing value after '--video-ccso-bands'
+PLAIN-REJECTED --video-compound :: av2enc: --video-compound needs --video-refs 2 (the (0,1) pair is implied by NumT
 PLAIN-EFFECTIVE --video-adaptive-mvd
 PLAIN-EFFECTIVE --video-aq
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-compound-wedge
-PLAIN-REJECTED --video-compound-near-near
-PLAIN-REJECTED --video-compound-diffwtd
+PLAIN-REJECTED --video-compound-near-near :: av2enc: --video-compound-near-near needs --video-compound
+PLAIN-REJECTED --video-compound-diffwtd :: av2enc: --video-compound-wedge/--video-compound-diffwtd need --video-compound
+PLAIN-REJECTED --video-compound-wedge :: av2enc: --video-compound-wedge/--video-compound-diffwtd need --video-compound
 PLAIN-EFFECTIVE --video-decoder-model
 PLAIN-EFFECTIVE --video-delta-q
 PLAIN-EFFECTIVE --video-compound-interintra
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-cwp-weighted
-PLAIN-REJECTED --video-force-integer-mv
-PLAIN-REJECTED --video-head-tx
-PLAIN-REJECTED --video-force-single)
-PLAIN-REJECTED --video-drl-reorder-always)
+PLAIN-REJECTED --video-cwp-weighted :: av2enc: --video-cwp-weighted/--video-imp-mask need --video-compound --video-comp
+PLAIN-REJECTED --video-drl-reorder-always) :: av2enc: unknown option '--video-drl-reorder-always)'
+PLAIN-REJECTED --video-force-integer-mv :: av2enc: --video-force-integer-mv needs --video-scc-force
+PLAIN-REJECTED --video-head-tx :: av2enc: --video-tail-tx/--video-head-tx need --video-eff-perc (the exact-rate pi
+PLAIN-REJECTED --video-force-single) :: av2enc: unknown option '--video-force-single)'
 PLAIN-EFFECTIVE --video-flex-mvres
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-idtx-1d
-PLAIN-REJECTED --video-gpu
-PLAIN-REJECTED --video-imp-mask
+PLAIN-REJECTED --video-gpu :: av2enc: --cpu-threads is a CPU reference knob; the GPU backend (--video-gpu) has
+PLAIN-REJECTED --video-idtx-1d :: av2enc: --video-idtx-1d is rejected: the one-axis V/H_DCT, V/H_ADST and V/H_FLIP
+PLAIN-REJECTED --video-imp-mask :: av2enc: --video-cwp-weighted/--video-imp-mask need --video-compound --video-comp
 PLAIN-EFFECTIVE --video-ibc
 PLAIN-EFFECTIVE --video-gme
 PLAIN-EFFECTIVE --video-implicit-ref-map
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-lossless
-PLAIN-REJECTED --video-lossless-b
-PLAIN-REJECTED --video-key-qp-offset
+PLAIN-REJECTED --video-key-qp-offset :: av2enc: missing value after '--video-key-qp-offset'
+PLAIN-REJECTED --video-lossless :: av2enc: --video-lossless is Q=0; drop --qp or pass --qp 0
+PLAIN-REJECTED --video-lossless-b :: av2enc: --video-lossless is Q=0; drop --qp or pass --qp 0
 PLAIN-EFFECTIVE --video-mfh
 PLAIN-EFFECTIVE --video-long-term
 PLAIN-EFFECTIVE --video-mhccp
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-mv-traj
-PLAIN-REJECTED --video-mvd-sign-derive
-PLAIN-REJECTED --video-palette/--video-ibc/--video-morph
-PLAIN-REJECTED --video-mv-precision
+PLAIN-REJECTED --video-mv-traj :: av2enc: error: --video-mv-traj needs at least two references (the trajectory is 
+/private/var/folders/yr/8_681g0d25nb4rgrqt_1zg6c0000gn/T/opencode/plain2.sh: line 19: /private/var/folders/yr/8_681g0d25nb4rgrqt_1zg6c0000gn/T/opencode/plain2/videopalette/videoibc/videomorph.log: No such file or directory
+head: /private/var/folders/yr/8_681g0d25nb4rgrqt_1zg6c0000gn/T/opencode/plain2/videopalette/videoibc/videomorph.log: No such file or directory
+PLAIN-REJECTED --video-palette/--video-ibc/--video-morph :: 
+PLAIN-REJECTED --video-mv-precision :: av2enc: missing value after '--video-mv-precision'
+PLAIN-REJECTED --video-mvd-sign-derive :: av2enc: --video-mvd-sign-derive needs --video-mv-precision quarter or half: §5.2
 PLAIN-EFFECTIVE --video-multi-sequence
 PLAIN-EFFECTIVE --video-morph
-tr: illegal option -- ;
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-olk
-PLAIN-REJECTED --video-qm).
-PLAIN-REJECTED --video-qm
-PLAIN-REJECTED --video-opfl
-PLAIN-EFFECTIVE --video-per-segment-q
+PLAIN-REJECTED --video-opfl :: av2enc: --video-opfl/--video-refine-mv need --video-compound-near-near: the temp
+PLAIN-REJECTED --video-olk :: av2enc: error: --video-olk requires exactly 4 input frames (CLK, OLK, P2, P3); g
+PLAIN-REJECTED --video-qm :: av2enc: --video-qm is gated at --qp 90: the shared device QM stage builds q2 fro
+PLAIN-REJECTED --video-qm). :: av2enc: unknown option '--video-qm).'
 PLAIN-EFFECTIVE --video-palette
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-same-ref-compound
-PLAIN-REJECTED --video-ras
-PLAIN-REJECTED --video-rdoq.
-PLAIN-REJECTED --video-rdoq-scale
+PLAIN-EFFECTIVE --video-per-segment-q
+PLAIN-REJECTED --video-ras :: av2enc: error: --video-ras requires exactly 3 input frames (CLK, SWITCH, RAS); g
+PLAIN-REJECTED --video-rdoq-scale :: av2enc: missing value after '--video-rdoq-scale'
+PLAIN-REJECTED --video-rdoq. :: av2enc: unknown option '--video-rdoq.'
+PLAIN-REJECTED --video-same-ref-compound :: av2enc: error: --video-same-ref-compound requires --video-compound
 PLAIN-EFFECTIVE --video-ref-mvs
 PLAIN-EFFECTIVE --video-refmvbank
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-scc-force
-PLAIN-REJECTED --video-refine-mv
-PLAIN-EFFECTIVE --video-sdp
+PLAIN-REJECTED --video-refine-mv :: av2enc: --video-opfl/--video-refine-mv need --video-compound-near-near: the temp
+PLAIN-REJECTED --video-scc-force :: av2enc: --video-scc-force needs one of --video-palette/--video-ibc/--video-morph
 PLAIN-EFFECTIVE --video-ref-mvs-stress
-PLAIN-EFFECTIVE --video-sb256
 PLAIN-EFFECTIVE --video-sb128
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
+PLAIN-EFFECTIVE --video-sb256
+PLAIN-EFFECTIVE --video-sdp
 PLAIN-EFFECTIVE --video-seg-globalmv
+PLAIN-EFFECTIVE --video-seg-skip
 PLAIN-EFFECTIVE --video-sef
-PLAIN-EFFECTIVE --video-seg-temporal
 PLAIN-EFFECTIVE --video-short-refresh
 PLAIN-EFFECTIVE --video-segmentation
-PLAIN-EFFECTIVE --video-seg-skip
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-switch
-PLAIN-REJECTED --video-tail-tx
-PLAIN-REJECTED --video-seq-seg-info-frozen
-PLAIN-REJECTED --video-tier
-PLAIN-REJECTED --video-seq-seg-info
+PLAIN-EFFECTIVE --video-seg-temporal
+PLAIN-REJECTED --video-seq-seg-info :: av2enc: --video-seq-seg-info needs --video-segmentation or --video-per-segment-q
+PLAIN-REJECTED --video-switch :: av2enc: error: --video-switch requires exactly 2 input frames (CLK, SWITCH); got
+PLAIN-REJECTED --video-seq-seg-info-frozen :: av2enc: --video-seq-seg-info needs --video-segmentation or --video-per-segment-q
+PLAIN-REJECTED --video-tail-tx :: av2enc: --video-tail-tx/--video-head-tx need --video-eff-perc (the exact-rate pi
+PLAIN-REJECTED --video-tier :: av2enc: missing value after '--video-tier'
 PLAIN-EFFECTIVE --video-tcq
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-tip
-PLAIN-REJECTED --video-tlayer-anchor-residual
-PLAIN-REJECTED --video-tip-block-ref
-PLAIN-REJECTED --video-tip-no-hole-fill
-PLAIN-REJECTED --video-tlayers)
+PLAIN-REJECTED --video-tip :: av2enc: error: --video-tip supports 3..8 input frames (got 12)
+PLAIN-REJECTED --video-tip-block-ref :: av2enc: --video-tip-block-ref is the §5.20.7.10 RefFrame[0] == TIP_FRAME carrier
+PLAIN-REJECTED --video-tip-no-hole-fill :: av2enc: --video-tip-no-hole-fill is the A/B control for --video-tip
+PLAIN-REJECTED --video-tlayer-anchor-residual :: av2enc: --video-tlayer-anchor-residual needs the chained --video-tlayers --video
+PLAIN-REJECTED --video-tlayers) :: av2enc: unknown option '--video-tlayers)'
 PLAIN-EFFECTIVE --video-timing
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-tr: illegal option -- ;
-usage: tr [-Ccsu] string1 string2
-       tr [-Ccu] -d string1
-       tr [-Ccu] -s string1
-       tr [-Ccu] -ds string1 string2
-PLAIN-REJECTED --video-tlayers
-PLAIN-REJECTED --video-tx-search)
-PLAIN-REJECTED --video-user-qm
+PLAIN-REJECTED --video-tlayers :: av2enc: missing value after '--video-tlayers'
+PLAIN-REJECTED --video-tx-search) :: av2enc: unknown option '--video-tx-search)'
+PLAIN-REJECTED --video-user-qm :: av2enc: --video-qm is gated at --qp 90: the shared device QM stage builds q2 fro
 PLAIN-EFFECTIVE --video-warp
