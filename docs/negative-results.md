@@ -1486,3 +1486,35 @@ Also worth recording: the first attempt at these four runs failed with "multiple
 input files specified" because zsh does not word-split an unquoted `$args`.
 Flags must be written literally or as an array -- a repeat of the same trap
 noted earlier in this project.
+
+## Exhaustive tool enumeration on src720.png: best is dip+ibp+ist, +0.038 JOD
+
+The six AV2 intra switches were enumerated in full at QP212, each scored and
+compared at its **own** bytes against the shipped `--nightly` curve
+(31,896/7.5190, 27,493/7.3437, 25,168/7.2415, 23,276/7.1381).
+
+**The nominal space is 2^6 = 64 but the reachable space is 24**: `sdp` composes
+with nothing under `--nightly` (needs partition-RD *and* intra-full off), and
+`ibp` does not compose with `mrl` (8 subsets lost). All 24 were run -- 23 encoded
+and scored, plus the baseline.
+
+| deltaK | bytes | cvvdp | subset |
+|---:|---:|---:|---|
+| **+0.0378** | 23,201 | **7.1759** | **dip+ibp+ist** |
+| +0.0370 | 23,294 | 7.1761 | dip+ibp+ist+idtx |
+| +0.0268 | 23,267 | 7.1649 | dip+ibp+idtx |
+| +0.0264 | 23,156 | 7.1645 | dip+ibp |
+| +0.0252 | 22,997 | 7.1633 | dip+ist+idtx |
+| +0.0211 | 24,773 | 7.2410 | ibp |
+| +0.0096 | 23,017 | 7.1477 | dip |
+| -0.0040 | 23,891 | 7.1677 | dip+mrl |
+| -0.0285 | 25,941 | 7.2470 | mrl |
+
+| Status | Meaning |
+|---|---|
+| CERTIFIED (over this space) | Among all 24 reachable subsets of these six switches at QP212, **dip+ibp+ist** is the best at matched bytes: **+0.0378 JOD** (~10 % of the 0.394 JOD AVM gap). Reproducible: `tools/tool_enum.sh`, score with the same curve |
+| NOT covered | This certifies **only** these six switches. `--video-min-block`, `--video-max-depth`, `--video-ext-partitions`, `--video-uv-qp-offset`, key-QP offset, CDEF/GDF and the `TX_*` / `RD_DRIVER_*` environment have no tractable enumeration -- they are coordinate-tested only |
+
+Method note: encodes run as **N single-threaded processes**, not one
+multi-threaded process -- av2enc does not scale with `--cpu-threads`, so
+throughput comes from concurrency across streams.
