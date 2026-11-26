@@ -112,3 +112,43 @@ All three verified, so the warning's message is correct as written.
 | 38 integer gates | "boolean-equivalent" from `=2` | inert at `=2` **and** `=64`; 2 mode selectors live at both |
 | `RD_ENGINE_{KEY,INTER,CHROMA}` | unwired "per the comment" | proven: `site_scale()` is only ever called from `print_stats()`; counters never incremented |
 | joint companions | one companion tested | all three fire the solve |
+
+## RETRACTION: drift refresh is live -- it needed a drifting clip
+
+The section above recorded the three options as "content-gated; liveness not
+demonstrated". A carrier that actually drifts settles it.
+
+**Carrier** (`/tmp/drift60.y4m`, 60 frames, 480x240 C420jpeg): frames 0-29 a
+smooth horizontal gradient, frames 30-59 a high-contrast pattern -- a synthetic
+scene cut. Recorded in `drift-carrier.txt`.
+
+The trigger fires exactly once, at the cut:
+
+```
+drift frame=31 slot=0 anchor=54.9604 ref_psnr=27.0559 spent=0 refresh=1
+```
+
+(`ref_psnr < anchor - threshold`: 27.06 < 54.96 - 1.5.)
+
+**The feature is live.** With refresh off (`--video-drift-refresh-qp 0`) the
+stream is 14,495 B; with it on (qp 3) it is 14,822 B.
+
+**All three options are live**, each measured in both directions:
+
+| option | value | bytes | refresh | verdict |
+|---|---|---:|---:|---|
+| (baseline, qp 3) | | 14,822 | 1 | -- |
+| `--video-drift-refresh-threshold` | 0.2 / 1.5 / 27 | 14,822 | 1 | INERT (still fires) |
+| | **28 / 29** | **13,483** | **0** | **EFFECTIVE** (trigger suppressed) |
+| `--video-drift-refresh-budget` | 1 | 14,822 | 1 | INERT (one refresh still fits) |
+| | **3250** | **15,659** | 1 | **EFFECTIVE** |
+| `--video-drift-refresh-qp` | **6** | **15,421** | 1 | **EFFECTIVE** |
+| | 0 | 14,495 | 0 | EFFECTIVE (feature off) |
+
+Threshold 28 is the boundary: `54.96 - 28 = 26.96` and the cut's `ref_psnr` is
+27.06, so the refresh stops firing and the stream drops to 13,483 B. That is the
+knob doing exactly what its formula says, measured at the boundary.
+
+So the earlier verdict was the twelfth inference-based "inert" to fall to
+measurement. The pattern held again: nothing was disabled -- the input simply
+had no drift for the trigger to detect.

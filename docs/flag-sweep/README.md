@@ -402,3 +402,19 @@ warnings in 4dbe3af0 and this pass, not a correctness bug.
 4. **The joint-plan companions**: all three fire the solve --
    `EFF_PERC` 10,026 -> 10,074 B, `PIPE_PERC` 9,981 -> 9,983 B, `PIPE_BA`
    9,997 -> 9,982 B (each `+AV2ENC_RD_JOINT_P=1`).
+
+## Drift refresh: live on a drifting carrier (retracts "liveness unproven")
+
+A synthetic scene-cut carrier (60 frames; gradient 0-29, high-contrast pattern
+30-59) makes the trigger fire at the cut:
+
+```
+drift frame=31 anchor=54.9604 ref_psnr=27.0559 refresh=1
+```
+
+Feature on vs off: 14,822 B vs 14,495 B. All three options measured both ways:
+threshold 28/29 suppresses the refresh (13,483 B, down from 14,822 B) while
+0.2/1.5/27 leave it firing; budget 3250 gives 15,659 B; drift-qp 6 gives
+15,421 B. So `--video-drift-refresh-{threshold,budget,qp}` are all LIVE, and
+the earlier "inert on every carrier" was the input lacking drift, not the
+options being disabled.

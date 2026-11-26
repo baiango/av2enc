@@ -1,0 +1,19 @@
+# drift carrier /tmp/drift60.y4m: 60 frames 480x240 C420jpeg, frames 0-29 a smooth gradient,
+# frames 30-59 a high-contrast pattern (a synthetic scene cut).
+
+== per-frame drift trace (nightly + --video-drift-refresh-qp 3), the trigger frame:
+drift frame=31 slot=0 anchor=54.9604 ref_psnr=27.0559 spent=0 refresh=1
+
+== feature on vs off:
+   drift-qp 0 (no refresh)  14495 B ad1c7c31b7ee3e40918b82a5121602a6
+   drift-qp 3 (refresh)     14822 B 307199a60c3f188d6c8614d9738fffcf
+
+== the three options against the firing baseline (14822 B / 307199a6):
+   th0.2:    14822 B 307199a60c3f188d6c8614d9738fffcf
+   th1.5:    14822 B 307199a60c3f188d6c8614d9738fffcf
+   th27:    14822 B 307199a60c3f188d6c8614d9738fffcf
+   th28:    13483 B c2c7d53b5945f8c05fc7de0a1a913b9b
+   th29:    13483 B c2c7d53b5945f8c05fc7de0a1a913b9b
+   bud1:    14822 B 307199a60c3f188d6c8614d9738fffcf
+   bud3250:    15659 B d2b43bc61c936a6ea78d85d974c9ef87
+   qp6:    15421 B 72be25904d496a9302c1ee0c29ff0d25
