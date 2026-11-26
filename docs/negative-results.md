@@ -1755,3 +1755,36 @@ turns +0.2188 into **-0.0180**.
 | CONFIRMED - negative | Lambda scale is the model bug | Across 0.03 / 0.125 / 0.6 every operating point is behind scalar at matched bytes |
 | CONFIRMED (method) | Never rank a point outside the calibration range | The clamp silently produced a large false positive; the curve must bracket every query point, and the ranker must refuse out-of-range queries instead of clamping |
 | OPEN | `local_dist` | With the candidate set verified complete, the rate constants excluded (+0.0013) and lambda excluded, the distortion model is the last remaining candidate: it prices `(original - quant*half_step)^2` in the transform domain, with no rounding, no clipping, and assuming an orthonormal transform |
+
+## RDOQ bug: hard-gated to luma INTER residual, so intra never gets it
+
+`--video-rdoq-off` being byte-identical on the still is explained by a single
+line in `compute_tx` (video_frame_internal.h:1187):
+
+```cpp
+// Opt-in coefficient-level RDOQ (--video-rdoq).  Luma inter residual only,
+const bool use_rdoq = allow_rdoq && plane == 0 && is_inter && ...
+```
+
+RDOQ **cannot fire on a key/intra frame at all**. Combined with the intra call
+sites hard-coding `/*allow_rdoq=*/false`, `--video-rdoq` was inert on intra twice
+over.
+
+Two fixes were applied and measured:
+
+1. intra luma call site: `allow_rdoq = options_.enable_rdoq` (its `rdoq_qctx`
+   and `rdoq_sse_scale` were already plumbed);
+2. gate: dropped `is_inter` so the intra path can reach the model.
+
+**Result: still byte-identical** (25,168 B, same md5 with and without
+`--video-rdoq-off`), so at least one further condition prevents engagement --
+either the key frame's *final* luma plan comes from a different call site (the
+one at 3347 builds a `trial_plan` only), or `rdoq::Model::init` fails and the
+scalar path is kept silently.
+
+| Status | Meaning |
+|---|---|
+| CONFIRMED (bug) | `use_rdoq` requires `is_inter` | RDOQ is structurally unavailable to intra frames; this is why the flag is inert there |
+| CONFIRMED (fix 1, insufficient) | The intra call site passed `allow_rdoq=false` | Fixed, no effect on its own |
+| CONFIRMED (fix 2, insufficient) | The `is_inter` gate | Removed, no effect on its own |
+| OPEN (blocker) | Something after both fixes stops engagement | Needs `rdoq::Model::init` failure logging, or tracing which call site supplies the final key-frame plan. Both edits were reverted pending that, since engaging RDOQ on intra would change every intra stream and the pins were not re-verified |
