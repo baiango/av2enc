@@ -78,6 +78,16 @@ exact but +0.054 and stay off.
 rav1e **53.0**. The 720p gap is content-dependent; see
 `bench/space8k_720p/README.md`.
 
+**720p still (1280×720, one frame, 25 kB budget):** av2enc **K 47.59**
+interpolated to 25,000 B (`--nightly-b --video-gdf --video-uv-qp-offset -23`
+with `AV2ENC_RD_DRIVER_MIN=16 AV2ENC_RD_DRIVER_LAMBDA=256`, bracket 24,695 B
+QP186 / 25,454 B QP185, best actual stream 24,695 B at K 47.38, `dav2d`-clean).
+`--fast-decode` is 45.19 on the same budget, and plain `--nightly-b` 31.57 —
+the gdf/uv-offset/driver-floor levers are what pay at this budget. Against it,
+the recorded reference (not re-run) is AVM **51.06** at the same 25,000 B, and
+K 52 needs the cap lifted (52.63 at 35,123 B). Measured 2026-11-27 on
+`build-release`; see `docs/k52-at-25k.md` and `docs/k52-720p-reached.md`.
+
 ## Quick start
 
 **Just want to see it run?** This generates its own input, needs no test media,
