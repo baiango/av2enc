@@ -355,3 +355,26 @@ The six OUT-OF-SCOPE rows are environment limits only: `--video-gpu`,
 `--still-gpu`, `--vram-cap` (CUDA-only build), `--gpu-plan` (a dry run that
 cannot be combined with an encode), `--recon` (needs a 10-bit core this build
 refuses), `--svc-inter-layer` (not a conforming AV2 v1.0.0 feature).
+
+## The six OUT-OF-SCOPE rows, executed (`final8`)
+
+| row | how it was executed | verdict |
+|---|---|---|
+| `--recon` | `--still --tiles 2x2 --no-deblock --recon out.y4m` -- the multi-tile still path its help names | **INERT**: recon Y4M written (172,845 B), stream 4,210 B = baseline |
+| `--vram-cap` | `--vram-cap 1024` on the video carrier | **INERT**: 18,845 B = baseline (the build also prints "no effect in a CPU-only build") |
+| `--gpu-plan` | `av2enc <clip> --gpu-plan 1` with no `--video`/`-o` | **OWN-WRITER-OK**: prints a host tile plan ("4x2 (8 tiles), sb 64x64"), writes no stream |
+| `--video-gpu` | -- | blocked: "requires a CUDA build; this is a CPU-only reference build" |
+| `--still-gpu` | -- | blocked: same message |
+| `--svc-inter-layer` | valid 2-layer carrier `x0=240x120,x1=480x240` | refused: "not a conforming AV2 v1.0.0 feature: §6.8.2" |
+
+`--recon` is the notable one: it never needed a 10-bit core at all (the 10-bit
+message was about the *input* coloursapce); it needs the **multi-tile still**
+path, and there it writes its dump and leaves the stream byte-identical.
+
+### Final totals
+
+**524 rows -- 235 EFFECTIVE, 283 INERT, 3 OWN-WRITER-OK, 3 OUT-OF-SCOPE, 0 REJECTED.**
+
+The three remaining rows are blocked by the build or the format, not by arming:
+two CUDA-only switches on a CPU reference build, and one option for a syntax the
+AV2 v1.0.0 spec does not define.

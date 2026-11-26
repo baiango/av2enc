@@ -14,7 +14,7 @@ name	surface	verdict	evidence
 --effort-plan	switch	INERT	resolve3(still)
 --fast-decode	switch	EFFECTIVE	per-mode(video+still)
 --frames	option	INERT	resolve(other)
---gpu-plan	option	OUT-OF-SCOPE	host-planning dry run; cannot combine with an encode
+--gpu-plan	option	OWN-WRITER-OK	final8(dry run: prints a 4x2 tile plan, writes no stream)
 --lossless	switch	OWN-WRITER-OK	still+table
 --lossless-fsc	switch	EFFECTIVE	resolve(lossless)
 --metadata-banding	switch	EFFECTIVE	flip(nightly)
@@ -34,7 +34,7 @@ name	surface	verdict	evidence
 --p-frames	option	INERT	per-mode(args)
 --qp	option	EFFECTIVE	argsweep(2 values)
 --rc	option	EFFECTIVE	explicit-table(crf, no --qp)
---recon	option	OUT-OF-SCOPE	needs a 10-bit core this build does not accept
+--recon	option	INERT	final8(still --tiles 2x2 --no-deblock: recon 172,845 B written, stream 4,210 B = base)
 --spatial-layers	option	INERT	resolve4(svc x0=240x120,x1=480x240)
 --still	switch	INERT	still+table/still
 --still-ccso	switch	EFFECTIVE	still+table/still
@@ -59,7 +59,7 @@ name	surface	verdict	evidence
 --still-ext-partitions	switch	EFFECTIVE	still+table/still
 --still-full-intra	switch	EFFECTIVE	still+table/still
 --still-gdf	switch	EFFECTIVE	still+table/still
---still-gpu	switch	OUT-OF-SCOPE	CUDA-only build
+--still-gpu	switch	OUT-OF-SCOPE	'requires a CUDA build; this is a CPU-only reference build'
 --still-grain	switch	EFFECTIVE	still+table/still
 --still-grain-adaptive	switch	EFFECTIVE	hand-batch
 --still-ibc	switch	EFFECTIVE	still+table/still
@@ -95,7 +95,7 @@ name	surface	verdict	evidence
 --still-uv-full	switch	EFFECTIVE	still+table/still
 --still-wiener	switch	EFFECTIVE	still+table/still
 --svc-embedded	option	EFFECTIVE	resolve2(svc carrier, value 2)
---svc-inter-layer	switch	OUT-OF-SCOPE	not a conforming AV2 v1.0.0 feature (§6.8.2)
+--svc-inter-layer	switch	OUT-OF-SCOPE	'not a conforming AV2 v1.0.0 feature: §6.8.2'
 --svc-layers	option	EFFECTIVE	resolve(svc, x0=480x240)
 --svc-lcr-id	option	INERT	resolve2(svc carrier, value 1)
 --svc-temporal	option	INERT	resolve2(svc carrier, value 1)
@@ -157,7 +157,7 @@ name	surface	verdict	evidence
 --video-gdf	switch	EFFECTIVE	flip(nightly)
 --video-gme	switch	EFFECTIVE	comp3
 --video-gops	option	INERT	per-mode(args)
---video-gpu	switch	OUT-OF-SCOPE	CUDA-only build
+--video-gpu	switch	OUT-OF-SCOPE	'requires a CUDA build; this is a CPU-only reference build'
 --video-grain	switch	EFFECTIVE	flip(nightly)
 --video-head-tx	switch	EFFECTIVE	comp3 (+companion)
 --video-ibc	switch	EFFECTIVE	comp3
@@ -257,7 +257,7 @@ name	surface	verdict	evidence
 --video-warp	switch	EFFECTIVE	comp3
 --video-wiener	switch	EFFECTIVE	flip(nightly)
 --video-y-dc-delta-q	option	EFFECTIVE	resolve3(plain video) 19,890 B
---vram-cap	option	OUT-OF-SCOPE	no effect in a CPU-only build
+--vram-cap	option	INERT	final8(1024, 18,845 B = base; build prints 'no effect in a CPU-only build')
 ALPHA_CUDA_VERBOSE	env	INERT	env(=1)
 ALPHA_PRINT_GOLDENS	env	INERT	env(=1)
 AV2ENC_ALLOW_IDTX_SUB8	env	INERT	env(=1)
