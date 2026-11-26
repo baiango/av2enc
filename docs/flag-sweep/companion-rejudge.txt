@@ -1,0 +1,144 @@
+STILL-REJECTED --alllayers (+--svc- --svc-layers ) :: av2enc: unknown option '--svc-'
+STILL-REJECTED --metadata-frame-hash (+--video ) :: av2enc: error: --metadata-frame-hash is wired into the still/basic wri
+STILL-REJECTED --adaptive-cdf; (+--adaptive-cdf ) :: av2enc: unknown option '--adaptive-cdf;'
+STILL-REJECTED --effort-plan (+--effort --cpu-used ) :: av2enc: --effort must be an integer in [10, 10000] (log scale)
+STILL-REJECTED --lossless (+--video --still ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --lossless-fsc (+--lossless --video-lossless ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-ccso-bands :: av2enc: missing value after '--still-ccso-bands'
+STILL-REJECTED --no-deblock (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --nightly-b (+--video-edge-inter --video-tlayers ) :: av2enc: --video-tlayers must be a positive integer
+STILL-REJECTED --still-ccso (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --no-cfl (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-ccso-edge (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-cctx (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-cdef-strengths :: av2enc: missing value after '--still-cdef-strengths'
+STILL-REJECTED --still-cfl-explicit (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-cdef (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-cdef-on-skip-txfm (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-chroma-lr (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-dc (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-content-interpretation (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-dc-ac-delta-q (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-deblock (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-ddt (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-full-intra (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-delta-q-res :: av2enc: missing value after '--still-delta-q-res'
+STILL-REJECTED --still-delta-q (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-gdf (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-dip (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-ext-partitions (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-ibp (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-grain (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-gpu) (+--still-gpu ) :: av2enc: unknown option '--still-gpu)'
+STILL-REJECTED --still-grain-adaptive (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-ibc (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-idtx (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-ist (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-ist-scale :: av2enc: --still-ist-scale requires a positive number
+STILL-REJECTED --still-mrl (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-mhccp (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-pc-wiener (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-palette (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-rdoq (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-rdo-intra (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-qm-level :: av2enc: missing value after '--still-qm-level'
+NO-COMPANION --still-rdo-scale :: av2enc: --still-rdo-scale requires a positive number
+STILL-REJECTED --still-per-segment-q (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-rdoq-scale :: av2enc: --still-rdoq-scale requires a positive number
+STILL-REJECTED --still-qm (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-seg-delta :: av2enc: missing value after '--still-seg-delta'
+STILL-REJECTED --still-sb128 (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-sdp (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-sb256 (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-segmentation (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-sub8 (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-tcq-scale :: av2enc: --still-tcq-scale requires a positive number
+STILL-REJECTED --still-tcq (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-single (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-tx-type (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-tx-partition (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still-uv-full (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+NO-COMPANION --still-tx-type-scale :: av2enc: --still-tx-type-scale requires a positive number
+STILL-REJECTED --still-wiener (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --still; (+--still ) :: av2enc: unknown option '--still;'
+STILL-REJECTED --still-user-qm (+--still --still-gpu ) :: av2enc: --video cannot be combined with --still, --still-gpu or --loss
+STILL-REJECTED --svc-inter-layer (+--video --frames ) :: av2enc: --frames must be a positive integer
+STILL-REJECTED --video): (+--video ) :: av2enc: unknown option '--video):'
+NO-COMPANION --video-bru :: av2enc: --video-bru is not decoder-gated: the pinned dav2d does not pa
+STILL-REJECTED --video-bawp): (+--video-bawp ) :: av2enc: unknown option '--video-bawp):'
+NO-COMPANION --video-ccso-bands :: av2enc: missing value after '--video-ccso-bands'
+STILL-REJECTED --video-compound (+--video-refs ) :: av2enc: --video-refs must be an integer in [1, 7]
+EFFECTIVE --video-adaptive-mvd
+EFFECTIVE --video-aq
+STILL-REJECTED --video-compound-near-near (+--video-compound ) :: av2enc: --video-compound-near-near is gated on the two-reference B-fra
+STILL-REJECTED --video-compound-diffwtd (+--video-compound-wedge --video-compound ) :: av2enc: --video-compound needs --video-refs 2 (the (0,1) pair is impli
+STILL-REJECTED --video-compound-wedge (+--video-compound-diffwtd --video-compound ) :: av2enc: --video-compound needs --video-refs 2 (the (0,1) pair is impli
+EFFECTIVE --video-decoder-model
+EFFECTIVE --video-delta-q
+EFFECTIVE --video-compound-interintra
+STILL-REJECTED --video-cwp-weighted (+--video-imp-mask --video-compound ) :: av2enc: --video-cwp-weighted/--video-imp-mask need --video-compound --
+STILL-REJECTED --video-drl-reorder-always) (+--video-drl-reorder-always ) :: av2enc: unknown option '--video-drl-reorder-always)'
+STILL-REJECTED --video-force-integer-mv (+--video-scc-force ) :: av2enc: --video-scc-force needs one of --video-palette/--video-ibc/--v
+STILL-REJECTED --video-force-single) (+--video-force-single ) :: av2enc: unknown option '--video-force-single)'
+EFFECTIVE --video-flex-mvres
+EFFECTIVE+COMP --video-head-tx (+--video-tail-tx --video-eff-perc )
+STILL-REJECTED --video-gpu (+--cpu-threads ) :: av2enc: --cpu-threads must be an integer in [0, 256] (0 = auto, 1 = se
+STILL-REJECTED --video-idtx-1d (+--strict --video-idtx ) :: av2enc: unknown option '--strict'
+STILL-REJECTED --video-imp-mask (+--video-cwp-weighted --video-compound ) :: av2enc: --video-cwp-weighted/--video-imp-mask need --video-compound --
+EFFECTIVE --video-ibc
+EFFECTIVE --video-gme
+EFFECTIVE --video-implicit-ref-map
+NO-COMPANION --video-key-qp-offset :: av2enc: missing value after '--video-key-qp-offset'
+STILL-REJECTED --video-lossless (+--qp --qp ) :: av2enc: --qp must be an integer in [0, 303] (255 is MaxQ at 8-bit, 303
+STILL-REJECTED --video-lossless-b (+--video-lossless --qp ) :: av2enc: --qp must be an integer in [0, 303] (255 is MaxQ at 8-bit, 303
+EFFECTIVE --video-mfh
+EFFECTIVE --video-long-term
+EFFECTIVE --video-mhccp
+EFFECTIVE --video-mv-traj
+NO-COMPANION --video-mv-precision :: av2enc: missing value after '--video-mv-precision'
+/private/var/folders/yr/8_681g0d25nb4rgrqt_1zg6c0000gn/T/opencode/comp3.sh: line 32: /private/var/folders/yr/8_681g0d25nb4rgrqt_1zg6c0000gn/T/opencode/comp3/videopalette/videoibc/videomorph_c.log: No such file or directory
+head: /private/var/folders/yr/8_681g0d25nb4rgrqt_1zg6c0000gn/T/opencode/comp3/videopalette/videoibc/videomorph_c.log: No such file or directory
+STILL-REJECTED --video-palette/--video-ibc/--video-morph (+--video-palette --video-ibc ) :: 
+STILL-REJECTED --video-mvd-sign-derive (+--video-mv-precision ) :: av2enc: --video-mv-precision must be eighth, quarter or half
+EFFECTIVE --video-multi-sequence
+EFFECTIVE --video-morph
+NO-COMPANION --video-olk :: av2enc: error: --video-olk requires exactly 4 input frames (CLK, OLK, 
+STILL-REJECTED --video-opfl (+--video-refine-mv --video-compound-near-near ) :: av2enc: --video-compound-near-near needs --video-compound
+STILL-REJECTED --video-qm (+--qp ) :: av2enc: --qp must be an integer in [0, 303] (255 is MaxQ at 8-bit, 303
+STILL-REJECTED --video-qm). (+--video-qm ) :: av2enc: unknown option '--video-qm).'
+EFFECTIVE --video-palette
+EFFECTIVE --video-per-segment-q
+NO-COMPANION --video-ras :: av2enc: error: --video-ras requires exactly 3 input frames (CLK, SWITC
+NO-COMPANION --video-rdoq-scale :: av2enc: missing value after '--video-rdoq-scale'
+EFFECTIVE --video-same-ref-compound
+STILL-REJECTED --video-rdoq. (+--video-rdoq ) :: av2enc: unknown option '--video-rdoq.'
+EFFECTIVE --video-ref-mvs
+EFFECTIVE --video-refmvbank
+STILL-REJECTED --video-refine-mv (+--video-opfl --video-compound-near-near ) :: av2enc: --video-compound-near-near needs --video-compound
+EFFECTIVE --video-sb128
+EFFECTIVE --video-sb256
+EFFECTIVE --video-ref-mvs-stress
+EFFECTIVE+COMP --video-scc-force (+--video-palette --video-ibc )
+EFFECTIVE --video-sdp
+EFFECTIVE --video-short-refresh
+EFFECTIVE --video-sef
+EFFECTIVE --video-seg-skip
+EFFECTIVE --video-segmentation
+EFFECTIVE --video-seg-globalmv
+EFFECTIVE --video-seg-temporal
+NO-COMPANION --video-switch :: av2enc: error: --video-switch requires exactly 2 input frames (CLK, SW
+NO-COMPANION --video-tier :: av2enc: missing value after '--video-tier'
+EFFECTIVE+COMP --video-seq-seg-info-frozen (+--video-seq-seg-info --video-segmentation )
+EFFECTIVE+COMP --video-seq-seg-info (+--video-segmentation --video-per-segment-q )
+EFFECTIVE+COMP --video-tail-tx (+--video-head-tx --video-eff-perc )
+EFFECTIVE --video-tcq
+EFFECTIVE --video-tip
+STILL-REJECTED --video-tip-block-ref (+--video-tip --video-ref-mvs ) :: av2enc: error: --video-tip supports 3..8 input frames (got 12)
+STILL-REJECTED --video-tip-no-hole-fill (+--video-tip ) :: av2enc: error: --video-tip supports 3..8 input frames (got 12)
+STILL-REJECTED --video-tlayer-anchor-residual (+--video-tlayers --video-gops ) :: av2enc: --video-tlayers must be a positive integer
+STILL-REJECTED --video-tlayers) (+--video-tlayers ) :: av2enc: --video-tlayers must be a positive integer
+EFFECTIVE --video-timing
+NO-COMPANION --video-tlayers :: av2enc: missing value after '--video-tlayers'
+STILL-REJECTED --video-tx-search) (+--video-tx-search ) :: av2enc: unknown option '--video-tx-search)'
+STILL-REJECTED --video-user-qm (+--video-qm --qp ) :: av2enc: --qp must be an integer in [0, 303] (255 is MaxQ at 8-bit, 303
+EFFECTIVE --video-warp

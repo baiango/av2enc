@@ -85,3 +85,36 @@ scraper, or flags whose feature does not apply to a 12-frame 240p video run.
 retracted with evidence: it reaches `qp_lambda_scale`, moves `leaf_rd_lambda`
 118.4509 -> 115.6791, and changes the stream once `--video-tx-search` consumes it
 (88,606 -> 88,633 B). It is a modifier with opt-in consumers, not a dead switch.
+
+## Companion-gated flags: 39 judged, 83 still blocked on value-bearing companions
+
+`comp3` (full-length message capture, unique per-flag output paths) over all 142
+nightly-rejected flags:
+
+| class | count |
+|---|---:|
+| EFFECTIVE alone on the plain baseline | 34 |
+| **EFFECTIVE with the companions its message names** | **5** |
+| no companion named in the message | 20 |
+| still rejected | 83 |
+
+The five newly judged: `--video-head-tx`, `--video-tail-tx`, `--video-scc-force`,
+`--video-seq-seg-info`, `--video-seq-seg-info-frozen`.
+
+The 83 are blocked for a reason now visible: many companions carry a **value**
+(`--video-refs 1`, `--effort <int>`), and my extractor takes flag names only, so
+invocations like `--video-refs` alone fail with "missing value".
+
+## QP ladder for the four shortlisted options (QP100 / QP220)
+
+| option | QP100 | QP220 |
+|---|---|---|
+| `--video-min-block 32` | EFFECTIVE (102,887 B) | INERT (coarse tree already) |
+| `--video-me-range 32` | EFFECTIVE | EFFECTIVE (2,215 B) |
+| `--video-max-depth 8` | INERT | INERT |
+| `--video-key-qp-offset 20` | EFFECTIVE (91,089 B) | EFFECTIVE (2,147 B) |
+
+`--video-max-depth` is live, just non-binding at 8: depth 0 gives 63,027 B and
+depth 2 gives 76,851 B against the 90,738 B baseline. So none of the four is a
+silent disable -- `min-block 32` is inert only at the high QP where the tree is
+already coarse, and `max-depth 8` exceeds the tree's natural depth.
