@@ -1413,3 +1413,52 @@ warning against reading the sdp experiment on that base.
 |---|---|---|---|
 | CONFIRMED (defect) | Report an encode as failed but leave a file behind | `--video-sdp` errors out and still writes a **32-byte IVF header**. Anything that globs for `*.ivf` will pick it up and score garbage | Delete the output on the error path, as `tools/pipeline_best.sh` does; never treat a 32-byte stream as a result |
 | CONFIRMED | Assume SDP is just "another switch" | It composes with neither partition-RD nor intra-full, and one of those has no negative flag -- it is unreachable from `--nightly` | Measure it from a hand-built flag set, or add `--video-intra-full-off` first |
+
+## Where the intra deficit lives, and why more rate cannot fix it
+
+Per 8x8 luma block, bucketed by source variance, our still (25,168 B) against
+AVM (24,875 B), both decoded and compared to the source:
+
+| bucket | ours | AVM | short by |
+|---|---:|---:|---:|
+| flat | 28.46 dB | 29.51 | 0.74 |
+| texture | 22.83 | 24.18 | 0.89 |
+| detail | 22.03 | 23.69 | 1.13 |
+| edge (top 1%) | 22.65 | 24.47 | 1.37 |
+
+The deficit **grows monotonically with content complexity**; the top 10 % of
+blocks (mean variance 1125 vs 543 for the image) carry **39.4 %** of the total
+SSE gap.
+
+**Rate does not buy it back.** Re-encoding at QP208 (29,598 B, +17.6 % rate):
+
+| bucket | flat | texture | detail | edge |
+|---|---:|---:|---:|---:|
+| gain from +17.6 % rate | +0.31 | +0.45 | +0.53 | +0.45 |
+
+So closing a 1.03 dB gap at 0.44 dB per 17.6 % rate needs roughly **+41 % rate**.
+The problem is bits-per-dB, not budget.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Attack the intra gap with more bits or a coarser/finer QP split | +17.6 % rate buys 0.44 dB where 1.03 dB is needed: ~41 % rate to break even | Improve coding efficiency; the deficit grows with coefficient density, so coil/significance coding is the first target |
+| CONFIRMED | Prioritise prediction work | Flat blocks (where DC/DIP live) show the *smallest* gap (0.74 dB) and DIP is worth +0.012; MRL is negative | Prediction is not where the 1 dB is |
+
+### The instrument this needs, and why it is not a one-liner
+
+To separate "allocated badly" from "coded badly" per bucket needs per-leaf
+actual bits split by group, on the intra path. That path is currently blind in
+two ways:
+
+* the writer's rate report is gated on `plan_.inter_frame`, so key-frame leaves
+  are never recorded;
+* the intra writer has **no group capture points** -- `rate_bit3/4/5` are set
+  only inside the inter branch, so relaxing the gate alone would report zeros
+  (the same "check passes, measures nothing" failure as the drift-refresh
+  counter and the 32-byte sdp stream found today).
+
+The scoped change is: capture the leaf start/end around `write_intra_leaf`,
+relax the gate, record `node.is_inter` instead of forcing 1, add an intra scope
+to the report, and fill `rate_diag` for intra leaves in the decision. Until that
+exists, "our coefficient contexts are worse than AVM's" is a hypothesis, not a
+measurement.
