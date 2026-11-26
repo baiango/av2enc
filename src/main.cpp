@@ -19,6 +19,7 @@
 #include "core/io/y4m.h"
 #include "pipeline/video/video_frame.h"
 #include "pipeline/video/video_arnr.h"
+#include "pipeline/video/video_tpl.h"
 #include "codec/inter/bframes/bframes.h"
 #include "codec/inter/tlayers/tlayers.h"
 #include "codec/rate/rc/hrd/hrd.h"
@@ -589,6 +590,19 @@ bool plan_video_rate_control(
     complexity[i].intra_fraction = ref < 0 ? 1.0 : 0.0;
   }
 
+  // AV2ENC_TPL (default off): replace the motion-free residual proxy above with
+  // a motion-compensated look-ahead pass.  Only the estimate changes — the
+  // allocation policy, the bitrate model and the bitstream are untouched.
+  if (av2enc::video::tpl::enabled()) {
+    std::vector<int> refs(inputs.size(), -1);
+    if (has_primary_ref) {
+      refs.assign(schedule.primary_ref.begin(), schedule.primary_ref.end());
+    }
+    av2enc::video::tpl::compute(
+        std::span<const av2enc::video::VideoInputFrame>(inputs),
+        std::span<const int>(refs), &complexity);
+  }
+
   av2enc::video::post::VideoRcConfig rc_config;
   rc_config.depth = av2enc::fmt::BitDepth::k8;
   rc_config.policy.min_base_q_idx = av2enc::rc::kMinQIndex;
@@ -684,6 +698,24 @@ bool plan_video_frame_qp(const Options& options,
                          std::span<const av2enc::video::VideoInputFrame> inputs,
                          std::vector<std::uint8_t>* frame_qp,
                          std::string& error) {
+  // AV2ENC_TPL (default off): content-derived per-frame QP plan, allocated at
+  // the same estimated rate as a flat --qp stream.  This replaces the
+  // hand-tuned --video-key-qp-offset constant, which does not transfer between
+  // clips (+0.22 JOD on the orbital plate, -0.10 on loral).
+  if (av2enc::video::tpl::enabled()) {
+    if (inputs.empty()) {
+      error = "the TPL plan needs at least one frame";
+      return false;
+    }
+    std::vector<av2enc::rc::FrameComplexity> tpl_complexity;
+    av2enc::video::tpl::compute(
+        std::span<const av2enc::video::VideoInputFrame>(inputs),
+        std::span<const int>(), &tpl_complexity);
+    av2enc::video::tpl::plan_qp(
+        std::span<const av2enc::rc::FrameComplexity>(tpl_complexity),
+        static_cast<int>(options.qp), av2enc::video::tpl::gain(), frame_qp);
+    return true;
+  }
   frame_qp->clear();
   if (!options.video_key_qp_offset_given) return true;
   if (inputs.empty()) {

@@ -697,6 +697,23 @@ moderate settings), so this is a true null rather than a broken no-op. Note the
 lookahead it needs already exists: `run_video_encode` holds the entire clip in
 memory before coding, so the filter sees past *and* future frames.
 
+## TPL look-ahead complexity model (`src/pipeline/video/video_tpl.h`)
+
+Built 2026-11-26. Replaces the rate controller's **motion-free** residual proxy
+(`complexity_from_u8_planes(frame, reference)`, a collocated SAD) with a
+motion-compensated look-ahead pass: per-16x16 integer search against the frame's
+actual reference, MC residual MAD/MSE, and a temporal propagation weight
+(pictures with more dependents are priced as 1 + dependents times as
+expensive). `plan_qp` then allocates per-frame QP at the same *estimated* rate
+as the flat stream, so a win cannot come from spending more bits.
+
+Gate-off is byte-identical on all four pins.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| **OPEN — allocator not calibrated** | Treat the current `AV2ENC_TPL` plan as a win, or compare it to flat QP without matching rate | On `space8k_1440x720_60f` (12 frames, QP202 `--nightly`): flat **16,069 B / 6.8406 JOD / 32.03 dB**, TPL **10,879 B / 5.4753 JOD / 29.98 dB**. The plan printed `budget=11896 planned=12218`, so the integer model under-estimated the real cost by ~30 % and the allocator over-coarsened: this is a large rate drop, not a matched-rate loss | Calibrate `estimate_frame_bits_model` against a real pass-1 payload before judging TPL (the VBR path already calibrates via `pass1_payload_bits`; the CQP path does not) |
+| CONFIRMED | Expect the motion-free proxy to be a usable TPL base | On this clip most 16x16 blocks are predictable from a *displaced* neighbour in the flat dark field (collocated SAD 0 is reachable by sliding inside a uniform region), so MC residual MAD is ~0 for most P frames while the collocated proxy sees ~11 average error. The two models rank frames very differently, which is the motivation for TPL — but it also means the clip's complexity is dominated by a small moving region, and a per-frame scalar cannot represent that | Per-superblock, not per-frame, allocation is the shape this content needs |
+
 ## Flat-area 1-px checkerboard on the 720p still at 25 kB
 
 Measured 2026-11-25 on `src720_1f.y4m`, lone key, `AV2ENC_RD_DRIVER_MIN=16
