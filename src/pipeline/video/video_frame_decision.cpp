@@ -858,6 +858,40 @@ bool InterFrameEncoder::decide(std::string& error) {
 #if defined(AV2ENC_VIDEO_EXT_PARTITIONS)
     joint_p = joint_p && !options_.ext_partitions;
 #endif
+    if (std::getenv("AV2ENC_JOINT_TRACE") != nullptr) {
+      std::fprintf(stderr,
+                   "joint-trace: result=%d keyframe=%d off=%d armed=%d sdp=%d "
+                   "force_single=%d palette=%d ibc=%d qp_tools=%d tcq=%d "
+                   "tip=%d tile_w=%d tile_h=%d probe_ready=%d\n",
+                   joint_p ? 1 : 0, keyframe_ ? 1 : 0,
+                   joint_plan_off_ ? 1 : 0,
+                   joint_plan::armed(arming_ordinal()) ? 1 : 0,
+                   options_.enable_sdp ? 1 : 0,
+                   options_.force_single_block ? 1 : 0,
+                   palette_enabled_ ? 1 : 0, ibc_enabled_ ? 1 : 0,
+                   qp_tools_active() ? 1 : 0, options_.enable_tcq ? 1 : 0,
+                   options_.tip_block_ref ? 1 : 0, tile_w_, tile_h_,
+                   pipe_probe_ready_ ? 1 : 0);
+    }
+    // Flag-sweep finding: --nightly and --nightly-b both set
+    // AV2ENC_RD_JOINT_P=1 and its own comment credits it with +0.68 K, but on
+    // the default path it never fires: the feature exclusions all pass while
+    // `armed` and `probe_ready` are false, and nothing says so.  Warn once
+    // instead of silently ignoring the preset's intent.
+    if (!joint_p && !keyframe_ && !joint_plan_off_) {
+      const char* joint_env = std::getenv("AV2ENC_RD_JOINT_P");
+      const bool requested = joint_env != nullptr && joint_env[0] != '0';
+      static bool joint_warned = false;
+      if (requested && !joint_warned) {
+        joint_warned = true;
+        std::fprintf(stderr,
+                     "av2enc: warning: AV2ENC_RD_JOINT_P is set but the joint "
+                     "solve cannot fire here (armed=%d probe_ready=%d); the "
+                     "preset is not doing what this gate claims.\n",
+                     joint_plan::armed(arming_ordinal()) ? 1 : 0,
+                     pipe_probe_ready_ ? 1 : 0);
+      }
+    }
     // The exclusion used to be `!qp_tools_active()`, which switched the whole
     // key driver off for delta-Q/AQ as well as segmentation and silently
     // replaced the measured walk with the default one.  Measured on the 720p
