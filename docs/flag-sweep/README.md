@@ -242,3 +242,69 @@ So the final coverage statement is: every boolean switch, every argument option,
 every env gate at `=1` plus the numeric ones value-swept, and every formerly
 rejected flag has now been executed in the mode it belongs to -- with exactly one
 silent disable found (`AV2ENC_RD_JOINT_P`, commit 4dbe3af0).
+
+## Scalar env gates value-swept at 0.5 and 4.0 (see SCALAR.md)
+
+The 21 gates read as a double (`env_positive`/`env_number`) cannot be judged at
+`=1` or `=2` -- for most of them 1.0 *is* the default. Swept at two non-default
+magnitudes:
+
+- on `--nightly`: all 21 inert, at both magnitudes;
+- on `--nightly-b` (the carrier the pins use): **9 of 21 EFFECTIVE**, including
+  `RD_DRIVER_LAMBDA` (26,504 -> 26,508 B at 0.5), `RD_ENGINE_CAL_BASE`,
+  `RD_KEY_TX_SCALE`, `RD_UVLAMBDA`, `RD_UVLEVEL_LAMBDA`, `RD_UVLEVEL_SCALE`.
+
+Three of them (`CAL_EOB`, `CAL_MAG`, `CAL_SIGN`) respond at only one of the two
+magnitudes -- a single-value sweep would have judged each of them at random.
+
+Inert and explained: `RD_ENGINE_{KEY,INTER,CHROMA}` are documented unwired sites
+(video_rd_engine.h:505-511); the 5 `PIPE_BUDGET_*` gates need the allocation
+armed, and arming it (`PIPE_BUDGET_SCALE=1000`) leaves the stream byte-identical,
+so they are unjudged rather than dead.
+
+## The 30 INERT booleans re-judged per mode: 22 are EFFECTIVE
+
+They had only been checked with the joint-off control, never against a matching
+baseline in their own mode. Re-run on the plain video baseline and the still
+baseline:
+
+| verdict | count |
+|---|---:|
+| **LIVE (EFFECTIVE in plain video or still)** | **22** |
+| inert in both modes | 8 |
+
+Including `--video-tx-search`, `--video-partition-rd`, `--video-leaf-rd`,
+`--video-cdef-rd`, `--video-ccso-rd`, `--video-deblock`, `--video-intra-full`,
+`--video-edge-inter`, `--video-inter-residual`, `--video-subpel-eighth`,
+`--fast-decode`, `--video-bawp`, `--video-cdef`, `--video-tile-flush-min` and
+`--adaptive-cdf` (still). They were inert under `--nightly` because
+**`--nightly` enables them**.
+
+The 8 inert in both are all explained: `--video` itself; `--video-trace` (a trace
+gate must not change the stream); `--video-drift-refresh` (documented `-qp 0`
+no-op); `--video-qp-lambda` (modifier with opt-in consumers, retracted earlier);
+and `--cdf-continuity`, `--video-edge-mask`, `--video-key-intra-txpart`,
+`--video-rdoq`, which are companion-gated -- and the last three were already
+judged EFFECTIVE with their companions (5,610 / 19,959 / 18,285 B).
+
+## Coverage denominator, corrected
+
+The boolean inventory contained 207 entries, but not 207 switches:
+
+- **6 duplicates**: `--adaptive-cdf;`, `--video-drl-reorder-always)`,
+  `--video-force-single)`, `--video-rdoq.`, `--video-tlayers)`,
+  `--video-tx-search)` -- each repeats a name already in the list (the scraper
+  appended `)`, `;` or `.`);
+- **3 non-names**: `--video):`, `--video-bawp):`, and
+  `--video-palette/--video-ibc/--video-morph` (three flags run together).
+
+So the real boolean surface is **198 distinct switches**, not 207. The argument
+inventory is clean: 65 distinct names, no punctuation, no duplicates.
+
+| surface | entries | distinct real |
+|---|---:|---:|
+| boolean CLI switches | 207 | **198** |
+| argument-taking options | 65 | **65** |
+| **CLI total** | 272 | **263** |
+| env gates (boolean-effect) | 232 | 232 |
+| env gates (scalar, value-swept) | 21 | 21 |

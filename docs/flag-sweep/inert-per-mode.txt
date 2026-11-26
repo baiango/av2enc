@@ -1,0 +1,40 @@
+A) armed baseline OK 26504 B 3eb12dbd13960422e2aee25f4f102946
+B) video baseline 18845 B de0fe01b07ee302cd29bbf3b2f8d7236
+B) still baseline 4198 B 5798ed59f6c56aac34127e43474d6a2a
+--- A: pipe-budget gates armed ---
+AV2ENC_PIPE_BUDGET_STRENGTH      0.5:INERT  4.0:INERT
+AV2ENC_PIPE_BUDGET_LUMA          0.5:INERT  4.0:INERT
+AV2ENC_PIPE_BUDGET_CHROMA        0.5:INERT  4.0:INERT
+AV2ENC_PIPE_BUDGET_GAMMA         0.5:INERT  4.0:INERT
+AV2ENC_PIPE_BUDGET_ACT_MAX       0.5:INERT  4.0:INERT
+--- B: the 30 formerly-INERT booleans, per mode ---
+LIVE        --avg-cdf                            video:EFFECTIVE still:REJECTED
+INERT-BOTH  --cdf-continuity                     video:REJECTED still:REJECTED
+LIVE        --adaptive-cdf                       video:REJECTED still:EFFECTIVE
+LIVE        --fast-decode                        video:EFFECTIVE still:REJECTED
+LIVE        --nightly                            video:EFFECTIVE still:REJECTED
+LIVE        --video-bawp                         video:EFFECTIVE still:REJECTED
+INERT-BOTH  --video                              video:INERT still:REJECTED
+LIVE        --video-ccso                         video:EFFECTIVE still:REJECTED
+LIVE        --video-bawp-carrier                 video:EFFECTIVE still:INERT
+LIVE        --video-ccso-header-rd               video:EFFECTIVE still:REJECTED
+LIVE        --video-cdef                         video:EFFECTIVE still:REJECTED
+LIVE        --video-cdef-rd                      video:EFFECTIVE still:REJECTED
+LIVE        --video-ccso-rd                      video:EFFECTIVE still:REJECTED
+LIVE        --video-deblock                      video:EFFECTIVE still:REJECTED
+INERT-BOTH  --video-drift-refresh                video:INERT still:REJECTED
+LIVE        --video-edge-inter                   video:EFFECTIVE still:REJECTED
+INERT-BOTH  --video-edge-mask                    video:REJECTED still:REJECTED
+LIVE        --video-inter-residual               video:EFFECTIVE still:REJECTED
+INERT-BOTH  --video-key-intra-txpart             video:REJECTED still:REJECTED
+LIVE        --video-intra-full                   video:EFFECTIVE still:REJECTED
+LIVE        --video-leaf-rd                      video:EFFECTIVE still:INERT
+LIVE        --video-partition-rd                 video:EFFECTIVE still:REJECTED
+INERT-BOTH  --video-qp-lambda                    video:INERT still:REJECTED
+INERT-BOTH  --video-rdoq                         video:REJECTED still:INERT
+LIVE        --video-ref-signal-compact           video:EFFECTIVE still:INERT
+LIVE        --video-tile-flush-min               video:EFFECTIVE still:REJECTED
+LIVE        --video-subpel-eighth                video:EFFECTIVE still:REJECTED
+LIVE        --video-tile-group-compact           video:EFFECTIVE still:INERT
+LIVE        --video-tx-search                    video:EFFECTIVE still:REJECTED
+INERT-BOTH  --video-trace                        video:INERT still:REJECTED
