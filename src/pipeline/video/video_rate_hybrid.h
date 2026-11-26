@@ -260,6 +260,12 @@ struct Sample {
 };
 
 void add(const Sample& sample);
+// Empirical coefficient entropy (AV2ENC_RATE_HYBRID_S_MEASURE): every coded
+// level up to EOB, so the writer can compare the ideal cost of the symbols it
+// must transmit against the bits it actually spends.  Any entropy coder is
+// bounded below by this, so the ratio is a lower bound on the coding slack.
+void note_level(std::int64_t v);
+void note_actual_residual(double bits);
 void count_fallback();
 void count_decision(const char* name);
 void print();

@@ -122,12 +122,44 @@ void print_group(const char* label, const char* value, const char* term,
                st.median, st.p90, st.bias);
 }
 
+// Empirical coefficient statistics, accumulated only when measuring.
+std::array<std::uint64_t, 258>& level_hist() {
+  static std::array<std::uint64_t, 258> h{};
+  return h;
+}
+std::uint64_t& level_symbols() {
+  static std::uint64_t n = 0;
+  return n;
+}
+std::uint64_t& level_nonzero() {
+  static std::uint64_t n = 0;
+  return n;
+}
+double& actual_residual_bits() {
+  static double b = 0.0;
+  return b;
+}
+
 }  // namespace
+
+void note_level(std::int64_t v) {
+  const std::uint64_t a = static_cast<std::uint64_t>(v < 0 ? -v : v);
+  const std::size_t idx = a < 257 ? static_cast<std::size_t>(a) : 257U;
+  ++level_hist()[idx];
+  ++level_symbols();
+  if (v != 0) ++level_nonzero();
+}
+
+void note_actual_residual(double bits) { actual_residual_bits() += bits; }
 
 void add(const Sample& sample) {
   Collector& c = collector();
   if (c.samples.size() >= 2000000) return;
   c.samples.push_back(sample);
+  // Coefficient bits this leaf actually spent, for the entropy comparison.
+  if (sample.is_inter && sample.skip == 0) {
+    actual_residual_bits() += static_cast<double>(sample.act_residual);
+  }
 }
 
 void init() {
@@ -160,6 +192,23 @@ void print() {
                syntax_enabled() ? 1 : 0, coeff_enabled() ? 1 : 0,
                c.samples.size(), c.fallbacks, c.decisions, c.skip_changed,
                c.intra_changed, c.candidate_changed);
+  if (level_symbols() > 0) {
+    const double n = static_cast<double>(level_symbols());
+    double h = 0.0;
+    for (std::uint64_t cnt : level_hist()) {
+      if (cnt == 0) continue;
+      const double p = static_cast<double>(cnt) / n;
+      h -= static_cast<double>(cnt) * std::log2(p);
+    }
+    h += static_cast<double>(level_nonzero());  // ~1 bit of sign per nonzero
+    const double act = actual_residual_bits();
+    std::fprintf(stderr,
+                 "coeff-entropy: symbols=%llu nonzero=%llu ideal_bits=%.1f "
+                 "actual_coeff_bits=%.1f ratio=%.3f\n",
+                 (unsigned long long)level_symbols(),
+                 (unsigned long long)level_nonzero(), h, act,
+                 act > 0.0 ? act / h : 0.0);
+  }
   if (c.samples.empty()) return;
 
   std::vector<const Sample*> inter;

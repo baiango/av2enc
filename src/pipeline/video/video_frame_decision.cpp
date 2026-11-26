@@ -5840,6 +5840,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
             for (int c2 = 0; c2 < plan.eob; ++c2) {
               const std::int32_t v =
                   plan.levels[scan[static_cast<std::size_t>(c2)]];
+              rate_hybrid::report::note_level(v);
               if (v != 0) {
                 nz_sum += 1.0f;
                 abs_sum += static_cast<float>(v < 0 ? -v : v);
@@ -5851,6 +5852,7 @@ bool InterFrameEncoder::encode_leaf(SbSink& sink, const PartitionNode& node, std
             eob_sum += static_cast<float>(part.eob);
             for (int c2 = 0; c2 < part.eob; ++c2) {
               const std::int32_t v = part.levels[static_cast<std::size_t>(c2)];
+              rate_hybrid::report::note_level(v);
               if (v != 0) {
                 nz_sum += 1.0f;
                 abs_sum += static_cast<float>(v < 0 ? -v : v);

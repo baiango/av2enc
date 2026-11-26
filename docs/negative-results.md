@@ -1549,3 +1549,35 @@ imply "fixing them closes the gap".
 |---|---|---|---|
 | PROVEN | Argue closure from the deficit's distribution | `Cap.share_does_not_bound_gain`: concentration does not bound achievable gain | Use the necessary condition: the coefficient path must save **29 % of its bits at equal distortion** (1 - 1/1.41, from the +41 %-rate equivalent) to close the cap alone |
 | NOT PROVABLE | Expect a non-constructive proof of closure | Sufficiency quantifies over mechanisms we do not have, and AVM is a black box | Build the better coefficient coder and measure whether it reaches 29 %; that certificate proves it *for that mechanism*, never that no other mechanism would also close it |
+
+## Coefficient-coding slack: measured, and it is bigger than the gap requires
+
+Added an empirical coefficient-entropy dump (`AV2ENC_RATE_HYBRID_S_MEASURE`,
+reported as `coeff-entropy:`): every coded level up to EOB plus ~1 bit of sign
+per nonzero, pooled into a magnitude histogram, compared against the bits the
+range coder actually spent on those leaves.
+
+| QP | symbols | ideal_bits (pooled) | actual_coeff_bits | actual / ideal |
+|---|---:|---:|---:|---:|
+| 198 | 6,592 | 6,301.7 | 9,054.0 | **1.437** |
+| 220 | 1,394 | 1,318.4 | 2,567.0 | **1.947** |
+
+**The bound is conservative in the direction that matters.** A pooled histogram
+ignores context, and conditioning can only reduce entropy, so the achievable
+ideal cost is at most the pooled figure -- therefore `actual / ideal_context >=
+actual / pooled`, i.e. the true slack is **at least 30 % (QP198) and 49 %
+(QP220)**.
+
+Against the requirement from `Cap.necessary_bit_reduction` (a coefficient fix
+must save **29 %** of the bits at equal distortion to close the cap alone):
+
+| Status | Meaning |
+|---|---|
+| CONFIRMED (permissive) | The measured slack (>=30 % at QP198, >=49 % at QP220) **exceeds** the 29 % needed, so a better coefficient coder *can in principle* close the cap. The hypothesis survives a bound that could have refuted it |
+| NOT ESTABLISHED | That it *does*: this is inter-leaf data, and it says the room exists, not that a specific design reaches it. The proof form is still constructive -- build the coder and measure |
+| OPEN | The same dump on the intra path, which needs the leaf capture instrument (the writer's intra branch has no group capture points) |
+
+Practical reading: our coefficient coding leaves roughly a third of its bits on
+the table at QP198 and half at QP220 versus a context-free entropy bound. That is
+the largest measured inefficiency found anywhere in this project, and it is now a
+number rather than a hypothesis.
