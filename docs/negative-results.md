@@ -1276,3 +1276,36 @@ optimality proof alone.
 |---|---|---|---|
 | PROVEN | Claim "our tools are suboptimal" and stop | That is not a statement about anything checkable; the certificate does not exist | Claim the stronger, checkable thing: our search/pricing fails to reach its own optimum, certified by our own re-encode |
 | OPEN (needs one number) | Treat the matched-bytes 4x4 loss as a strict equal-lambda refutation | The theorem compares costs at the same lambda; the measurement is at matched bytes, which witnesses suboptimality of at least one of the two runs but is not literally a D + lambda*R comparison | Log the per-frame D + lambda*R of both arms at one QP and the refutation becomes exact rather than curve-level |
+
+## Best JPEG at 25 KB on src720.png — certified by enumeration
+
+JPEG's parameter space is small enough to enumerate, which is exactly what AV2's
+is not. Grid: subsampling {4:4:4, 4:2:2, 4:2:0} x quality 1..95 x
+{baseline, optimize+progressive} = **570 points**, sized exhaustively; **14** fit
+<=25,000 B and every one was decoded and scored.
+
+| bytes | cvvdp | arm |
+|---:|---:|---|
+| **22,885** | **6.4604** | **4:2:2 q=4 optimize+progressive** |
+| 20,776 | 6.4313 | 4:2:0 q=4 opt |
+| 22,152 | 6.0594 | 4:4:4 q=3 opt |
+| 17,948 | 6.0333 | 4:2:2 q=3 opt |
+| 23,758 | 6.0037 | 4:2:0 q=3 baseline |
+
+**Certified max: 6.4604** (this is the maximum over the enumerated family, not an
+estimate -- every member that fits the budget was measured).
+
+| encoder | bytes | cvvdp | vs JPEG |
+|---|---:|---:|---:|
+| av2enc shipped `--nightly` | 25,168 | 7.2415 | **+0.78** |
+| av2enc stack (best still) | 25,081 | 7.2935 | **+0.83** |
+| SVT-AV1 const-QP (~25 KB) | ~25,000 | 7.4405 | +0.98 |
+
+Sanity control: 4:2:0 q=3 baseline (23,758 B) and 4:2:0 q=3 opt (15,916 B) score
+**identically** (6.0037) -- same quantisation, different packing, identical
+decoded pixels. The pipeline measures what it claims to.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CERTIFIED (JPEG only) | Call this "the best possible JPEG" | The family is libjpeg-turbo's quality axis -- a 1-D slice of quantisation-table space -- plus subsampling and packing. Arbitrary quant tables and trellis coefficient optimisation (mozjpeg/jpegli) are outside it | Quote it as "best over the 570-point libjpeg-turbo grid", which is exhaustive and reproducible |
+| CONFIRMED | Use this to bound AV2 | JPEG's finite family is what makes the claim provable; AV2's space is astronomical, so the same exhaustive certificate cannot exist there | For AV2 report a certified lower bound (`best_K >= 7.29`) and never an upper one |
