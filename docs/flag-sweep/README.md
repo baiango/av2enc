@@ -118,3 +118,34 @@ invocations like `--video-refs` alone fail with "missing value".
 depth 2 gives 76,851 B against the 90,738 B baseline. So none of the four is a
 silent disable -- `min-block 32` is inert only at the high QP where the tree is
 already coarse, and `max-depth 8` exceeds the tree's natural depth.
+
+## The 83 value-bearing companions: flags are live, the extractor was not
+
+Automated extraction of companion *values* failed: parsing "needs --video-refs 1"
+out of prose picked English words as values, and 66 of 83 invocations died with
+"multiple input files specified" (a stray word became a positional argument).
+
+Hand-written companions for a representative five, on the plain baseline
+(18,845 B):
+
+| flags | bytes | verdict |
+|---|---:|---|
+| `--adaptive-cdf --avg-cdf` | 17,722 | EFFECTIVE |
+| `--video-edge-mask --video-edge-inter` | 5,610 | EFFECTIVE |
+| `--video-key-intra-txpart --video-tx-search` | 19,959 | EFFECTIVE |
+| `--video-rdoq --video-inter-residual` | 18,285 | EFFECTIVE |
+| `--video-long-term --video-refs 1` | 18,845 | EFFECTIVE |
+
+All five live. So the 83 "unjudged" flags are **not** candidates for silent
+disable -- they are flags whose companion requirements my script could not parse.
+Judging them properly needs a hand-written invocation table, not message scraping.
+
+## Bottom line across the whole surface
+
+- Silent disables found: **one** (`AV2ENC_RD_JOINT_P` cannot fire: armed=0,
+  probe_ready=0), fixed with a warning in 4dbe3af0, pins byte-identical.
+- Everything else that looked dead was protocol/parser error: values equal to
+  defaults, features the clip never exercises, companions needing values, or help
+  text my scraper mangled.
+- Still not judged: 78 of the 83 (table work), and the 230 env gates never
+  value-swept beyond `=1`.
