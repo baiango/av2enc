@@ -1788,3 +1788,38 @@ scalar path is kept silently.
 | CONFIRMED (fix 1, insufficient) | The intra call site passed `allow_rdoq=false` | Fixed, no effect on its own |
 | CONFIRMED (fix 2, insufficient) | The `is_inter` gate | Removed, no effect on its own |
 | OPEN (blocker) | Something after both fixes stops engagement | Needs `rdoq::Model::init` failure logging, or tracing which call site supplies the final key-frame plan. Both edits were reverted pending that, since engaging RDOQ on intra would change every intra stream and the pins were not re-verified |
+
+## RDOQ does not engage on intra: the key frame never calls `compute_tx`
+
+Added `AV2ENC_RDOQ_TRACE` and instrumented both the skip path and an entry
+counter for intra-luma calls. Running the PNG-derived still at QP212:
+
+```
+on :  25,168 B  md5 e2e739e3a60bd32c0b205178b1ebaa55
+off:  25,168 B  md5 e2e739e3a60bd32c0b205178b1ebaa55
+IDENTICAL (still inert)
+--- trace: ENGAGED=0  model.init FAILED=0  skipped=0
+--- intra-luma compute_tx calls = 0
+```
+
+**Zero.** The key frame does not route its luma plan through `compute_tx` at
+all, so every RDOQ fix applied there -- `allow_rdoq` at the intra call site, the
+`is_inter` gate, `info.is_inter`, `model.init` -- is unreachable by construction.
+The earlier "still inert after the gate fix" result is now explained: it was not
+a failing model or a silent fallback, it was dead code for that frame type.
+
+The key-frame intra luma TX path is:
+
+```
+src/pipeline/video/video_frame_intra.cpp:519
+  InterFrameEncoder::encode_intra_luma_tx_partition(...)   // uses key_tx_rd_config()
+```
+
+| Status | Meaning |
+|---|---|
+| CONFIRMED (root cause) | RDOQ is wired into `compute_tx`, which key frames never call (trace: 0 intra-luma invocations, 0 engage, 0 failures) | The fix belongs in `encode_intra_luma_tx_partition`, not in `compute_tx` |
+| CONFIRMED | The three `compute_tx` edits were inert | Measured byte-identical with and without `--video-rdoq-off`, and the trace proves the code is unreachable for a key frame |
+| OPEN (next) | Wire RDOQ into `encode_intra_luma_tx_partition` | Its quantiser call needs the same `rdoq_quantize` step plus a qctx, then the md5 must differ with `--video-rdoq-off`, then pins |
+
+All code edits were reverted to `9e4e4f92` + this record, so the tree stays at a
+verified state; engaging RDOQ on intra would change every intra stream.
