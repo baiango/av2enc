@@ -1581,3 +1581,37 @@ Practical reading: our coefficient coding leaves roughly a third of its bits on
 the table at QP198 and half at QP220 versus a context-free entropy bound. That is
 the largest measured inefficiency found anywhere in this project, and it is now a
 number rather than a hypothesis.
+
+## Correction: two different `src720_1f.y4m` files were in play
+
+`~/Downloads/av2enc-src720/src720_1f.y4m` (the pin source) and the PNG-derived
+`<tmp>/src720_1f.y4m` used for the still measurements are **different images**:
+1,243,620 of 1,382,400 samples differ, so they are not a chroma-siting variant
+but a different conversion.
+
+Consequence: one run (the stack + tool-subset composition, which reported
+25,081 B / 7.3202) used the pin source while its "reference" 7.2415 came from
+the PNG source. Those two numbers are **not comparable** and that data point is
+discarded.
+
+Re-measured on the PNG-derived source alone:
+
+| arm | bytes | cvvdp |
+|---|---:|---:|
+| shipped `--nightly` QP212 | 25,168 | 7.2415 |
+| stack QP186 | 24,094 | 7.2506 |
+| stack QP182 | 28,118 | 7.4412 |
+| **stack interpolated to 25,168 B** | 25,168 | **7.3015** |
+
+The interpolation reproduces the earlier ladder value at 25,000 B exactly
+(7.2935), so the *ladder* was consistent; only the composition run was mixed.
+**Certified improvement on this image: +0.060 JOD from the stack config** (and
++0.038 from dip+ibp+ist on the plain chain).
+
+Also: the two families **cannot be composed**. `--video-ibp` is gated to the
+plain key+P chain and is rejected with `--nightly-b`, so "stack + best tool
+subset" is not merely untested, it is unreachable without code changes.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED (defect) | Compare numbers produced from different source files | Two files named `src720_1f.y4m` differ in 90 % of samples; a comparison across them is meaningless | Pin the source path per experiment and print it with every result, as `tools/pipeline_best.sh` does |
