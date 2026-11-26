@@ -716,6 +716,30 @@ Gate-off is byte-identical on all four pins.
 | OLD | Treat the uncalibrated `plan_qp` plan as a win, or compare it to flat QP without matching rate | On `space8k_1440x720_60f` (12 frames, QP202 `--nightly`): flat **16,069 B / 6.8406 JOD / 32.03 dB**, TPL **10,879 B / 5.4753 JOD / 29.98 dB**. The plan printed `budget=11896 planned=12218`, so the integer model under-estimated the real cost by ~30 % and the allocator over-coarsened: this is a large rate drop, not a matched-rate loss | Calibrate `estimate_frame_bits_model` against a real pass-1 payload before judging TPL (the VBR path already calibrates via `pass1_payload_bits`; the CQP path does not) |
 | CONFIRMED | Expect the motion-free proxy to be a usable TPL base | On this clip most 16x16 blocks are predictable from a *displaced* neighbour in the flat dark field (collocated SAD 0 is reachable by sliding inside a uniform region), so MC residual MAD is ~0 for most P frames while the collocated proxy sees ~11 average error. The two models rank frames very differently, which is the motivation for TPL — but it also means the clip's complexity is dominated by a small moving region, and a per-frame scalar cannot represent that | Per-superblock, not per-frame, allocation is the shape this content needs |
 
+## Content-derived key/P split: the obvious signal does not separate (`video_tpl.h` pass 1)
+
+Follow-up to the TPL work. The motivating problem is real: the fixed
+`--video-key-qp-offset` flips sign between clips (space8k +0.22 JOD at -57,
+loral -0.10), so deriving it from content looked like the right fix. **The
+hypothesis was that the key's share of pass-1 bits predicts it. Measured with
+the TPL statistics pass, it does not — it ranks the two cases backwards.**
+
+| clip | key share | mean P bits | key/P ratio | what -57 does |
+|---|---:|---:|---:|---|
+| space8k t=20s | 60 % | 378 B | **16.27x** | **helps** (+0.22 JOD) |
+| space8k t=110s | 72 % | 191 B | 28.47x | not measured |
+| loral t=20s | 57 % | 105 B | 14.50x | **hurts** (-0.10 JOD; +64 % B here) |
+| loral t=180s | 65 % | 280 B | **20.79x** | **hurts** (+71 % B here) |
+
+The clip where funding the key helps has a *lower* key/P ratio (16.27x) than the
+one where it hurts (20.79x), and mean P bits do not separate them either
+(378 B helps, 280 B hurts). So a rule built on either number would be fitted to
+two clips and would predict at least one of them wrongly.
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED | Derive the key QP offset from the key/P pass-1 bit split (or mean P-frame bits) | Both signals rank space8k t=20s and loral t=180s in the wrong order (see the table). The sign flip is not explained by where the bits already are | The sign must come from how much *distortion* the P chain inherits from the key (skip propagation), not from the current bit split; that needs a distortion measurement per pass-1 frame, which this gate does not compute |
+
 ## Flat-area 1-px checkerboard on the 720p still at 25 kB
 
 Measured 2026-11-25 on `src720_1f.y4m`, lone key, `AV2ENC_RD_DRIVER_MIN=16
