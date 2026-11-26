@@ -308,3 +308,26 @@ inventory is clean: 65 distinct names, no punctuation, no duplicates.
 | **CLI total** | 272 | **263** |
 | env gates (boolean-effect) | 232 | 232 |
 | env gates (scalar, value-swept) | 21 | 21 |
+
+## Argument options re-judged per mode (see ARG-MODES.md)
+
+The 24 INERT argument-option entries (16 distinct options) on plain video and
+still baselines: **4 LIVE**, 20 inert -- and each inert one now has a reason:
+
+- 6 equal their own default (`--video-gops 1`, `--video-refs 1`,
+  `--video-me-range 16`, `--video-max-depth 4`, `--bit-depth 8`, `--tiles 1`);
+- 3 are live but non-binding on the carrier (`--video-me-range 32`,
+  `--video-min-block 32` are EFFECTIVE at QP100; `--video-max-depth 8` is above
+  the tree's natural depth);
+- 2 are output side-effects (`--video-recon`); 2 need the lossless writer
+  (`--video-lossless-intra-period`); 3 need a longer clip (drift refresh);
+- 2 (`--p-frames 1/3`) are a **frame-limit alias shadowed by `--frames`**:
+  without `--frames`, `--p-frames 1` gives 5,475 B (2 frames) against the
+  89,473 B 12-frame default.
+
+The pipe-budget arming chain was traced: `AV2ENC_PIPE_BUDGET` defaults ON and the
+block needs `qp_tools_active()` **and** populated `sb_qindex_`. Seven carriers
+(aq, delta-q, segmentation, per-segment-q, and their still forms) all leave the
+stream byte-identical, so the 5 `PIPE_BUDGET_*` scalar gates stay **unjudged,
+not dead**. The previous pass named `PIPE_BUDGET_SCALE` as the arming knob; that
+was the wrong gauge.

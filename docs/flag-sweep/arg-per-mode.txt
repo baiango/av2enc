@@ -1,0 +1,38 @@
+A) carrier matrix: does AV2ENC_PIPE_BUDGET=1 change the stream?
+   video-aq                  6183 B  PB1    6183 B  -> INERT
+   video-delta-q             5544 B  PB1    5544 B  -> INERT
+   video-segmentation        5496 B  PB1    5496 B  -> INERT
+   video-per-segment-q       5243 B  PB1    5243 B  -> INERT
+   still-delta-q             4203 B  PB1    4203 B  -> INERT
+   still-segmentation        4205 B  PB1    4205 B  -> INERT
+   still-per-segment-q       4071 B  PB1    4071 B  -> INERT
+
+   no carrier engaged the allocation -- gates stay unjudged
+
+B) INERT argument options, plain video and still baselines:
+   video base 5475 B 733b61d6f1413e09853730df9a32e877
+   still base 4198 B 5798ed59f6c56aac34127e43474d6a2a
+   INERT-BOTH  --tiles=1                          video:INERT still:INERT
+   INERT-BOTH  --bit-depth=8                      video:INERT still:INERT
+   INERT-BOTH  --p-frames=1                       video:INERT still:REJECTED
+   INERT-BOTH  --p-frames=3                       video:INERT still:REJECTED
+   INERT-BOTH  --video-gops=1                     video:INERT still:INERT
+   INERT-BOTH  --video-refs=1                     video:INERT still:REJECTED
+   LIVE        --video-cdef-strength=1            video:EFFECTIVE still:REJECTED
+   LIVE        --video-ccso-unit-bits=2           video:EFFECTIVE still:INERT
+   INERT-BOTH  --video-lossless-intra-period=3    video:INERT still:INERT
+   INERT-BOTH  --video-lossless-intra-period=1    video:INERT still:INERT
+   INERT-BOTH  --video-drift-refresh-threshold=3  video:INERT still:INERT
+   INERT-BOTH  --video-drift-refresh-threshold=1  video:INERT still:INERT
+   LIVE        --video-key-qp-offset=1            video:EFFECTIVE still:REJECTED
+   LIVE        --video-key-qp-offset=3            video:EFFECTIVE still:REJECTED
+   INERT-BOTH  --video-drift-refresh-budget=3     video:INERT still:INERT
+   INERT-BOTH  --video-drift-refresh-qp=3         video:INERT still:INERT
+   INERT-BOTH  --video-drift-refresh-budget=1     video:INERT still:INERT
+   INERT-BOTH  --video-recon=3                    video:INERT still:REJECTED
+   INERT-BOTH  --video-recon=1                    video:INERT still:REJECTED
+   INERT-BOTH  --video-max-depth=8                video:INERT still:REJECTED
+   INERT-BOTH  --video-max-depth=4                video:INERT still:REJECTED
+   INERT-BOTH  --video-min-block=32               video:INERT still:REJECTED
+   INERT-BOTH  --video-me-range=32                video:INERT still:REJECTED
+   INERT-BOTH  --video-me-range=16                video:INERT still:REJECTED
