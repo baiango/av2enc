@@ -1,0 +1,494 @@
+name	surface	verdict	evidence
+--adaptive-cdf	switch	EFFECTIVE	per-mode(video+still)
+--alllayers	switch	EFFECTIVE	still+table
+--avg-cdf	switch	EFFECTIVE	per-mode(video+still)
+--b-frames	option	REJECTED	argsweep(2 values)
+--bit-depth	option	INERT	per-mode(args)
+--bitrate	option	REJECTED	argsweep(2 values)
+--cdf-continuity	switch	INERT	per-mode(video+still)
+--chroma	option	REJECTED	argsweep(2 values)
+--cpu-threads	option	REJECTED	argsweep(2 values)
+--cpu-used	option	REJECTED	argsweep(2 values)
+--crf	option	REJECTED	argsweep(2 values)
+--effort	option	REJECTED	argsweep(2 values)
+--effort-plan	switch	REJECTED	hand-batch
+--fast-decode	switch	EFFECTIVE	per-mode(video+still)
+--frames	option	REJECTED	argsweep(2 values)
+--gpu-plan	option	REJECTED	argsweep(2 values)
+--lossless	switch	OWN-WRITER-OK	still+table
+--lossless-fsc	switch	REJECTED	hand-batch
+--metadata-banding	switch	EFFECTIVE	flip(nightly)
+--metadata-cll	switch	EFFECTIVE	flip(nightly)
+--metadata-frame-hash	switch	EFFECTIVE	hand-batch
+--metadata-icc	switch	EFFECTIVE	flip(nightly)
+--metadata-mdcv	switch	EFFECTIVE	flip(nightly)
+--metadata-scan-type	switch	EFFECTIVE	flip(nightly)
+--metadata-temporal-point	switch	EFFECTIVE	flip(nightly)
+--metadata-timecode	switch	EFFECTIVE	flip(nightly)
+--metadata-user-data	switch	EFFECTIVE	flip(nightly)
+--nightly	switch	EFFECTIVE	per-mode(video+still)
+--nightly-b	switch	REJECTED	hand-batch
+--no-cfl	switch	EFFECTIVE	still+table/still
+--no-deblock	switch	EFFECTIVE	still+table/still
+--oppoint	option	REJECTED	argsweep(2 values)
+--p-frames	option	INERT	per-mode(args)
+--qp	option	EFFECTIVE	argsweep(2 values)
+--rc	option	REJECTED	argsweep(2 values)
+--recon	option	REJECTED	argsweep(2 values)
+--spatial-layers	option	REJECTED	argsweep(2 values)
+--still	switch	INERT	still+table/still
+--still-ccso	switch	EFFECTIVE	still+table/still
+--still-ccso-bands	switch	REJECTED	plain-rejudge
+--still-ccso-edge	switch	EFFECTIVE	still+table/still
+--still-cctx	switch	EFFECTIVE	still+table/still
+--still-cdef	switch	EFFECTIVE	still+table/still
+--still-cdef-on-skip-txfm	switch	EFFECTIVE	hand-batch
+--still-cdef-strengths	switch	REJECTED	plain-rejudge
+--still-cfl-ds	option	REJECTED	argsweep(2 values)
+--still-cfl-explicit	switch	EFFECTIVE	still+table/still
+--still-chroma-lr	switch	EFFECTIVE	still+table/still
+--still-content-interpretation	switch	EFFECTIVE	still+table/still
+--still-dc	switch	INERT	still+table/still
+--still-dc-ac-delta-q	switch	EFFECTIVE	still+table/still
+--still-ddt	switch	REJECTED	still+table/still
+--still-deblock	switch	INERT	still+table/still
+--still-delta-q	switch	EFFECTIVE	still+table/still
+--still-delta-q-res	switch	REJECTED	plain-rejudge
+--still-depth	option	REJECTED	argsweep(2 values)
+--still-dip	switch	EFFECTIVE	still+table/still
+--still-ext-partitions	switch	EFFECTIVE	still+table/still
+--still-full-intra	switch	EFFECTIVE	still+table/still
+--still-gdf	switch	EFFECTIVE	still+table/still
+--still-gpu	switch	REJECTED	still+table/still
+--still-grain	switch	EFFECTIVE	still+table/still
+--still-grain-adaptive	switch	EFFECTIVE	hand-batch
+--still-ibc	switch	EFFECTIVE	still+table/still
+--still-ibc-search	option	REJECTED	argsweep(2 values)
+--still-ibp	switch	EFFECTIVE	still+table/still
+--still-idtx	switch	EFFECTIVE	still+table/still
+--still-ist	switch	EFFECTIVE	still+table/still
+--still-ist-scale	switch	REJECTED	plain-rejudge
+--still-mhccp	switch	EFFECTIVE	still+table/still
+--still-mrl	switch	EFFECTIVE	still+table/still
+--still-palette	switch	EFFECTIVE	still+table/still
+--still-pc-wiener	switch	EFFECTIVE	still+table/still
+--still-per-segment-q	switch	EFFECTIVE	still+table/still
+--still-qm	switch	EFFECTIVE	still+table/still
+--still-qm-level	switch	REJECTED	plain-rejudge
+--still-rdo-intra	switch	EFFECTIVE	still+table/still
+--still-rdo-scale	switch	REJECTED	plain-rejudge
+--still-rdoq	switch	EFFECTIVE	still+table/still
+--still-rdoq-scale	switch	REJECTED	plain-rejudge
+--still-sb128	switch	EFFECTIVE	still+table/still
+--still-sb256	switch	EFFECTIVE	still+table/still
+--still-sdp	switch	REJECTED	still+table/still
+--still-seg-delta	switch	REJECTED	plain-rejudge
+--still-segmentation	switch	EFFECTIVE	still+table/still
+--still-single	switch	INERT	still+table/still
+--still-sub8	switch	INERT	still+table/still
+--still-tcq	switch	EFFECTIVE	still+table/still
+--still-tcq-scale	switch	REJECTED	plain-rejudge
+--still-tx-partition	switch	EFFECTIVE	still+table/still
+--still-tx-type	switch	INERT	still+table/still
+--still-tx-type-scale	switch	REJECTED	plain-rejudge
+--still-user-qm	switch	EFFECTIVE	still+table/still
+--still-uv-full	switch	EFFECTIVE	still+table/still
+--still-wiener	switch	EFFECTIVE	still+table/still
+--svc-embedded	option	REJECTED	argsweep(2 values)
+--svc-inter-layer	switch	REJECTED	comp5/still
+--svc-layers	option	REJECTED	argsweep(2 values)
+--svc-lcr-id	option	REJECTED	argsweep(2 values)
+--svc-temporal	option	REJECTED	argsweep(2 values)
+--tiles	option	INERT	per-mode(args)
+--video	switch	INERT	per-mode(video+still)
+--video):	switch	NO-TABLE-ENTRY	still+table
+--video-adaptive-mvd	switch	EFFECTIVE	comp3
+--video-aq	switch	EFFECTIVE	comp3
+--video-aq-bias	option	REJECTED	argsweep(2 values)
+--video-aq-clamp	option	REJECTED	argsweep(2 values)
+--video-aq-strength	option	REJECTED	argsweep(2 values)
+--video-bawp	switch	EFFECTIVE	per-mode(video+still)
+--video-bawp):	switch	NO-TABLE-ENTRY	still+table
+--video-bawp-carrier	switch	EFFECTIVE	per-mode(video+still)
+--video-brt	switch	EFFECTIVE	flip(nightly)
+--video-bru	switch	REJECTED	plain-rejudge
+--video-ccso	switch	EFFECTIVE	per-mode(video+still)
+--video-ccso-bands	option	EFFECTIVE	argsweep(2 values)
+--video-ccso-header-rd	switch	EFFECTIVE	per-mode(video+still)
+--video-ccso-lambda	option	EFFECTIVE	argsweep(2 values)
+--video-ccso-rd	switch	EFFECTIVE	per-mode(video+still)
+--video-ccso-refit	option	REJECTED	argsweep(2 values)
+--video-ccso-unit-bits	option	EFFECTIVE	per-mode(args)
+--video-cctx	switch	EFFECTIVE	flip(nightly)
+--video-cdef	switch	EFFECTIVE	per-mode(video+still)
+--video-cdef-damping	option	REJECTED	argsweep(2 values)
+--video-cdef-rd	switch	EFFECTIVE	per-mode(video+still)
+--video-cdef-rd-lambda	option	REJECTED	argsweep(2 values)
+--video-cdef-search	option	REJECTED	argsweep(2 values)
+--video-cdef-strength	option	EFFECTIVE	per-mode(args)
+--video-cdf-per-frame-qp	switch	EFFECTIVE	flip(nightly)
+--video-cfl	switch	EFFECTIVE	flip(nightly)
+--video-cfl-ds-filter	option	REJECTED	argsweep(2 values)
+--video-chroma-lr	switch	EFFECTIVE	flip(nightly)
+--video-compound	switch	EFFECTIVE	comp5
+--video-compound-diffwtd	switch	EFFECTIVE	hand-batch
+--video-compound-interintra	switch	EFFECTIVE	comp3
+--video-compound-near-near	switch	EFFECTIVE	hand-batch
+--video-compound-wedge	switch	EFFECTIVE	hand-batch
+--video-cwp-weighted	switch	EFFECTIVE	hand-batch
+--video-ddt	switch	EFFECTIVE	flip(nightly)
+--video-deblock	switch	EFFECTIVE	per-mode(video+still)
+--video-decoder-model	switch	EFFECTIVE	comp3
+--video-delta-q	switch	EFFECTIVE	comp3
+--video-delta-q-res	option	REJECTED	argsweep(2 values)
+--video-df-sub-pu	switch	EFFECTIVE	flip(nightly)
+--video-dip	switch	EFFECTIVE	flip(nightly)
+--video-drift-refresh	switch	INERT	per-mode(video+still)
+--video-drift-refresh-budget	option	INERT	per-mode(args)
+--video-drift-refresh-qp	option	INERT	per-mode(args)
+--video-drift-refresh-threshold	option	INERT	per-mode(args)
+--video-drl-reorder	switch	EFFECTIVE	flip(nightly)
+--video-drl-reorder-always	switch	EFFECTIVE	still+table
+--video-edge-inter	switch	EFFECTIVE	per-mode(video+still)
+--video-edge-mask	switch	INERT	per-mode(video+still)
+--video-eff-perc	switch	EFFECTIVE	flip(nightly)
+--video-ext-partitions	switch	EFFECTIVE	flip(nightly)
+--video-flex-mvres	switch	EFFECTIVE	comp3
+--video-force-integer-mv	switch	EFFECTIVE	still+table
+--video-force-single	switch	INERT	still+table
+--video-gdf	switch	EFFECTIVE	flip(nightly)
+--video-gme	switch	EFFECTIVE	comp3
+--video-gops	option	INERT	per-mode(args)
+--video-gpu	switch	REJECTED	hand-batch
+--video-grain	switch	EFFECTIVE	flip(nightly)
+--video-head-tx	switch	EFFECTIVE+COMP	comp3
+--video-ibc	switch	EFFECTIVE	comp3
+--video-ibp	switch	EFFECTIVE	flip(nightly)
+--video-idtx	switch	EFFECTIVE	flip(nightly)
+--video-idtx-1d	switch	REJECTED	comp5/still
+--video-imp-mask	switch	EFFECTIVE	hand-batch
+--video-implicit-ref-map	switch	EFFECTIVE	comp3
+--video-inter-residual	switch	EFFECTIVE	per-mode(video+still)
+--video-intra-full	switch	EFFECTIVE	per-mode(video+still)
+--video-ist	switch	EFFECTIVE	flip(nightly)
+--video-key-intra-txpart	switch	INERT	per-mode(video+still)
+--video-key-qp-offset	option	EFFECTIVE	per-mode(args)
+--video-lcr-full	switch	EFFECTIVE	flip(nightly)
+--video-leading	option	REJECTED	argsweep(2 values)
+--video-leaf-rd	switch	EFFECTIVE	per-mode(video+still)
+--video-long-term	switch	EFFECTIVE	comp3
+--video-lossless	switch	EFFECTIVE	comp5
+--video-lossless-b	switch	REJECTED	comp5/still
+--video-lossless-intra-period	option	INERT	per-mode(args)
+--video-max-depth	option	INERT	per-mode(args)
+--video-me-range	option	INERT	per-mode(args)
+--video-mfh	switch	EFFECTIVE	comp3
+--video-mhccp	switch	EFFECTIVE	comp3
+--video-min-block	option	INERT	per-mode(args)
+--video-morph	switch	EFFECTIVE	comp3
+--video-mrl	switch	EFFECTIVE	flip(nightly)
+--video-multi-sequence	switch	EFFECTIVE	comp3
+--video-mv-precision	switch	REJECTED	plain-rejudge
+--video-mv-traj	switch	EFFECTIVE	comp3
+--video-mvd-sign-derive	switch	EFFECTIVE	hand-batch
+--video-num-ref-frames	option	REJECTED	argsweep(2 values)
+--video-olk	switch	REJECTED	plain-rejudge
+--video-opfl	switch	EFFECTIVE	hand-batch
+--video-palette	switch	EFFECTIVE	comp3
+--video-palette/--video-ibc/--video-morph	switch	NO-TABLE-ENTRY	still+table
+--video-partition-rd	switch	EFFECTIVE	per-mode(video+still)
+--video-partition-rd-depth	option	REJECTED	argsweep(2 values)
+--video-partition-rd-lambda	option	EFFECTIVE	argsweep(2 values)
+--video-pb-aspect-2	switch	EFFECTIVE	flip(nightly)
+--video-pc-wiener	switch	EFFECTIVE	flip(nightly)
+--video-per-segment-q	switch	EFFECTIVE	comp3
+--video-qm	switch	EFFECTIVE	hand-batch
+--video-qp-lambda	switch	INERT	per-mode(video+still)
+--video-ras	switch	REJECTED	plain-rejudge
+--video-rd-driver	switch	EFFECTIVE	flip(nightly)
+--video-rd-preset	option	REJECTED	argsweep(2 values)
+--video-rdoq	switch	INERT	per-mode(video+still)
+--video-rdoq-scale	switch	REJECTED	plain-rejudge
+--video-recon	option	INERT	per-mode(args)
+--video-reduce-pb-aspect	switch	EFFECTIVE	flip(nightly)
+--video-ref-mvs	switch	EFFECTIVE	comp3
+--video-ref-mvs-stress	switch	EFFECTIVE	comp3
+--video-ref-signal-compact	switch	EFFECTIVE	per-mode(video+still)
+--video-refine-mv	switch	EFFECTIVE	hand-batch
+--video-refmvbank	switch	EFFECTIVE	comp3
+--video-refs	option	INERT	per-mode(args)
+--video-same-ref-compound	switch	EFFECTIVE	comp3
+--video-sb128	switch	EFFECTIVE	comp3
+--video-sb256	switch	EFFECTIVE	comp3
+--video-scc-force	switch	EFFECTIVE+COMP	comp3
+--video-sdp	switch	EFFECTIVE	comp3
+--video-sef	switch	EFFECTIVE	comp3
+--video-seg-delta	option	REJECTED	argsweep(2 values)
+--video-seg-globalmv	switch	EFFECTIVE	comp3
+--video-seg-skip	switch	EFFECTIVE	comp3
+--video-seg-temporal	switch	EFFECTIVE	comp3
+--video-segmentation	switch	EFFECTIVE	comp3
+--video-segments	option	REJECTED	argsweep(2 values)
+--video-seq-seg-info	switch	EFFECTIVE+COMP	comp3
+--video-seq-seg-info-frozen	switch	EFFECTIVE+COMP	comp3
+--video-short-refresh	switch	EFFECTIVE	comp3
+--video-skip-collapse	switch	EFFECTIVE	flip(nightly)
+--video-subpel-eighth	switch	EFFECTIVE	per-mode(video+still)
+--video-switch	switch	REJECTED	plain-rejudge
+--video-tail-tx	switch	EFFECTIVE+COMP	comp3
+--video-tcq	switch	EFFECTIVE	comp3
+--video-tier	switch	REJECTED	plain-rejudge
+--video-tile-flush-min	switch	EFFECTIVE	per-mode(video+still)
+--video-tile-group-compact	switch	EFFECTIVE	per-mode(video+still)
+--video-timing	switch	EFFECTIVE	comp3
+--video-tip	switch	EFFECTIVE	comp3
+--video-tip-block-ref	switch	EFFECTIVE	hand-batch
+--video-tip-no-hole-fill	switch	EFFECTIVE	still+table
+--video-tlayer-anchor-residual	switch	REJECTED	hand-batch
+--video-tlayer-drop	option	REJECTED	argsweep(2 values)
+--video-tlayer-qp-offsets	option	REJECTED	argsweep(2 values)
+--video-tlayer-refresh-budget	option	REJECTED	argsweep(2 values)
+--video-tlayer-refresh-threshold	option	REJECTED	argsweep(2 values)
+--video-tlayers	option	EFFECTIVE	still+table(value 4)
+--video-trace	switch	INERT	per-mode(video+still)
+--video-tx-context-rate	switch	EFFECTIVE	flip(nightly)
+--video-tx-lambda	option	EFFECTIVE	argsweep(2 values)
+--video-tx-search	switch	EFFECTIVE	per-mode(video+still)
+--video-user-qm	switch	EFFECTIVE	comp5
+--video-uv-delta-q	option	REJECTED	argsweep(2 values)
+--video-uv-qp-offset	option	EFFECTIVE	argsweep(2 values)
+--video-warp	switch	EFFECTIVE	comp3
+--video-wiener	switch	EFFECTIVE	flip(nightly)
+--video-y-dc-delta-q	option	REJECTED	argsweep(2 values)
+--vram-cap	option	REJECTED	argsweep(2 values)
+ALPHA_CUDA_VERBOSE	env	INERT	env(=1)
+ALPHA_PRINT_GOLDENS	env	INERT	env(=1)
+AV2ENC_ALLOW_IDTX_SUB8	env	INERT	env(=1)
+AV2ENC_ALLOW_MISSING_MEDIA	env	INERT	env(=1)
+AV2ENC_ARNR	env	EFFECTIVE	env(=1)
+AV2ENC_ARNR_STATS	env	INERT	env(=1)
+AV2ENC_BIT_CENSUS	env	INERT	env(=1)
+AV2ENC_BLOCKDUMP	env	INERT	env(=1)
+AV2ENC_CDEF_MAX_STRENGTH	env	INERT	env(=1)
+AV2ENC_COMPOUND_EXACT_RATE	env	INERT	env(=1)
+AV2ENC_COMPOUND_NEWMV	env	INERT	env(=1)
+AV2ENC_COMPOUND_NEWMV_MODES	env	INERT	env(=1)
+AV2ENC_COMPOUND_NEWMV_RADIUS	env	INERT	env(=1)
+AV2ENC_COMPOUND_NEWMV_REFINE	env	INERT	env(=1)
+AV2ENC_COMPOUND_PAIR_LIMIT	env	INERT	env(=1)
+AV2ENC_COMPOUND_RATE	env	INERT	env(=1)
+AV2ENC_COMPOUND_RATE_SCALE	env	INERT	env(=1)
+AV2ENC_DEBLOCK_APPLY	env	INERT	env(=1)
+AV2ENC_DEBLOCK_DF_DELTA	env	EFFECTIVE	env(=1)
+AV2ENC_DECISION_DUMP	env	INERT	env(=1)
+AV2ENC_DECISION_EXACT_RATE	env	INERT	env(=1)
+AV2ENC_DZ_DUMP	env	INERT	env(=1)
+AV2ENC_EFF_PERC	env	EFFECTIVE	env(=1)
+AV2ENC_EFF_PERC_CSF	env	INERT	env(=1)
+AV2ENC_EFF_PERC_CSF2	env	INERT	env(=1)
+AV2ENC_EFF_PERC_DETAIL	env	INERT	env(=1)
+AV2ENC_EFF_PERC_DSHAPE	env	INERT	env(=1)
+AV2ENC_EFF_PERC_KEY_CSF	env	INERT	env(=1)
+AV2ENC_EFF_PERC_RATE	env	INERT	env(=1)
+AV2ENC_EFF_PERC_TOP	env	INERT	env(=1)
+AV2ENC_EOB_DUMP	env	INERT	env(=1)
+AV2ENC_EXACT_RD	env	EFFECTIVE	env(=1)
+AV2ENC_EXACT_RD_PARTITION	env	INERT	env(=1)
+AV2ENC_EXACT_RD_TOP	env	INERT	env(=1)
+AV2ENC_FRAME_QP_PLAN	env	FAILED	env(=1)
+AV2ENC_GME_UNPROVEN_WARP	env	INERT	env(=1)
+AV2ENC_INTERP_BLOCK	env	EFFECTIVE	env(=1)
+AV2ENC_INTERP_BLOCK_CSF	env	INERT	env(=1)
+AV2ENC_INTERP_BLOCK_SKIP	env	INERT	env(=1)
+AV2ENC_INTERP_FILTER	env	EFFECTIVE	env(=1)
+AV2ENC_INTRA_COEFF_PRICE	env	INERT	env(=1)
+AV2ENC_KEY_EOB_HIST	env	INERT	env(=1)
+AV2ENC_KEY_INTRA_TX_PART	env	INERT	env(=1)
+AV2ENC_LEAFBITS	env	INERT	env(=1)
+AV2ENC_MODE_TOPN	env	INERT	env(=1)
+AV2ENC_PART_DIAG	env	INERT	env(=1)
+AV2ENC_PART_DIAG_COMMIT	env	INERT	env(=1)
+AV2ENC_PART_DIAG_MAX	env	INERT	env(=1)
+AV2ENC_PART_DIAG_STATS	env	INERT	env(=1)
+AV2ENC_PART_DIAG_TRACE	env	INERT	env(=1)
+AV2ENC_PART_PROBE_CHROMA	env	EFFECTIVE	env(=1)
+AV2ENC_PART_TREE	env	INERT	env(=1)
+AV2ENC_PERCEPTUAL_FILTER	env	FAILED	env(=1)
+AV2ENC_PERCEPTUAL_RD	env	INERT	env(=1)
+AV2ENC_PIPE_BA	env	EFFECTIVE	env(=1)
+AV2ENC_PIPE_BA_W	env	INERT	env(=1)
+AV2ENC_PIPE_BUDGET	env	INERT	env(=1)
+AV2ENC_PIPE_BUDGET_STATS	env	INERT	env(=1)
+AV2ENC_PIPE_PERC	env	EFFECTIVE	env(=1)
+AV2ENC_PIPE_PERC_DETAIL	env	INERT	env(=1)
+AV2ENC_PIPE_PERC_TOP	env	INERT	env(=1)
+AV2ENC_PORT_HORIZON	env	INERT	env(=1)
+AV2ENC_PORT_HORIZON_K	env	INERT	env(=1)
+AV2ENC_PRED_DUMP	env	INERT	env(=1)
+AV2ENC_PROFILE	env	INERT	env(=1)
+AV2ENC_PROFILE_NVTX	env	INERT	env(=1)
+AV2ENC_P_DRIFT	env	INERT	env(=1)
+AV2ENC_P_DRIFT_STATS	env	INERT	env(=1)
+AV2ENC_RATE_HYBRID_DEBUG	env	INERT	env(=1)
+AV2ENC_RATE_HYBRID_S	env	EFFECTIVE	env(=1)
+AV2ENC_RATE_HYBRID_S_COEFF	env	INERT	env(=1)
+AV2ENC_RATE_HYBRID_S_MEASURE	env	INERT	env(=1)
+AV2ENC_RATE_HYBRID_S_SYNTAX	env	INERT	env(=1)
+AV2ENC_RATE_INTERVAL	env	EFFECTIVE	env(=1)
+AV2ENC_RATE_INTERVAL_STATS	env	INERT	env(=1)
+AV2ENC_RATE_INTERVAL_TRACE	env	INERT	env(=1)
+AV2ENC_RDOQ_ADAPT	env	INERT	env(=1)
+AV2ENC_RDOQ_CTX_REFINE	env	INERT	env(=1)
+AV2ENC_RDOQ_DIST_WEIGHT	env	INERT	env(=1)
+AV2ENC_RDOQ_EXACT	env	INERT	env(=1)
+AV2ENC_RDOQ_PREV_CAP	env	INERT	env(=1)
+AV2ENC_RDOQ_REFINE_CALIBRATE	env	INERT	env(=1)
+AV2ENC_RDOQ_REFINE_INSERT	env	INERT	env(=1)
+AV2ENC_RDOQ_REFINE_LAMBDA	env	INERT	env(=1)
+AV2ENC_RDOQ_REFINE_RECON	env	INERT	env(=1)
+AV2ENC_RDOQ_REFINE_STATS	env	INERT	env(=1)
+AV2ENC_RDOQ_TRELLIS_STEP_SCALE	env	INERT	env(=1)
+AV2ENC_RDOQ_ZERO_TO_ONE	env	INERT	env(=1)
+AV2ENC_RDO_DECIDE	env	INERT	env(=1)
+AV2ENC_RDO_INTRA	env	INERT	env(=1)
+AV2ENC_RDO_LOOP	env	INERT	env(=1)
+AV2ENC_RDO_LOOP_DEBUG	env	INERT	env(=1)
+AV2ENC_RDO_LOOP_STATS	env	INERT	env(=1)
+AV2ENC_RDO_LOOP_TRACE	env	INERT	env(=1)
+AV2ENC_RDO_NO_CHROMA	env	INERT	env(=1)
+AV2ENC_RDO_NO_INTRA	env	INERT	env(=1)
+AV2ENC_RDO_NO_PART	env	INERT	env(=1)
+AV2ENC_RDO_RDOQ	env	INERT	env(=1)
+AV2ENC_RDO_RDOQ_SCALE	env	INERT	env(=1)
+AV2ENC_RDO_SCALE	env	INERT	env(=1)
+AV2ENC_RDO_SSE_ONLY	env	INERT	env(=1)
+AV2ENC_RDO_TXTYPE	env	INERT	env(=1)
+AV2ENC_RDO_TXTYPE_DCT	env	INERT	env(=1)
+AV2ENC_RDO_TXTYPE_FORCE	env	INERT	env(=1)
+AV2ENC_RD_DRIVER	env	EFFECTIVE	env(=1)
+AV2ENC_RD_DRIVER_MIN	env	INERT	env(=1)
+AV2ENC_RD_DRIVER_RATE_FIT	env	INERT	env(=1)
+AV2ENC_RD_DRIVER_SBALLOC	env	INERT	env(=1)
+AV2ENC_RD_ENGINE	env	INERT	env(=1)
+AV2ENC_RD_ENGINE_AUDIT	env	INERT	env(=1)
+AV2ENC_RD_ENGINE_CAL	env	INERT	env(=1)
+AV2ENC_RD_ENGINE_CSF	env	INERT	env(=1)
+AV2ENC_RD_HEAD_LAST	env	INERT	env(=1)
+AV2ENC_RD_HEAD_PART	env	EFFECTIVE	env(=1)
+AV2ENC_RD_HEAD_TX	env	INERT	env(=1)
+AV2ENC_RD_JOINT_P	env	INERT	env(=1)
+AV2ENC_RD_JOINT_P_PROFILE	env	INERT	env(=1)
+AV2ENC_RD_JOINT_P_STATS	env	INERT	env(=1)
+AV2ENC_RD_KEY_LEVEL	env	INERT	env(=1)
+AV2ENC_RD_KEY_LEVEL_SCALE	env	INERT	env(=1)
+AV2ENC_RD_KEY_LIVE_CDF	env	INERT	env(=1)
+AV2ENC_RD_KEY_MODEL_RATE	env	INERT	env(=1)
+AV2ENC_RD_KEY_STATS	env	INERT	env(=1)
+AV2ENC_RD_KEY_TX	env	EFFECTIVE	env(=1)
+AV2ENC_RD_KEY_TX_D	env	INERT	env(=1)
+AV2ENC_RD_KEY_TX_FORCE_NONE	env	EFFECTIVE	env(=1)
+AV2ENC_RD_KEY_TX_SCALE	env	INERT	env(=1)
+AV2ENC_RD_KEY_TX_TOP	env	INERT	env(=1)
+AV2ENC_RD_MODE_BITS_ANGLE	env	INERT	env(=1)
+AV2ENC_RD_MODE_BITS_DIR	env	INERT	env(=1)
+AV2ENC_RD_MODE_BITS_NONDIR	env	INERT	env(=1)
+AV2ENC_RD_MODE_RD	env	EFFECTIVE	env(=1)
+AV2ENC_RD_PREDICTOR	env	INERT	env(=1)
+AV2ENC_RD_SEQTREE	env	INERT	env(=1)
+AV2ENC_RD_SEQTREE_STATS	env	INERT	env(=1)
+AV2ENC_RD_TAIL_FLOOR	env	INERT	env(=1)
+AV2ENC_RD_TAIL_FLOOR_SCREEN	env	INERT	env(=1)
+AV2ENC_RD_TAIL_FLOOR_STATS	env	INERT	env(=1)
+AV2ENC_RD_TAIL_LEVEL	env	INERT	env(=1)
+AV2ENC_RD_TAIL_RATE	env	INERT	env(=1)
+AV2ENC_RD_TAIL_STATS	env	INERT	env(=1)
+AV2ENC_RD_TAIL_TX	env	INERT	env(=1)
+AV2ENC_RD_TAIL_TX_D	env	INERT	env(=1)
+AV2ENC_RD_UVFULL	env	EFFECTIVE	env(=1)
+AV2ENC_RD_UVFULL_STATS	env	INERT	env(=1)
+AV2ENC_RD_UVFULL_TOPN	env	INERT	env(=1)
+AV2ENC_RD_UVLEVEL	env	INERT	env(=1)
+AV2ENC_RD_UVLEVEL_INTER	env	INERT	env(=1)
+AV2ENC_RD_UVLEVEL_STATS	env	INERT	env(=1)
+AV2ENC_RD_UVLEVEL_TOPN	env	INERT	env(=1)
+AV2ENC_RD_UVLEVEL_TRIES	env	INERT	env(=1)
+AV2ENC_SEF_DUPLICATES	env	EFFECTIVE	env(=1)
+AV2ENC_SIMD	env	INERT	env(=1)
+AV2ENC_SKIP_DRIFT	env	EFFECTIVE	env(=1)
+AV2ENC_SKIP_DRIFT_FADE	env	INERT	env(=1)
+AV2ENC_SKIP_DRIFT_ILLUM	env	INERT	env(=1)
+AV2ENC_SKIP_DRIFT_REFDEF	env	INERT	env(=1)
+AV2ENC_STILL_BASE_ONLY	env	INERT	env(=1)
+AV2ENC_STILL_DCSIGN_CTX	env	EFFECTIVE	env(=1)
+AV2ENC_STILL_FORCE_TX_PARTITION	env	INERT	env(=1)
+AV2ENC_STILL_FORCE_UV	env	INERT	env(=1)
+AV2ENC_STILL_FORCE_Y	env	INERT	env(=1)
+AV2ENC_STILL_FORCE_Y2	env	INERT	env(=1)
+AV2ENC_STILL_GPU_VERBOSE	env	INERT	env(=1)
+AV2ENC_STILL_LEAF32	env	INERT	env(=1)
+AV2ENC_STILL_LUMA_DC	env	INERT	env(=1)
+AV2ENC_STILL_NO_DIR	env	INERT	env(=1)
+AV2ENC_STILL_NO_EDGE	env	INERT	env(=1)
+AV2ENC_STILL_SQUARE_ONLY	env	INERT	env(=1)
+AV2ENC_STILL_TRACE	env	INERT	env(=1)
+AV2ENC_STILL_TXTYPE_TRACE	env	INERT	env(=1)
+AV2ENC_STILL_UV_DC	env	INERT	env(=1)
+AV2ENC_STILL_UV_FULL	env	INERT	env(=1)
+AV2ENC_STILL_YMODE_CTX0	env	EFFECTIVE	env(=1)
+AV2ENC_STILL_YMODE_CTX2	env	EFFECTIVE	env(=1)
+AV2ENC_STILL_ZERO_DC	env	INERT	env(=1)
+AV2ENC_SYMBOL_COST	env	INERT	env(=1)
+AV2ENC_TCQ_GEOM_RATE	env	INERT	env(=1)
+AV2ENC_TCQ_SSE_SCALE	env	INERT	env(=1)
+AV2ENC_TIP_LEAF	env	INERT	env(=1)
+AV2ENC_TIP_LEAF_FIELD_GUARD	env	INERT	env(=1)
+AV2ENC_TIP_LEAF_PSNR_MARGIN	env	INERT	env(=1)
+AV2ENC_TIP_LEAF_SKIP	env	INERT	env(=1)
+AV2ENC_TLAYERS_B	env	INERT	env(=1)
+AV2ENC_TLAYERS_CHAIN	env	INERT	env(=1)
+AV2ENC_TPL	env	EFFECTIVE	env(=1)
+AV2ENC_TPL_STATS	env	INERT	env(=1)
+AV2ENC_TRACE_CCSO	env	INERT	env(=1)
+AV2ENC_TRACE_CDEF	env	INERT	env(=1)
+AV2ENC_TRACE_DEBLOCK	env	INERT	env(=1)
+AV2ENC_TRACE_FRAME_OBU	env	INERT	env(=1)
+AV2ENC_TRACE_REF_BITS	env	INERT	env(=1)
+AV2ENC_TRACE_TILE_FLUSH	env	INERT	env(=1)
+AV2ENC_TX_DETAIL_MIN	env	INERT	env(=1)
+AV2ENC_TX_DETAIL_SEARCH_TAIL	env	INERT	env(=1)
+AV2ENC_TX_DZ_TEXTURED	env	EFFECTIVE	env(=1)
+AV2ENC_TX_HF_MASK_CONTENT	env	INERT	env(=1)
+AV2ENC_TX_HF_MASK_DIV	env	INERT	env(=1)
+AV2ENC_TX_HF_MASK_POLARITY	env	INERT	env(=1)
+AV2ENC_TX_HF_MASK_SCALE	env	INERT	env(=1)
+AV2ENC_TX_LAMBDA_DEBUG	env	INERT	env(=1)
+AV2ENC_TX_LAMBDA_TEXTURED	env	INERT	env(=1)
+AV2ENC_TX_LIVE_CTX	env	INERT	env(=1)
+AV2ENC_TX_LIVE_CTX_DBG	env	INERT	env(=1)
+AV2ENC_VIDEO_RDO	env	INERT	env(=1)
+AV2ENC_VIDEO_RDO_METRIC	env	INERT	env(=1)
+AV2ENC_VIDEO_RDO_NO_PART	env	INERT	env(=1)
+AV2ENC_VIDEO_RDO_NO_RESIDUAL	env	INERT	env(=1)
+AV2ENC_VIDEO_RDO_RATE_TIE	env	INERT	env(=1)
+AV2ENC_VIDEO_RDO_SCALE	env	INERT	env(=1)
+AV2ENC_VIDEO_RDO_SSE_ONLY	env	INERT	env(=1)
+AV2ENC_VIDEO_RDO_TRACE	env	INERT	env(=1)
+AV2ENC_VIDEO_RESIDUAL_TX_TYPE	env	INERT	env(=1)
+AV2ENC_VIDEO_TRACE	env	INERT	env(=1)
+AV2ENC_VRAM_LIMIT_MB	env	INERT	env(=1)
+AV2ENC_WAVEFRONT	env	INERT	env(=1)
+CDEF_TEST_QUICK	env	INERT	env(=1)
+CS_DROP	env	INERT	env(=1)
+DAV2D	env	INERT	env(=1)
+DDT_GATE_ENABLE	env	INERT	env(=1)
+DEBLOCK_TEST_QUICK	env	INERT	env(=1)
+GATE_DRL_INDEX	env	INERT	env(=1)
+GATE_SKIP_COVERAGE	env	INERT	env(=1)
+GATE_TRACE_STACK	env	INERT	env(=1)
+GATE_WARP_BLOCKS	env	INERT	env(=1)
+HIGH_BITDEPTH_ZERO_RESIDUAL	env	INERT	env(=1)
+IDTX_DUMP_PLAN	env	INERT	env(=1)
+ME2_SKIP_720P	env	INERT	env(=1)
+ME2_Y4M	env	INERT	env(=1)
+TMPDIR	env	INERT	env(=1)
+VIDEO_TRACE	env	INERT	env(=1)
