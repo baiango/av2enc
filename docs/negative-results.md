@@ -1222,3 +1222,25 @@ So the floor is a *workaround for our own decisions*, not a law of the format.
 The measurement and the proof together say: the encoder is leaving the 4x4
 option's value uncollected, and the cost of that is invisible until the search
 and pricing are exact.
+
+## Proof that the coefficient pricing is wrong (quantified)
+
+`proofs/rdproof/PricingWrong.lean`. Two arguments; the first is the one to quote
+because it needs no candidate comparison.
+
+**Direct contradiction.** If the price equalled the true cost for every leaf,
+the totals would be equal. Measured on the same run at QP198 (245 residual
+leaves, adaptive model `coeff_exact`, signed gap 7.86 bits/leaf):
+
+    sumSigned = 245 * 7.86 = 1,926 bits  =>  sumAbsErr >= 1,926 bits
+
+Cancellation cannot increase an absolute sum (`sum_size_le_total_error`), so the
+model's total absolute error on one 24-frame run is **at least 1,926 bits**, and
+at least one leaf is mispriced (`mispriced_exists`). With the original 0.5-bit
+position term the same arithmetic gives >= 3,509 bits (14.32/leaf).
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| PROVEN (given the measurement) | Treat the coefficient price as exact, or tune decisions as if it were | The coder's own output contradicts it: >= 1.9 kbit of absolute mispricing on 245 leaves of one run | Quote the bound (`total_error_at_least`) rather than the mean bias, and re-measure after any pricing change |
+| CONFIRMED | Infer the *quality* cost of the mispricing from its size | The decision loss is bounded by the error, not equal to it; an error that cancels across the compared candidates costs nothing | Use `pricing_gap_bound` with the one-sided measured error, which is the case where it does not cancel |
+| OPEN | Blame partitioning from the 4x4 loss | Exact pricing cannot lose to an enlarged candidate set (`Partition.lean`), so that measurement refutes exactness but cannot separate "mispriced" from "search never reaches its own minimum" | Fix the pricing first, then re-run the 4x4 table: if the loss persists, the search is incomplete |

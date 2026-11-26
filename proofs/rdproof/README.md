@@ -288,3 +288,34 @@ with 4x4 would collect.
 
 Scope: a statement about cost, not content. It does not say how much 4x4 is
 worth, only that an exact search cannot lose by having it.
+
+## PricingWrong.lean — is the pricing actually wrong? Yes, provably, with a lower bound
+
+**Argument 1 — direct contradiction.** If pricing were exact, price = true cost
+for every leaf, hence equal in total. Measured they differ, so at least one leaf
+is mispriced, and the difference is a *lower bound* on the total absolute
+mispricing (cancellation can only reduce an absolute sum):
+
+    sumSigned l ≤ sumAbsErr l          (sum_size_le_total_error)
+    0 < sumAbsErr l → ∃ x ∈ l, x.1 ≠ x.2   (mispriced_exists)
+    G ≤ sumSigned l → G ≤ sumAbsErr l      (total_error_at_least)
+
+Instantiating at QP198 with the measured residual leaves (n = 245, model
+`coeff_exact`, signed gap -7.86 bits per leaf):
+
+    Σ(true − price) = 1,926 bits   ⇒   Σ|price − true| ≥ 1,926 bits
+
+on a *single* 24-frame run. That is not an estimate or a fit: it is the coder's
+own output contradicting the model that chose what to code.
+
+**Argument 2 — from a coding loss.** `Partition.lean` proves exact pricing
+cannot measure worse when the candidate set strictly grows; the 4x4 arm measures
+0.012-0.025 JOD worse at matched bytes. So pricing is not exact, or the search
+never reaches its own minimum. That measurement cannot separate the two — which
+is why argument 1 (which is per-leaf and needs no candidate comparison) is the
+one to quote.
+
+**Not claimed:** that the mispricing costs quality in proportion to its size. A
+large error that cancels between the candidates being *compared* costs nothing;
+`pricing_gap_bound` is the statement that survives, and the measurements say the
+error is one-sided, which is exactly the case where it does not cancel.
