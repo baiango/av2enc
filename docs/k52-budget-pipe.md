@@ -1353,3 +1353,55 @@ executed and closed:
 coefficient/quantiser accuracy at fixed bits (JOD carries 73 % of K and would
 need +4.4 %), which the ledger shows is at its limit on the only path this
 single-key stream can reach.
+
+## 26. `--video-rdoq-scale` 0.01 / 0.02 on the winning stack: negative (dominated)
+
+Last documented +K lever not yet measured at 25 kB on this stack. Mechanism
+first, because it decides what the numbers mean: `--video-rdoq-scale` sets
+`rdoq_sse_scale_explicit`, which *switches off* `lambda_from_fit(step,
+kRdoqSseScaleFit)`. At our step(186) = 1056 the fit resolves to **0.03343**
+(λ = 37,277), so the explicit values are a much *finer* trellis:
+
+| explicit | RDOQ λ | vs the fit |
+|---|---:|---:|
+| 0.01 | 11,151 | −70.1 % |
+| 0.02 | 22,303 | −40.2 % |
+| 0.015 (previously measured) | 16,727 | −55.1 % |
+
+All arms carry damping 5 + Δ `−2,−2,−2,−2`, QP186, `validate_dav2d OK`:
+
+| arm | bytes | cvvdp | BA | SS2 | K |
+|---|---:|---:|---:|---:|---:|
+| **anchor (fit, no `--video-rdoq-scale`)** | **25,090** | **7.3566** | **12.475** | **−9.528** | **48.37** |
+| scale 0.01 | 25,343 | 7.3560 | **15.544** | −10.062 | 47.48 |
+| scale 0.02 | 25,109 | 7.3414 | 12.916 | −10.740 | 47.96 |
+| scale 0.02, λ272 | 25,110 | 7.3405 | 13.930 | −10.624 | 47.70 |
+| scale 0.02, λ240 | 25,403 | 7.3639 | 12.918 | −9.773 | 48.24 |
+
+**Negative, and dominated.** The best arm (λ240, 48.24) costs **+313 B for
+−0.13 K**; 0.02 at matched bytes is 47.96; 0.01 destroys Butteraugli
+(12.475 → 15.544) while leaving JOD flat — the finer trellis spends the rate on
+coefficient levels whose reconstruction BA cannot tolerate. This is consistent
+with the whole λ family in §23: the surviving-level set at the fit's λ is the
+one whose edges BA tolerates, and moving the trellis price either way is worse.
+The LEAD `+0.73 K at equal bytes` in `docs/negative-results.md` was measured on
+the K-50 point at **29.6 kB** where `--video-rdoq-scale 0.01` is part of that
+recipe; at 25 kB the same setting is our worst BA arm.
+
+### 26.1 K-50 crossing rate (measured, not estimated)
+
+`docs/k50-720p.md` §1: **K 50 crosses at ~29.4 kB** on this picture (29,391 B,
+interpolated between QP 185/28,311 B at K below 50 and QP 184/29,602 B at
+K 50.20), for the recipe *16x16 floor + `--video-gdf --video-uv-qp-offset -23
+--video-rdoq-scale 0.01`*. That point is QP184 — i.e. **the crossing is bought
+with rate, not with a different tool set**.
+
+Our own stack's measured slope above the budget (§23/§24 points, 25.1–25.7 kB)
+is ≈ **0.27 K/kB**, which would place K 50 at ≈31 kB, i.e. *not better* than the
+documented recipe. Both readings agree on the magnitude: reaching K 50 on this
+picture costs **~29–31 kB, 1.17–1.24× the 25 kB budget**.
+
+**Conclusion: at 25,090 B the measured ceiling is K 48.37.** Every filter,
+perceptual and coefficient-price lever reachable on a lone key at this rate has
+now been measured to a convex optimum or a dominance result; the +1.63 K gap is
+a rate gap, not an unmeasured knob.
