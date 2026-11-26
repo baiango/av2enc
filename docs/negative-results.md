@@ -1638,3 +1638,32 @@ numbers that look like excellent results and mean nothing.
 Also noted: the B-path block had been picked up by an unrelated `git add -A`, so
 experimental code can land under a commit message that does not mention it. Worth
 checking `git show --stat` before committing mixed work.
+
+## The coefficient-coding line is closed: contexts are normative, RDOQ is inert, TCQ loses
+
+Follow-up to the measured coefficient slack (actual bits 1.44x the symbols'
+pooled entropy at QP198, 1.95x at QP220).
+
+**Contexts cannot be improved.** Coefficient context derivation is *normative*:
+encoder and decoder must agree, so a "better significance context" breaks
+conformance with `avmdec`. The pooled-entropy gap is therefore largely the cost
+of the spec's own coder, which AVM also pays -- it is not simply our bug.
+
+The three spec-legal level-decision levers were then measured on `src720.png`:
+
+| lever | result |
+|---|---|
+| `--video-rdoq-off` | **byte-identical** to baseline (25,168 B / 7.2415) -- inert on this path |
+| `--video-tcq` (with rdoq off) | QP206 23,622 / 7.1447; QP202 28,122 / 7.3652; QP198 33,050 / 7.5778; **interpolated to 25,168 B: 7.2205** |
+| baseline | 25,168 B / 7.2415 |
+
+**TCQ is -0.021 JOD at matched bytes**: its sparser levels cost more quality
+than the bits they save. (TCQ and RDOQ do not compose -- each owns the levels.)
+
+| Status | Do not do | Why | Do instead |
+|---|---|---|---|
+| CONFIRMED - negative | Chase coefficient contexts | Normative; a change breaks `avmdec` conformance | Accept the spec's coder cost and look for gains elsewhere |
+| CONFIRMED - negative | Expect RDOQ/TCQ to recover the measured slack | RDOQ off is byte-identical; TCQ is -0.021 at matched bytes | The measured 56 % slack is largely spec-inherent, not an implementation defect |
+
+This retires my earlier claim that "a better coefficient coder" was the live
+lever: the room exists, but none of the three legal ways to reach it pays.
