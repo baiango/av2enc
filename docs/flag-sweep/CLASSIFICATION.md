@@ -298,3 +298,25 @@ property of this environment or of the format, not of the switch:
 ### Final totals
 
 **524 rows -- 231 EFFECTIVE, 276 INERT, 1 OWN-WRITER-OK, 10 OUT-OF-SCOPE, 6 REJECTED.**
+
+## The last six rows (`final6`)
+
+Each was run with the exact shape its message demands, with an existence check
+on both the option's output and its baseline before any md5 comparison:
+
+| row | invocation | result |
+|---|---|---|
+| `--b-frames` | `--frames 4` (the message demands exactly 4), `--b-frames 2` | **EFFECTIVE** 8,317 vs 8,022 B |
+| `--video-leading` | `--frames 4 --video-leading 1` (≤9 frames) | **EFFECTIVE** 11,090 B |
+| `--still-rdoq-scale` | `--still --still-rdoq --still-rdoq-scale 1` | **EFFECTIVE** 968 vs 3,310 B |
+| `AV2ENC_FRAME_QP_PLAN` | `=100:220` (it "expects <head>:<tail>") | **EFFECTIVE** 5,039 vs 18,845 B |
+| `AV2ENC_PERCEPTUAL_FILTER` | `=1` | INERT (18,845 B = base) |
+| `--video-lossless-b` | `--video --qp 0 --frames 4 --video-tlayers 4` | **still unresolved**: the encoder prints "Video lossless encode complete" but writes no file at the `-o` path, so there is nothing to compare |
+
+Two of these were previously void and are now correct: `--still-rdoq-scale` had
+been called EFFECTIVE from a missing file, and this run checks both files exist
+before comparing (968 B vs 3,310 B).
+
+### Final totals
+
+**524 rows -- 236 EFFECTIVE, 277 INERT, 1 OWN-WRITER-OK, 10 OUT-OF-SCOPE, 1 REJECTED.**

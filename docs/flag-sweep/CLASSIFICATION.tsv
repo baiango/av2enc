@@ -2,7 +2,7 @@ name	surface	verdict	evidence
 --adaptive-cdf	switch	EFFECTIVE	per-mode(video+still)
 --alllayers	switch	EFFECTIVE	still+table
 --avg-cdf	switch	EFFECTIVE	per-mode(video+still)
---b-frames	option	REJECTED	argsweep(2 values)
+--b-frames	option	EFFECTIVE	final6(frames 4, b-frames 2: 8,317 vs 8,022 B)
 --bit-depth	option	INERT	per-mode(args)
 --bitrate	option	EFFECTIVE	explicit-table(--rc vbr)
 --cdf-continuity	switch	INERT	per-mode(video+still)
@@ -78,7 +78,7 @@ name	surface	verdict	evidence
 --still-rdo-intra	switch	EFFECTIVE	still+table/still
 --still-rdo-scale	switch	EFFECTIVE	resolve4(still --still-rdo-intra) 4,166 vs 4,176 B
 --still-rdoq	switch	EFFECTIVE	still+table/still
---still-rdoq-scale	switch	REJECTED	plain-rejudge
+--still-rdoq-scale	switch	EFFECTIVE	final6(--still-rdoq: 968 vs 3,310 B)
 --still-sb128	switch	EFFECTIVE	still+table/still
 --still-sb256	switch	EFFECTIVE	still+table/still
 --still-sdp	switch	INERT	resolve3(still)
@@ -172,7 +172,7 @@ name	surface	verdict	evidence
 --video-key-intra-txpart	switch	INERT	per-mode(video+still)
 --video-key-qp-offset	option	EFFECTIVE	per-mode(args)
 --video-lcr-full	switch	EFFECTIVE	flip(nightly)
---video-leading	option	REJECTED	argsweep(2 values)
+--video-leading	option	EFFECTIVE	final6(frames 4, leading 1: 11,090 B)
 --video-leaf-rd	switch	EFFECTIVE	per-mode(video+still)
 --video-long-term	switch	EFFECTIVE	comp3
 --video-lossless	switch	EFFECTIVE	comp5
@@ -292,7 +292,7 @@ AV2ENC_EOB_DUMP	env	INERT	env(=1)
 AV2ENC_EXACT_RD	env	EFFECTIVE	env(=1)
 AV2ENC_EXACT_RD_PARTITION	env	INERT	env(=1)
 AV2ENC_EXACT_RD_TOP	env	INERT	env(=1)
-AV2ENC_FRAME_QP_PLAN	env	REJECTED	env(=1)
+AV2ENC_FRAME_QP_PLAN	env	EFFECTIVE	final6(=100:220 5,039 vs 18,845 B)
 AV2ENC_GME_UNPROVEN_WARP	env	INERT	env(=1)
 AV2ENC_INTERP_BLOCK	env	EFFECTIVE	env(=1)
 AV2ENC_INTERP_BLOCK_CSF	env	INERT	env(=1)
@@ -310,7 +310,7 @@ AV2ENC_PART_DIAG_STATS	env	INERT	env(=1)
 AV2ENC_PART_DIAG_TRACE	env	INERT	env(=1)
 AV2ENC_PART_PROBE_CHROMA	env	EFFECTIVE	env(=1)
 AV2ENC_PART_TREE	env	INERT	env(=1)
-AV2ENC_PERCEPTUAL_FILTER	env	REJECTED	env(=1)
+AV2ENC_PERCEPTUAL_FILTER	env	INERT	final6(=1, 18,845 B = base)
 AV2ENC_PERCEPTUAL_RD	env	INERT	env(=1)
 AV2ENC_PIPE_BA	env	EFFECTIVE	env(=1)
 AV2ENC_PIPE_BA_W	env	INERT	env(=1)
