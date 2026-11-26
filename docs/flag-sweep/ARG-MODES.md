@@ -107,3 +107,16 @@ compared against a real one → printed EFFECTIVE. Re-run positionally: also
 EFFECTIVE, but for the right reason (frame count 2 vs 12). Ninth harness error of
 the sweep, same shape: **a verdict from a missing output file is not a
 measurement.**
+
+## Correction: `--video-recon` takes a path, and it dumped files into the repo root
+
+`--video-recon 1` and `--video-recon 3` left a stream identical to the baseline
+(5,475 B), which the table above reads as "output side-effect". That is right,
+but the semantics are sharper: the option takes an **output path**, and the
+argument is used as a filename. Two files named `1` and `3` appeared in the
+repository root, each 345,651 B -- exactly two 480x240 YUV frames
+(480*240*1.5*2 = 345,600), i.e. the reconstruction dump for the 2-frame encode.
+
+Both were untracked and have been deleted; nothing was committed. This is the
+same class of artefact that put two 2 MB Y4M dumps into the history earlier:
+an option that writes a file where you did not expect one.
