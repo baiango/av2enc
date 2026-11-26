@@ -1518,3 +1518,21 @@ and scored, plus the baseline.
 Method note: encodes run as **N single-threaded processes**, not one
 multi-threaded process -- av2enc does not scale with `--cpu-threads`, so
 throughput comes from concurrency across streams.
+
+### Chroma offset is already at its optimum on the best subset
+
+`--video-uv-qp-offset` swept on dip+ibp+ist at QP212, single-threaded encodes,
+each ranked at its own bytes against the shipped curve:
+
+| uv offset | bytes | cvvdp | deltaK |
+|---:|---:|---:|---:|
+| **default (-8)** | 23,201 | **7.1759** | **+0.0378** |
+| -2 | 23,403 | 7.1796 | +0.0346 |
+| +4 | 22,997 | 7.1717 | +0.0336 |
+| -6 | 23,668 | 7.1835 | +0.0240 |
+| -10 | 24,070 | 7.1901 | +0.0086 |
+| -18 | 25,166 | 7.2031 | -0.0383 |
+
+PSNR-Y is identical (24.489) across all six -- the axis moves chroma only, so the
+CVVDP movement is purely the perceptual weighting of chroma error. The shipped
+default is the best of the seven points, so this axis is closed.
