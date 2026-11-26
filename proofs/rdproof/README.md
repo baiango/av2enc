@@ -289,3 +289,35 @@ one or two block classes, not a frame. That is the honest scope of a
 
 **Not obtained:** that our tools beat any particular encoder. Beating SVT stays
 an empirical claim about two artefacts.
+
+## Refute.lean — how to prove a tool implementation is not optimal
+
+Implementation optimality is a claim about a fixed λ: "the point I chose
+minimises `D + λR` over the codings my tools can express". Refuting it needs a
+**certificate** — a coding that is (i) expressible by the same tool set, (ii)
+decodable by the reference decoder, (iii) strictly cheaper under the
+implementation's own measure. Three kinds, in increasing generality:
+
+| kind | statement | how it is produced | where used |
+|---|---|---|---|
+| **nesting** | if run B's candidate set contains run A's and B measures worse, B missed its own minimum | one setting restricts another | `Partition.measured_loss_refutes_optimality` (4x4 vs 16x16) |
+| **RD domination** | `R_b ≤ R_a` and `D_b ≤ D_a`, one strict ⇒ cheaper at **every** λ | any matched-rate experiment between configurations | `dominated_refutes_optimality` — applies to any tool, not just partitions |
+| **internal contradiction** | the implementation's own price says `y` is cheaper than what it chose | the encoder's own rate report | `PricingWrong.lean` (coefficient model) |
+
+Condition (i) is what keeps these honest: an alternative needing syntax we do
+not implement refutes nothing about our implementation — it is a tool-set claim,
+and (per `SpecOptimal`) not certifiable.
+
+Recipe per tool:
+
+1. **Partition / tree** — nesting: enable a strictly larger size set, compare at
+   matched bytes. Done: the 4x4 arm loses, so the search is refuted.
+2. **TX search, intra mode search, ME** — domination: two configurations of the
+   same encoder, matched-rate, look for a point that is better in *both*
+   coordinates. Any such pair is a certificate at every λ.
+3. **Rate model / entropy pricing** — internal contradiction: predict vs actual
+   per leaf, as `AV2ENC_RATE_HYBRID_S_MEASURE` already reports. Done for
+   coefficients.
+
+What none of these can do is refute the tool *set*; every certificate lives
+inside the space the tools express.
