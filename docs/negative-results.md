@@ -1731,3 +1731,27 @@ deficit. So the dominant model error is elsewhere.
 The candidate set was verified complete by inspection (`for q = 0; q <= bound`),
 so TCQ's loss is provably a cost-model error, and the rate term is now excluded
 by measurement. The distortion term is the remaining candidate.
+
+### TCQ model bug, step 2: lambda is excluded, and I retract a bogus +0.219
+
+`config.lambda` used a hard-coded `sse_scale=0.125`. Made it overridable
+(`AV2ENC_TCQ_SSE_SCALE`, default unchanged) and scanned it at QP206:
+
+| sse_scale | bytes | cvvdp | vs scalar at those bytes |
+|---:|---:|---:|---:|
+| 0.03 | 38,818 | 7.7378 | **-0.0180** |
+| 0.125 (default) | 23,622 | 7.1447 | **-0.0123** |
+| 0.6 | 10,756 | 5.7625 | -1.3756 |
+
+**Retraction:** an earlier run printed **+0.2188** for sse_scale=0.03. That was an
+artefact of the comparison, not a result: the 0.03 point is 38,818 B while the
+scalar calibration curve only reached 31,896 B, so the lookup **clamped to the
+last point** and compared a 38.8 kB stream against a 31.9 kB baseline. Extending
+the curve with scalar QP200 (40,675 B / 7.8193) and QP196 (47,147 B / 8.0061)
+turns +0.2188 into **-0.0180**.
+
+| Status | Meaning |
+|---|---|
+| CONFIRMED - negative | Lambda scale is the model bug | Across 0.03 / 0.125 / 0.6 every operating point is behind scalar at matched bytes |
+| CONFIRMED (method) | Never rank a point outside the calibration range | The clamp silently produced a large false positive; the curve must bracket every query point, and the ranker must refuse out-of-range queries instead of clamping |
+| OPEN | `local_dist` | With the candidate set verified complete, the rate constants excluded (+0.0013) and lambda excluded, the distortion model is the last remaining candidate: it prices `(original - quant*half_step)^2` in the transform domain, with no rounding, no clipping, and assuming an orthonormal transform |

@@ -937,8 +937,14 @@ bool evaluate_candidate(const std::int16_t* residual, int block_w,
     }
     av2enc::tcq::Config config;
     config.quant_step = static_cast<double>(acq) / scaled;
+    // AV2ENC_TCQ_SSE_SCALE overrides the trellis lambda scale so the effect of
+    // a mis-scaled lambda can be measured directly (default 0.125 unchanged).
+    static const double tcq_sse_scale = [] {
+      const char* v = std::getenv("AV2ENC_TCQ_SSE_SCALE");
+      return v != nullptr ? std::atof(v) : 0.125;
+    }();
     config.lambda = av2enc::rdo::lambda_sse_from_quant_step(
-        config.quant_step, /*sse_scale=*/0.125);
+        config.quant_step, /*sse_scale=*/tcq_sse_scale);
     config.max_coefficients = area;
     av2enc::tcq::Result& result = scratch.tcq_result;
     if (!av2enc::tcq::quantize(input, config, model.rate_model(), result,
