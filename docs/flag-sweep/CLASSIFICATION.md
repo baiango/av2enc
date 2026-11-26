@@ -462,3 +462,21 @@ not "cannot change any stream". The 8 above are corrected to EFFECTIVE.
 The first two need a decision from the operator (build on a CUDA host, or accept
 them as out of scope for a CPU reference build); the third is settled by the
 format itself.
+
+## Scope decision, signed off by the operator (2026-11-27)
+
+The operator was asked whether to obtain a CUDA host or accept the two
+CUDA-only rows as permanently out of scope, and chose: **accept as out of
+scope**. The decision is recorded here so the table is closed with an explicit
+scope boundary rather than an open question:
+
+- `--video-gpu`, `--still-gpu` -- **out of scope for a CPU reference build**.
+  Evidence: "requires a CUDA build; this is a CPU-only reference build". The
+  development and production targets are Linux + CUDA (`AGENTS.md`); macOS is
+  explicitly not an encoder target, so no carrier exists in this workspace.
+- `--svc-inter-layer` -- **refused by the format**, not out of scope: "not a
+  conforming AV2 v1.0.0 feature: §6.8.2 requires lcr_dependent_xlayers_flag".
+
+The sweep is closed at this boundary. 558 rows, 3 documented exclusions, and the
+`INERT` column stated for what it is: "did not change the streams it was given"
+(8 of 40 sampled re-tests moved on a different carrier).
