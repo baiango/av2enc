@@ -85,6 +85,9 @@ pin recipe, interpolated to 293 kbps; QP217 is 36,543 B / 292.3 kbps / JOD 7.328
 / BA 29.61 / SS2 −10.11 / K 45.59, `dav2d`-clean; the recorded 45.61 holds to
 +0.02), AVM **55.8**, SVT **56.6**, rav1e **53.0** (recorded, not re-run). The
 720p gap is content-dependent; see `bench/space8k_720p/README.md`.
+The measured rate at which av2enc's K crosses SVT p0's K, the matched-rate
+300 kbps attempts (SEF, deep anchor, chained B, multi-reference, coefficient
+model), and why 300 kbps is not reached are in `docs/beat-svt-720p.md`.
 
 **720p still (1280×720, one frame, 25 kB budget):** av2enc **K 47.59**
 interpolated to 25,000 B (`--nightly-b --video-gdf --video-uv-qp-offset -23`

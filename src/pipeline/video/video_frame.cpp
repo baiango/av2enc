@@ -2842,11 +2842,37 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
         !options.lpl_refresh && !options.lpl_refresh_measure &&
         !frame_ref_slots.empty()) {
       const double sef_threshold = std::atof(sef_db_env);
-      const int ref_slot = frame_ref_slots.front();
+      int ref_slot = frame_ref_slots.front();
+      // AV2ENC_SEF_BEST_REF: pick the reference slot whose reconstruction is
+      // closest to this source picture, not just the primary slot.  A SEF has
+      // no tile data, so the shown picture's quality is exactly the reference's
+      // quality; on a pulldown cadence an older slot can be closer than the
+      // most recent one.  Default off: the pins stay byte-identical.
+      double ref_psnr = 0.0;
+      const char* sef_best_env = std::getenv("AV2ENC_SEF_BEST_REF");
+      const bool sef_best_ref =
+          sef_best_env != nullptr && std::atoi(sef_best_env) != 0;
+      if (sef_best_ref) {
+        ref_psnr = -1.0;
+        for (const int candidate : frame_ref_slots) {
+          const RefSlot& cand =
+              slots[static_cast<std::size_t>(candidate)];
+          if (!cand.valid) continue;
+          const double psnr = reference_luma_psnr(
+              cand.plane[0], frames[i], static_cast<int>(width),
+              static_cast<int>(height));
+          if (psnr > ref_psnr) {
+            ref_psnr = psnr;
+            ref_slot = candidate;
+          }
+        }
+      } else {
+        const RefSlot& ref = slots[static_cast<std::size_t>(ref_slot)];
+        ref_psnr = reference_luma_psnr(
+            ref.plane[0], frames[i], static_cast<int>(width),
+            static_cast<int>(height));
+      }
       const RefSlot& ref = slots[static_cast<std::size_t>(ref_slot)];
-      const double ref_psnr =
-          reference_luma_psnr(ref.plane[0], frames[i],
-                              static_cast<int>(width), static_cast<int>(height));
       if (ref.valid && ref_psnr >= sef_threshold) {
         inter::sef::SefParams sef_params;
         sef_params.num_ref_frames = static_cast<std::uint8_t>(num_ref_frames);
@@ -3017,6 +3043,48 @@ bool encode_video_sequence_impl(std::span<const VideoInputFrame> frames,
         std::cerr << "lpl_anchor frame=" << i
                   << " qp=" << effective_frame_qp
                   << " depth=" << options.drift_refresh_qp << "\n";
+      }
+    }
+    // AV2ENC_P_CONTENT_QP=<N>: spend the sequence budget where the source
+    // actually changes.  The flat key+P chain uses one base_q_idx for every
+    // frame, so a pulldown/static frame and a frame carrying new content are
+    // priced alike.  When the mean absolute source change against the previous
+    // input picture exceeds AV2ENC_P_CONTENT_THRESH (default 4.0 8-bit
+    // levels), lower this frame's QP by N.  This is a per-frame allocation
+    // change, not a new syntax tool: the coded base_q_idx is signalled, and the
+    // carried CDF image is re-seeded from the coded QP exactly as the drift
+    // refresh path does.  Default off (N = 0), so the pins are byte-identical.
+    if (const char* content_env = std::getenv("AV2ENC_P_CONTENT_QP");
+        content_env != nullptr && !drift_refresh_frame && i > 0) {
+      const int content_drop = std::atoi(content_env);
+      double content_thresh = 4.0;
+      if (const char* thresh_env =
+              std::getenv("AV2ENC_P_CONTENT_THRESH")) {
+        content_thresh = std::atof(thresh_env);
+      }
+      if (content_drop > 0 && frames[i].y.size() == frames[i - 1].y.size() &&
+          !frames[i].y.empty()) {
+        const std::size_t n = frames[i].y.size();
+        std::uint64_t sad = 0;
+        for (std::size_t p = 0; p < n; ++p) {
+          const int a = frames[i].y[p];
+          const int b = frames[i - 1].y[p];
+          sad += static_cast<std::uint64_t>(a > b ? a - b : b - a);
+        }
+        const double mean_abs_change =
+            static_cast<double>(sad) / static_cast<double>(n);
+        if (mean_abs_change >= content_thresh) {
+          effective_frame_qp =
+              std::max(1, std::min(255, effective_frame_qp - content_drop));
+          frame_options.base_q_idx =
+              static_cast<std::uint16_t>(effective_frame_qp);
+          if (options.trace) {
+            std::cerr << "content_qp frame=" << i
+                      << " change=" << mean_abs_change
+                      << " drop=" << content_drop
+                      << " qp=" << effective_frame_qp << "\n";
+          }
+        }
       }
     }
     // §5.14: plan this picture's grain model in coding order before the frame
