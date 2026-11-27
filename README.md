@@ -1,5 +1,15 @@
 # av2enc — from-scratch GPU AV2 encoder
 
+> **No longer maintained.** I've stopped working on av2enc. Getting the
+> composite **K** past ~88 turned out to be too hard and too time-consuming:
+> every remaining point means hours of serial RD search per clip, and the
+> gap to AVM (90.2) was not closing fast enough to be worth it. If you want
+> AV2 today, use the **AVM reference encoder**, or my **Vulkan port of AVM**
+> ([`baiango/avm-vulkan`](https://github.com/baiango/avm-vulkan)) — a separate
+> project, since no AVM code may live in this repo. The code here still builds,
+> the parity gate still holds, and the measurements below are real — it is just
+> not being pushed further.
+
 > **Vibe-coded:** built with **DeepSeek V4.1 Flash 1017** and **MiMo V2.6
 > Flash** in **OpenCode**, with AI subagents writing most of the code and a human
 > directing the architecture and review. Treat it accordingly.
@@ -16,11 +26,6 @@ A spec-only AV2 encoder. The CPU writer is the quality reference; the GPU path
 is the product and must produce a **byte-identical** stream (the parity gate uses
 `cmp`, not a tolerance). No encoder code from AVM, SVT-AV1/AV2 or clave;
 `avmdec` and `dav2d` are black-box validators only.
-
-> **Want better quality?** If you care more about output quality than about a
-> from-scratch, spec-only encoder, I also maintain a **Vulkan port of AVM** at
-> [`baiango/avm-vulkan`](https://github.com/baiango/avm-vulkan). It is a
-> separate project: no AVM code lives in this repo and none of it is used here.
 
 ## Objectives
 
