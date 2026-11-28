@@ -4,8 +4,8 @@
 > composite **K** past ~88 turned out to be too hard and too time-consuming:
 > every remaining point means hours of serial RD search per clip, and the
 > gap to AVM (90.2) was not closing fast enough to be worth it. If you want
-> AV2 today, use the **AVM reference encoder**, or my **Vulkan port of AVM**
-> ([`baiango/avm-vulkan`](https://github.com/baiango/avm-vulkan)) — a separate
+> AV2 today, use the **AVM reference encoder**, or my **GPU port of AVM**
+> ([`baiango/avm-gpu`](https://github.com/baiango/avm-gpu)) — a separate
 > project, since no AVM code may live in this repo. The code here still builds,
 > the parity gate still holds, and the measurements below are real — it is just
 > not being pushed further.
